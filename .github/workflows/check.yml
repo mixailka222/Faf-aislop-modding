@@ -2,6 +2,8 @@ name: Mod checks
 
 on:
   push:
+    branches: [main]
+  pull_request:
 
 jobs:
   syntax:
@@ -34,5 +36,8 @@ jobs:
         run: python3 -m unittest discover -s DOCUMENTATION/tests
       - name: Check mods
         env:
-          BASE: ${{ github.ref == 'refs/heads/main' && github.event.before || 'origin/main' }}
-        run: python3 DOCUMENTATION/tools/check.py --no-luac --changed-since "$BASE"
+          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+        run: |
+          # After a forced push the previous commit is gone, and a new branch has none.
+          git cat-file -e "$BASE^{commit}" 2>/dev/null || BASE=HEAD~1
+          python3 DOCUMENTATION/tools/check.py --no-luac --changed-since "$BASE"
