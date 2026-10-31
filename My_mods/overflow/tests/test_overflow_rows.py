@@ -1639,6 +1639,35 @@ if rE ~= nil then
           'при свободном месте GUARD не сработал')
 end
 
+-- СЦЕНАРИЙ F. Доход движка включает реклейм, а у реклейма своя строка, поэтому
+-- в "своём производстве" его быть не должно. Окно 10 с: доход 50 и 30 в секунду,
+-- реклейм 20 и 10 в секунду.
+INCOME_E = 5
+INCOME_M = 3
+local function Reclaimed(army, recE, recM)
+    army.resources.energyin.reclaimed = recE
+    army.resources.massin.reclaimed = recM
+    return army
+end
+local rF = Feed(
+    Reclaimed(Army(0, 0, 0, 500, 1000, 0, 0, 0, 100, 500), 0, 0),
+    Reclaimed(Army(500, 500, 0, 500, 1000, 300, 300, 0, 100, 500), 200, 100),
+    Army(0, 0, 0, 0, 2000, 0, 0, 0, 0, 2000),
+    Army(0, 0, 0, 0, 2000, 0, 0, 0, 0, 2000))
+INCOME_E = 0
+INCOME_M = 0
+
+check(rF ~= nil and rF.ok == true, 'окно опубликовано, сценарий F')
+if rF ~= nil then
+    check(rF.reclaim == 20 and rF.massReclaim == 10,
+          'реклейм считается по своим счётчикам (' .. tostring(rF.reclaim) ..
+          ', ' .. tostring(rF.massReclaim) .. ')')
+    check(rF.own == 30, 'своя энергия без реклейма: 50 - 20 = 30 (' ..
+          tostring(rF.own) .. ')')
+    check(rF.massOwn == 20, 'своя масса без реклейма: 30 - 10 = 20 (' ..
+          tostring(rF.massOwn) .. ')')
+end
+
 check(string.find(table.concat(msgs, ' | '), 'ERROR') == nil,
       'sync.lua не сыпал ошибок ни в одном сценарии')
 
