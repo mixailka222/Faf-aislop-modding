@@ -1,0 +1,359 @@
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+TOOLS = Path(__file__).resolve().parents[1] / "tools"
+sys.path.insert(0, str(TOOLS))
+
+import bootstrap
+import check
+import validate_mod
+
+MOD_INFO = 'name = "x"\nversion = 1\nuid = "x"\ndescription = ""\nui_only = true\n'
+
+
+def git(cwd, *args):
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+
+def write(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+class ValidateTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def problems(self, code, name="modules/main.lua"):
+        path = self.root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(code if isinstance(code, bytes) else code.encode("utf-8"))
+        return validate_mod.check_file(path)
+
+    def test_wait_inside_pcall_is_reported_with_its_line(self):
+        found = self.problems("pcall(function()\n    WaitSeconds(1)\nend)\n")
+        self.assertEqual(len(found), 1)
+        self.assertIn("2", found[0])
+
+    def test_wait_after_finished_pcall_is_allowed(self):
+        code = "local ok = pcall(function() return 1 end)\nWaitSeconds(1)\n"
+        self.assertEqual(self.problems(code), [])
+
+    def test_wait_after_pcall_of_named_function_is_allowed(self):
+        self.assertEqual(self.problems("pcall(Start, 1)\nWaitSeconds(1)\n"), [])
+
+    def test_wait_in_a_comment_is_ignored(self):
+        code = "pcall(function()\n    -- WaitSeconds(1)\n    return 1\nend)\n"
+        self.assertEqual(self.problems(code), [])
+
+    def test_dot_in_prefs_key_is_reported(self):
+        self.assertEqual(len(self.problems("Prefs.SetToCurrentProfile('my.mod', 1)\n")), 1)
+
+    def test_dot_in_prefs_key_from_variable_is_reported(self):
+        code = "local KEY = 'my.mod'\nPrefs.GetFromCurrentProfile(KEY)\n"
+        self.assertEqual(len(self.problems(code)), 1)
+
+    def test_plain_prefs_key_is_allowed(self):
+        self.assertEqual(self.problems("Prefs.SetToCurrentProfile('MyMod', 1)\n"), [])
+
+    def test_table_return_in_module_is_reported(self):
+        self.assertEqual(len(self.problems("return { Start = 1 }\n")), 1)
+
+    def test_table_return_outside_modules_is_allowed(self):
+        self.assertEqual(self.problems("return { Start = 1 }\n", "hook/main.lua"), [])
+
+    def test_byte_order_mark_is_reported(self):
+        self.assertEqual(len(self.problems(b"\xef\xbb\xbflocal a = 1\n")), 1)
+
+    def test_common_variable_names_are_allowed(self):
+        code = "local line, index, name = 1, 2, 3\nlocal count = line + index + name\n"
+        self.assertEqual(self.problems(code), [])
+
+    def test_lines_after_a_block_comment_keep_their_numbers(self):
+        code = "--[[ one\ntwo ]]\npcall(function()\n    WaitSeconds(1)\nend)\n"
+        self.assertIn("4", self.problems(code)[0])
+
+
+class RepoCase(unittest.TestCase):
+    """A real git repository in a folder whose path contains spaces."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve() / "repo with spaces"
+        self.root.mkdir()
+        git(self.root, "init", "-q", "-b", "main")
+        git(self.root, "config", "user.email", "test@example.com")
+        git(self.root, "config", "user.name", "test")
+        git(self.root, "config", "core.autocrlf", "false")
+        for module in (check, bootstrap):
+            patcher = mock.patch.object(module, "ROOT", self.root)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        check.existing_files.cache_clear()
+
+    def commit(self, message="change"):
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "--allow-empty", "-m", message)
+        done = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.root, check=True,
+                              capture_output=True, text=True)
+        return done.stdout.strip()
+
+    def mod(self, relative, info=MOD_INFO):
+        folder = self.root / relative
+        write(folder / "mod_info.lua", info)
+        return folder
+
+
+class ProjectDirTests(unittest.TestCase):
+    def test_project_with_a_space_in_its_name(self):
+        project = check.project_dir(Path("My_mods/Custom Hotkeys/customhotkeys"))
+        self.assertEqual(project.name, "Custom Hotkeys")
+
+    def test_nested_mod_belongs_to_its_top_project(self):
+        project = check.project_dir(Path("My_mods/overflow/diagnostic/testing"))
+        self.assertEqual(project.name, "overflow")
+
+
+class FindModsTests(RepoCase):
+    def test_only_tracked_mods_are_found(self):
+        tracked = self.mod("My_mods/one/Mod")
+        self.commit()
+        self.mod("My_mods/two/Local")
+        self.assertEqual(check.find_mods(self.root), [tracked])
+
+
+class ImportTests(RepoCase):
+    def setUp(self):
+        super().setUp()
+        write(self.root / "references/fa/lua/ui/game/selection.lua", "")
+        write(self.root / "references/ui-libs/mods/ReUI/Core/Main.lua", "")
+        self.folder = self.mod("My_mods/one/MyMod")
+        write(self.folder / "modules/own.lua", "")
+
+    def problems(self, code):
+        write(self.folder / "Main.lua", code)
+        check.existing_files.cache_clear()
+        return check.check_imports(self.folder)
+
+    def test_missing_game_file_with_double_quotes_is_reported(self):
+        self.assertIn("/lua/missing.lua", " ".join(self.problems('import("/lua/missing.lua")\n')))
+
+    def test_missing_game_file_with_single_quotes_is_reported(self):
+        self.assertIn("/lua/missing.lua", " ".join(self.problems("import('/lua/missing.lua')\n")))
+
+    def test_existing_game_file_is_accepted(self):
+        self.assertEqual(self.problems('import("/lua/ui/game/selection.lua")\n'), [])
+
+    def test_path_case_does_not_matter(self):
+        self.assertEqual(self.problems('import("/Lua/UI/Game/Selection.lua")\n'), [])
+
+    def test_own_file_is_found_in_the_mod(self):
+        self.assertEqual(self.problems('import("/mods/MyMod/modules/own.lua")\n'), [])
+
+    def test_missing_own_file_is_reported(self):
+        self.assertEqual(len(self.problems('import("/mods/MyMod/modules/gone.lua")\n')), 1)
+
+    def test_library_file_is_found_in_references(self):
+        self.assertEqual(self.problems('import("/mods/ReUI/Core/Main.lua")\n'), [])
+
+    def test_missing_library_file_is_reported(self):
+        self.assertEqual(len(self.problems('import("/mods/ReUI/Core/Gone.lua")\n')), 1)
+
+    def test_other_mod_is_not_an_error(self):
+        self.assertEqual(self.problems('import("/mods/ASE/modules/Lock.lua")\n'), [])
+
+    def test_commented_import_is_ignored(self):
+        self.assertEqual(self.problems('-- import("/lua/missing.lua")\n'), [])
+
+    def test_path_built_at_runtime_is_ignored(self):
+        self.assertEqual(self.problems('import("/lua/" .. name)\n'), [])
+
+
+class ModInfoTests(RepoCase):
+    def test_complete_file_is_accepted(self):
+        self.assertEqual(check.check_mod_info(self.mod("My_mods/one/Mod")), [])
+
+    def test_missing_field_is_reported(self):
+        folder = self.mod("My_mods/one/Mod", 'name = "x"\nversion = 1\n')
+        self.assertIn("uid", " ".join(check.check_mod_info(folder)))
+
+    def test_library_tag_must_match_the_folder(self):
+        folder = self.mod("My_mods/one/Mod", MOD_INFO + 'ReUI = "Other=1.0.0"\n')
+        self.assertEqual(len(check.check_mod_info(folder)), 1)
+
+    def test_matching_library_tag_is_accepted(self):
+        folder = self.mod("My_mods/one/Mod", MOD_INFO + 'ReUI = "Mod=1.0.0"\n')
+        self.assertEqual(check.check_mod_info(folder), [])
+
+
+class RunTestsTests(RepoCase):
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.object(bootstrap, "venv_python", lambda: Path(sys.executable))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.project = self.root / "My_mods/one"
+
+    def test_only_test_scripts_are_run(self):
+        marker = self.root / "negative_ran"
+        write(self.project / "tests/test_ok.py", "print('ok')\n")
+        write(self.project / "tests/negative_breaks_mod.py",
+              f"open({str(marker)!r}, 'w').close()\n")
+        self.assertEqual(check.run_tests(self.project), [])
+        self.assertFalse(marker.exists())
+
+    def test_failing_exit_code_is_reported(self):
+        write(self.project / "tests/test_bad.py", "raise SystemExit(1)\n")
+        self.assertIn("test_bad.py", " ".join(check.run_tests(self.project)))
+
+    def test_fail_marker_in_output_is_reported(self):
+        write(self.project / "tests/test_bad.py", "print('[FAIL] something')\n")
+        self.assertIn("test_bad.py", " ".join(check.run_tests(self.project)))
+
+    def test_project_without_tests_is_fine(self):
+        self.project.mkdir(parents=True)
+        self.assertEqual(check.run_tests(self.project), [])
+
+
+class ChangedModsTests(RepoCase):
+    def setUp(self):
+        super().setUp()
+        self.one = self.mod("My_mods/one/ModOne")
+        self.hotkeys = self.mod("My_mods/Custom Hotkeys/customhotkeys")
+        self.two = self.mod("My_mods/two/ModTwo")
+        self.base = self.commit("base")
+
+    def test_mod_with_changed_code_is_selected(self):
+        write(self.one / "Main.lua", "")
+        self.commit()
+        self.assertEqual(check.changed_mods(self.root, self.base), [self.hotkeys, self.one])
+
+    def test_hotkeys_are_always_selected(self):
+        self.commit()
+        self.assertEqual(check.changed_mods(self.root, self.base), [self.hotkeys])
+
+    def test_changed_test_script_selects_its_mod(self):
+        write(self.root / "My_mods/two/tests/test_x.py", "")
+        self.commit()
+        self.assertIn(self.two, check.changed_mods(self.root, self.base))
+
+    def test_readme_next_to_the_mod_selects_nothing(self):
+        write(self.root / "My_mods/two/README.md", "")
+        self.commit()
+        self.assertNotIn(self.two, check.changed_mods(self.root, self.base))
+
+    def test_first_appearance_of_versions_is_not_a_bump(self):
+        write(self.root / check.VERSIONS_PATH, "{}")
+        self.commit()
+        self.assertNotIn(self.two, check.changed_mods(self.root, self.base))
+
+    def test_changed_versions_select_all_mods(self):
+        write(self.root / check.VERSIONS_PATH, "{}")
+        base = self.commit()
+        write(self.root / check.VERSIONS_PATH, '{"a": 1}')
+        self.commit()
+        self.assertEqual(len(check.changed_mods(self.root, base)), 3)
+
+
+class ReadmeWarningTests(RepoCase):
+    def setUp(self):
+        super().setUp()
+        self.one = self.mod("My_mods/one/ModOne")
+        self.base = self.commit("base")
+
+    def test_changed_code_without_readme_is_reported(self):
+        write(self.one / "Main.lua", "")
+        self.commit()
+        self.assertEqual(len(check.readme_warnings(self.root, self.base)), 1)
+
+    def test_changed_code_with_readme_is_fine(self):
+        write(self.one / "Main.lua", "")
+        write(self.root / "My_mods/one/README.md", "")
+        self.commit()
+        self.assertEqual(check.readme_warnings(self.root, self.base), [])
+
+
+class LualsReportTests(unittest.TestCase):
+    def test_report_is_grouped_by_file(self):
+        raw = {
+            "file:///c%3A/repo%20name/My_mods/one/Mod/Main.lua": [{
+                "code": "undefined-global",
+                "message": "Undefined global `Foo`.",
+                "range": {"start": {"line": 4}},
+            }],
+        }
+        report = check.parse_luals(raw)
+        self.assertEqual(len(report), 1)
+        path, problems = next(iter(report.items()))
+        self.assertTrue(path.as_posix().endswith("repo name/My_mods/one/Mod/Main.lua"))
+        self.assertIn("5", problems[0])
+        self.assertIn("undefined-global", problems[0])
+
+
+class VersionsTests(RepoCase):
+    def install(self, versions, *paths):
+        bootstrap.installed_file().parent.mkdir(parents=True)
+        bootstrap.installed_file().write_text(json.dumps(versions), encoding="utf-8")
+        for path in paths:
+            write(path, "")
+
+    def test_stale_tools_stop_the_check_with_a_command(self):
+        self.assertIn("bootstrap.py", " ".join(check.check_versions()))
+
+    def test_installed_tools_pass(self):
+        self.install(bootstrap.expected_versions(bootstrap.load_versions()),
+                     bootstrap.luals_path(), bootstrap.luac_path(), bootstrap.venv_python())
+        self.assertEqual(check.check_versions(), [])
+
+    def test_deleted_tool_is_reported(self):
+        self.install(bootstrap.expected_versions(bootstrap.load_versions()),
+                     bootstrap.luals_path(), bootstrap.venv_python())
+        self.assertIn("bootstrap.py", " ".join(check.check_versions()))
+
+    def test_ci_does_not_need_the_built_compiler(self):
+        versions = bootstrap.expected_versions(bootstrap.load_versions())
+        del versions["faf-lua"]
+        self.install(versions, bootstrap.luals_path(), bootstrap.venv_python())
+        self.assertEqual(check.check_versions(no_luac=True), [])
+
+
+class CommandLineTests(unittest.TestCase):
+    def test_console_without_cyrillic_does_not_crash(self):
+        env = dict(os.environ, PYTHONIOENCODING="ascii", PYTHONDONTWRITEBYTECODE="1")
+        done = subprocess.run([sys.executable, str(TOOLS / "check.py"), "no such folder"],
+                              capture_output=True, env=env)
+        self.assertEqual(done.returncode, 1)
+        self.assertNotIn(b"Traceback", done.stderr)
+
+
+REAL_LUAC = TOOLS.parents[1] / ".tools" / "faf-lua" / f"luac{bootstrap.EXE}"
+
+
+@unittest.skipUnless(REAL_LUAC.exists(), "FAF Lua is not built")
+class LuacTests(RepoCase):
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.object(bootstrap, "luac_path", lambda: REAL_LUAC)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_syntax_error_is_reported(self):
+        folder = self.mod("My_mods/one/Mod")
+        write(folder / "Main.lua", "function Main(\n")
+        self.assertEqual(len(check.check_luac(folder)), 1)
+
+    def test_valid_files_are_accepted(self):
+        self.assertEqual(check.check_luac(self.mod("My_mods/one/Mod")), [])
+
+
+if __name__ == "__main__":
+    unittest.main()
