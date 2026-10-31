@@ -216,3 +216,5 @@ for m in errs[:5]:
 print()
 print("ИТОГ: %s" % ("все проверки пройдены" if not fails and not errs
                     else "провалено: " + ", ".join(fails)))
+if fails or errs:
+    sys.exit(1)

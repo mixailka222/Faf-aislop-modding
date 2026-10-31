@@ -103,21 +103,21 @@ results = []
 for title, old, new in BROKEN:
     if ORIG.count(old) != 1:
         print(u"  ОШИБКА ПОДСТАНОВКИ (%s): вхождений %d" % (title, ORIG.count(old)))
-        results.append((title, 999, 0, u"podstanovka ne srabotala"))
+        results.append((title, False))
         continue
     io.open(OPT, "w", encoding="utf-8", newline="").write(ORIG.replace(old, new))
     p = subprocess.run([sys.executable, TEST], env=ENV, capture_output=True)
     out = p.stdout.decode("utf-8", "replace") + p.stderr.decode("utf-8", "replace")
     fails = out.count("[FAIL]")
-    oks = out.count("[OK  ]")
     name = [l for l in out.split("\n") if "[FAIL]" in l][:2]
     ok = fails > 0 or p.returncode != 0
-    results.append((title, fails, oks, u"; ".join(x.strip() for x in name)))
+    results.append((title, ok))
     print(u"  %s  %-52s FAIL=%d" % (u"ПОЙМАЛ " if ok else u"ПРОПУСТИЛ",
                                     title, fails))
     for n in name:
         print(u"           " + n.strip())
 
-bad = [r for r in results if r[1] == 0 and r[3] == u"podstanovka ne srabotala"]
-if bad:
+missed = [title for title, caught in results if not caught]
+if missed:
+    print(u"не пойманы: " + u"; ".join(missed))
     sys.exit(1)
