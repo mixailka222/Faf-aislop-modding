@@ -9,7 +9,14 @@
 do
     local ok, Overflow = pcall(import, '/mods/Overflow/modules/ui.lua')
 
-    if not ok or type(Overflow) ~= 'table' or type(Overflow.OnCreateUI) ~= 'function' then
+    -- rawget: a module that failed to compile is empty, and a plain read of a
+    -- missing field reaches the strict _G of the game, which raises an error.
+    local OnCreateUI = nil
+    if ok and type(Overflow) == 'table' then
+        OnCreateUI = rawget(Overflow, 'OnCreateUI')
+    end
+
+    if type(OnCreateUI) ~= 'function' then
         LOG('Overflow: MODULE FAILED TO LOAD - mod stays disabled. Reason: ' .. tostring(Overflow))
     else
         local OldCreateUI = CreateUI
@@ -18,7 +25,7 @@ do
             -- сначала игра строит весь свой интерфейс
             OldCreateUI(isReplay)
             -- потом наш мод (даже если он упадёт - интерфейс игры не пострадает)
-            local ok2, err = pcall(Overflow.OnCreateUI)
+            local ok2, err = pcall(OnCreateUI)
             if not ok2 then
                 LOG('Overflow: OnCreateUI error: ' .. tostring(err))
             end
