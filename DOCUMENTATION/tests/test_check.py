@@ -58,8 +58,25 @@ class ValidateTests(unittest.TestCase):
         self.assertEqual(len(self.problems("Prefs.SetToCurrentProfile('my.mod', 1)\n")), 1)
 
     def test_dot_in_prefs_key_from_variable_is_reported(self):
-        code = "local KEY = 'my.mod'\nPrefs.GetFromCurrentProfile(KEY)\n"
+        code = "local KEY = 'my.mod'\nPrefs.SetToCurrentProfile(KEY, 1)\n"
         self.assertEqual(len(self.problems(code)), 1)
+
+    def test_dotted_read_is_allowed(self):
+        self.assertEqual(self.problems("Prefs.GetFromCurrentProfile('options.gui')\n"), [])
+
+    def test_wait_ticks_inside_pcall_is_reported(self):
+        self.assertEqual(len(self.problems("pcall(function()\n    WaitTicks(1)\nend)\n")), 1)
+
+    def test_wait_after_one_line_if_inside_pcall_is_reported(self):
+        code = "pcall(function()\n    if a then b() end\n    WaitSeconds(1)\nend)\n"
+        self.assertEqual(len(self.problems(code)), 1)
+
+    def test_wait_in_a_thread_started_inside_pcall_is_allowed(self):
+        code = "pcall(function()\n    ForkThread(function()\n        WaitSeconds(1)\n    end)\nend)\n"
+        self.assertEqual(self.problems(code), [])
+
+    def test_table_return_inside_a_function_is_allowed(self):
+        self.assertEqual(self.problems("function F()\n    return { 1 }\nend\n"), [])
 
     def test_plain_prefs_key_is_allowed(self):
         self.assertEqual(self.problems("Prefs.SetToCurrentProfile('MyMod', 1)\n"), [])
@@ -70,8 +87,11 @@ class ValidateTests(unittest.TestCase):
     def test_table_return_outside_modules_is_allowed(self):
         self.assertEqual(self.problems("return { Start = 1 }\n", "hook/main.lua"), [])
 
-    def test_byte_order_mark_is_reported(self):
-        self.assertEqual(len(self.problems(b"\xef\xbb\xbflocal a = 1\n")), 1)
+    def test_byte_order_mark_in_hook_file_is_reported(self):
+        self.assertEqual(len(self.problems(b"\xef\xbb\xbflocal a = 1\n", "hook/lua/main.lua")), 1)
+
+    def test_byte_order_mark_in_ordinary_file_is_allowed(self):
+        self.assertEqual(self.problems(b"\xef\xbb\xbflocal a = 1\n"), [])
 
     def test_method_called_with_a_dot_is_reported(self):
         code = "local function F(unit)\n    return unit.GetPosition()\nend\n"
