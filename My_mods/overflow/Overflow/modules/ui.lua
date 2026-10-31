@@ -432,6 +432,7 @@ local BODY_KEYS = { 'eOverflow', 'eGo', 'eOwn', 'divider1',
 --------------------------------------------------------------------------------
 
 local G = {
+    ---@type Window?
     win       = nil,        -- окно игры (класс Window)
     reopenButton = nil,     -- кнопка, возвращающая свёрнутую панель
     labels    = {},
@@ -792,9 +793,13 @@ end
 -- крестик другого размера.
 --------------------------------------------------------------------------------
 local function RowRightInset(top)
+    -- The Window constructor sets _closeBtn, but the class annotations do not
+    -- declare it.
+    ---@diagnostic disable-next-line: undefined-field
     if not G.win or not G.win._closeBtn then return L.RIGHT_PAD end
     local ok, inset = pcall(function()
         local client = G.win.ClientGroup
+        ---@diagnostic disable-next-line: undefined-field
         local btn = G.win._closeBtn
         local btnTop = btn.Top() - client.Top()
         local btnBottom = btn.Bottom() - client.Top()

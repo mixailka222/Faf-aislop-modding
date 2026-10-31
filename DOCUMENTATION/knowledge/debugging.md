@@ -119,6 +119,12 @@
 
 Не подтверждено: нужен опыт в игре: вызвать `error()` внутри `ForkThread`, например `ForkThread(function() error('x') end)`, и прочитать лог.
 
+### LuaLS: ложное `undefined-global` на вызове сразу после `..`
+
+Плагин FAF для LuaLS может считать необъявленным глобал файла, если он вызван сразу после оператора `..`. Такой вызов работает в игре. Замечание подавляется строкой `---@diagnostic disable-next-line: undefined-global` с причиной рядом.
+
+Наблюдение: в `My_mods/overflow/Overflow/modules/themes.lua` функция `FrameCurrent` объявлена в этом же файле. LuaLS принимал вызов `ByLabel(FRAMES, FrameCurrent())`, но отмечал `'|' .. FrameCurrent()`.
+
 ### Строки лога о клавишах показывают шаг поломки
 
 `SetUserKeyMapping` пишет `Keybindings adding key`, а `GetKeyMappings` при незнакомом действии пишет `Keybindings cannot find action`. Так отличают незаписанную привязку от незарегистрированного действия.

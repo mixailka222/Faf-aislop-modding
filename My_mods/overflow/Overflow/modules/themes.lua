@@ -390,6 +390,9 @@ end
 -- перестраивается при изменении. Сюда входит ВСЁ, что меняет вид при сборке:
 -- пресет, рамка, мигание, масштаб шрифта и режим «только числа».
 function ThemeSignature()
+    -- The FAF plugin for LuaLS reports a global call right after `..` as
+    -- undefined. The function is declared above in this file.
+    ---@diagnostic disable-next-line: undefined-global
     return StyleCurrent() .. '|' .. FrameCurrent() .. '|' ..
         tostring(ThemeBlinkOn()) .. '|' .. tostring(FontScaleRead()) .. '|' ..
         tostring(NumbersOnly())
@@ -397,6 +400,8 @@ end
 
 -- Человеческое описание для лога.
 function ThemeTell()
+    -- Same false alarm of the FAF plugin as in ThemeSignature.
+    ---@diagnostic disable-next-line: undefined-global
     return StyleCurrent() .. ' / ' .. FrameCurrent() ..
         ' / шрифт ' .. tostring(StyleFontSize()) ..
         ' / ' .. (NumbersOnly() and 'только числа' or 'с подписями')
