@@ -257,7 +257,7 @@ def check_readme(mod: Path) -> list[str]:
 
 
 def run_tests(project: Path) -> list[str]:
-    """Only test_*.py: other scripts in tests/ may rewrite the mod sources while they run."""
+    """Only test_*.py: other scripts in tests/ are slow mutation checks, run by hand."""
     folder = project / "tests"
     if not folder.is_dir():
         return []

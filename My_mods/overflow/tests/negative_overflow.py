@@ -2,14 +2,16 @@
 """Проверка самих тестов: тест обязан краснеть на сломанном коде.
 
 Тест, который проходит всегда, хуже отсутствия теста: он даёт уверенность без
-основания. Здесь мод ломается пятью способами, и каждый обязан быть пойман.
+основания. Здесь мод ломается разными способами, и каждый обязан быть пойман.
 
-Файлы откатываются побайтово после каждой пробы и в конце проверяются на
-побайтовое равенство исходным.
+Мод и тесты копируются во временную папку, все поломки делаются только в копии.
+Настоящие исходники скрипт не меняет, поэтому прерывание ничего не портит.
 
-1) rows.lua: отсутствующее поле читается как «скрыть» вместо «показывать».
-   Должен упасть тест совместимости - тот случай, когда после обновления
-   мода панель гаснет у всех.
+Запуск через Python из .tools/venv: тестам нужен lupa.
+
+1) rows.lua: отсутствующее поле читается как «скрыть» вместо значения по
+   умолчанию. Должен упасть тест совместимости - тот случай, когда после
+   обновления мода панель гаснет у всех.
 
 2) ui.lua: высота панели берётся из константы, а не считается по видимым
    строкам. Должны упасть проверки высоты 38 и 24.
@@ -35,21 +37,38 @@
 8) Options.lua: из объявления полей выброшено поле theme. Страница собралась
    бы, но переключателя оформления на ней не оказалось бы.
 """
+import atexit
 import io
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MOD = os.path.abspath(os.path.join(os.path.dirname(HERE), "Overflow"))
+SOURCE_MOD = os.path.abspath(os.path.join(os.path.dirname(HERE), "Overflow"))
 # Гоняются ОБА теста: часть поломок видна только одному из них. Например,
 # тема не приехала в панель - rows-тест этого не замечает, а тест тем
 # замечает сразу.
 TESTS = ["test_overflow_rows.py", "test_overflow_theme.py"]
-BAK = os.path.join(HERE, "_ovbak")
 
 FILES = ["rows.lua", "ui.lua", "Options.lua", "sync.lua", "themes.lua"]
+
+# The tests look for the mod next to their own folder, so the copy keeps that layout.
+WORK = tempfile.mkdtemp(prefix="overflow_mutants_")
+atexit.register(shutil.rmtree, WORK, ignore_errors=True)
+MOD = os.path.join(WORK, "Overflow")
+TESTS_DIR = os.path.join(WORK, "tests")
+shutil.copytree(SOURCE_MOD, MOD)
+os.makedirs(TESTS_DIR)
+for t in TESTS:
+    shutil.copyfile(os.path.join(HERE, t), os.path.join(TESTS_DIR, t))
+
+ORIGINAL = {}
+for f in FILES:
+    ORIGINAL[f] = open(os.path.join(MOD, "modules", f), "rb").read()
+
+ENV = dict(os.environ, PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1")
 
 
 def rd(p):
@@ -64,9 +83,9 @@ def run_test():
     worst = 0
     chunks = []
     for t in TESTS:
-        r = subprocess.run([sys.executable, os.path.join(HERE, t)], cwd=HERE,
-                           capture_output=True, encoding="utf-8",
-                           errors="replace")
+        r = subprocess.run([sys.executable, os.path.join(TESTS_DIR, t)],
+                           cwd=TESTS_DIR, env=ENV, capture_output=True,
+                           encoding="utf-8", errors="replace")
         if r.returncode != 0:
             worst = r.returncode
         chunks.append((r.stdout or "") + (r.stderr or ""))
@@ -78,17 +97,9 @@ def nfail(out):
 
 
 def restore(fname):
-    path = os.path.join(MOD, "modules", fname)
-    shutil.copyfile(os.path.join(BAK, fname), path)
-    if open(path, "rb").read() != open(os.path.join(BAK, fname), "rb").read():
-        raise SystemExit("!!! VOSSTANOVLENIE NE SOVPALO: " + fname)
+    with open(os.path.join(MOD, "modules", fname), "wb") as fh:
+        fh.write(ORIGINAL[fname])
 
-
-if os.path.isdir(BAK):
-    shutil.rmtree(BAK)
-os.makedirs(BAK)
-for f in FILES:
-    shutil.copyfile(os.path.join(MOD, "modules", f), os.path.join(BAK, f))
 
 code, out = run_test()
 print("ISKHODNO: kod %d, FAIL=%d, OK=%d"
@@ -349,8 +360,6 @@ for label, fname, old, new, expect in CASES:
 # Ломается не содержимое файла, а его ОТСУТСТВИЕ. Именно так это и выглядело
 # в игре: моду нет, мод работает, панель на месте, а страницы настроек нет.
 # Ровно этот случай проверка цепочки и ловит.
-shim_bak = os.path.join(BAK, "main.lua")
-shutil.copyfile(SHIM, shim_bak)
 os.remove(SHIM)
 code, out = run_test()
 caught = (code != 0) and ("страница зарегистрирована" in out) \
@@ -364,18 +373,7 @@ print("%-44s kod %d, FAIL=%d  %s"
 for l in out.split("\n"):
     if "[FAIL]" in l:
         print("     " + l[:150])
-shutil.copyfile(shim_bak, SHIM)
-if open(SHIM, "rb").read() != open(shim_bak, "rb").read():
-    raise SystemExit("!!! SHIM NE VOSSTANOVLEN")
-
-print("")
-for f in FILES:
-    restore(f)
-    same = (open(os.path.join(MOD, "modules", f), "rb").read()
-            == open(os.path.join(BAK, f), "rb").read())
-    print("  %-14s vosstanovlen pobaytovo: %s" % (f, same))
-    if not same:
-        bad += 1
+shutil.copyfile(os.path.join(SOURCE_MOD, "modules", "main.lua"), SHIM)
 
 code, out = run_test()
 print("")
@@ -384,7 +382,6 @@ print("POSLE VOSSTANOVLENIYA: kod %d, FAIL=%d, OK=%d"
 if code != 0:
     bad += 1
 
-shutil.rmtree(BAK)
 print("")
 if bad:
     print("!!! ne vse polomki poymany (%d)" % bad)

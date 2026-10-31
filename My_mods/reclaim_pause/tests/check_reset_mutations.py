@@ -3,15 +3,33 @@
 
 Поломки повторяют реальные ошибки, одна из которых уже была допущена
 при написании кода (запись options.x(v) вместо options.x:Set(v)).
+
+Мод и тест копируются во временную папку, поломки делаются только в копии.
+Настоящие исходники скрипт не меняет, поэтому прерывание ничего не портит.
+
+Запуск через Python из .tools/venv: тесту нужен lupa.
 """
+import atexit
 import io
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-TEST = os.path.join(HERE, "test_options_unit.py")
-OPT = os.path.join(os.path.dirname(HERE), "ReclaimPause", "modules", "options.lua")
+
+# The test looks for the mod next to its own folder, so the copy keeps that layout.
+WORK = tempfile.mkdtemp(prefix="reclaim_mutants_")
+atexit.register(shutil.rmtree, WORK, ignore_errors=True)
+shutil.copytree(os.path.join(os.path.dirname(HERE), "ReclaimPause"),
+                os.path.join(WORK, "ReclaimPause"))
+os.makedirs(os.path.join(WORK, "tests"))
+TEST = os.path.join(WORK, "tests", "test_options_unit.py")
+shutil.copyfile(os.path.join(HERE, "test_options_unit.py"), TEST)
+OPT = os.path.join(WORK, "ReclaimPause", "modules", "options.lua")
+
+ENV = dict(os.environ, PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1")
 
 ORIG = io.open(OPT, encoding="utf-8").read()
 
@@ -88,7 +106,7 @@ for title, old, new in BROKEN:
         results.append((title, 999, 0, u"podstanovka ne srabotala"))
         continue
     io.open(OPT, "w", encoding="utf-8", newline="").write(ORIG.replace(old, new))
-    p = subprocess.run([sys.executable, TEST], capture_output=True)
+    p = subprocess.run([sys.executable, TEST], env=ENV, capture_output=True)
     out = p.stdout.decode("utf-8", "replace") + p.stderr.decode("utf-8", "replace")
     fails = out.count("[FAIL]")
     oks = out.count("[OK  ]")
@@ -99,10 +117,6 @@ for title, old, new in BROKEN:
                                     title, fails))
     for n in name:
         print(u"           " + n.strip())
-
-io.open(OPT, "w", encoding="utf-8", newline="").write(ORIG)
-print("")
-print(u"исходный код восстановлен")
 
 bad = [r for r in results if r[1] == 0 and r[3] == u"podstanovka ne srabotala"]
 if bad:
