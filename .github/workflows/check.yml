@@ -1,0 +1,38 @@
+name: Mod checks
+
+on:
+  push:
+
+jobs:
+  syntax:
+    name: FAF Lua compiler
+    runs-on: ubuntu-latest
+    container: faforever/lua:v5.0-3
+    steps:
+      - name: Install tooling
+        run: apk add bash git findutils
+      - uses: actions/checkout@v6
+      - name: Compile every mod file
+        shell: bash
+        run: |
+          status=0
+          while IFS= read -r file; do
+            luac -p "$file" || status=1
+          done < <(find My_mods -name '*.lua' -not -path '*/tests/*')
+          exit "$status"
+
+  check:
+    name: Mods and knowledge base
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Prepare tools
+        run: python3 DOCUMENTATION/tools/bootstrap.py --no-luac
+      - name: Test the tools
+        run: python3 -m unittest discover -s DOCUMENTATION/tests
+      - name: Check mods
+        env:
+          BASE: ${{ github.ref == 'refs/heads/main' && github.event.before || 'origin/main' }}
+        run: python3 DOCUMENTATION/tools/check.py --no-luac --changed-since "$BASE"

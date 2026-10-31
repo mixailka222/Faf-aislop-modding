@@ -1,0 +1,37 @@
+name: Pinned version updates
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check-updates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Compare pinned versions with upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          updates="$(python3 DOCUMENTATION/tools/bootstrap.py --check-updates)"
+          image="$(sed -n 's/.*faforever\/lua:\([^ ]*\).*/\1/p' .github/workflows/check.yml)"
+          pinned="$(python3 -c "import json; print(json.load(open('DOCUMENTATION/tools/tool_versions.json'))['lua-lang']['ref'])")"
+          if [ "$image" != "$pinned" ]; then
+            updates="$(printf '%s\nОбраз faforever/lua в check.yml: %s, lua-lang: %s' "$updates" "$image" "$pinned")"
+          fi
+          if [ -z "$updates" ]; then
+            exit 0
+          fi
+          title="Обновить закреплённые версии"
+          number="$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --body "$updates"
+          else
+            gh issue create --title "$title" --body "$updates"
+          fi
