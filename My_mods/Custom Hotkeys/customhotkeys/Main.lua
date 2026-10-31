@@ -48,10 +48,12 @@ local function CollectMatchingUnits(expression)
 end
 
 --- ASE is optional, so its lock list is asked for once and only if it is
---- installed: importing a missing file fails, pcall keeps that quiet.
+--- installed: importing a missing file or reading a missing field fails, pcall
+--- keeps that quiet. The field is read plainly, not with rawget: if ASE imported
+--- the file lazily, only a field read loads it.
 --- Shared state works because FAF caches imported modules per path, and ASE
 --- itself reaches the same file as "/mods/ASE/modules/Lock.lua".
-local AseLocks
+local AseIsLocked
 local aseLocksProbed = false
 
 --- @param unit UserUnit
@@ -60,13 +62,15 @@ local function IsLocked(unit)
     if not aseLocksProbed then
         aseLocksProbed = true
 
-        local ok, imported = pcall(import, "/mods/ASE/modules/Lock.lua")
-        if ok and rawget(imported, "IsLocked") then
-            AseLocks = imported
+        local ok, isLocked = pcall(function()
+            return import("/mods/ASE/modules/Lock.lua").IsLocked
+        end)
+        if ok then
+            AseIsLocked = isLocked
         end
     end
 
-    return AseLocks ~= nil and AseLocks.IsLocked(unit)
+    return AseIsLocked ~= nil and AseIsLocked(unit)
 end
 
 --- Selects everything the category expression matches, removes the excluded
