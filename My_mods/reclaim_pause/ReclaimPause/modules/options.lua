@@ -112,26 +112,23 @@ function Main()
     -- вызовов, 12 лишних сохранений профиля и 12 лишних строк в логе.
     local writing = false
 
-    -- Запись идёт через :Set, а НЕ вызовом options.x(значение): по
-    -- OptionVar.lua:18-20 __call только ВОЗВРАЩАЕТ значение и аргументов не
-    -- принимает, поэтому options.x(v) молча ничего бы не записал.
+    -- Raw(), not Set: OptionVar:Set remembers the old value, and Cancel in the
+    -- UMT window would bring it back. The new value is already in the profile,
+    -- so nothing here has to call OnChange.
     local function PushToWindow()
         local cfg = Settings.ReclaimPauseCfg
-        local outer = writing
-        writing = true
-        options.enabled:Set(cfg.enabled)
-        options.highMass:Set(cfg.highMass)
-        options.lowMass:Set(cfg.lowMass)
-        options.energyMin:Set(cfg.energyMin)
-        options.minSec:Set(cfg.minSec)
-        options.releaseHoldSec:Set(cfg.releaseHoldSec)
-        options.probeSec:Set(cfg.probeSec)
-        options.rescanSec:Set(cfg.rescanSec)
-        options.startGrace:Set(cfg.startGrace)
-        options.abortMove:Set(cfg.abortMove)
-        options.abortSec:Set(cfg.abortSec)
-        options.skipSec:Set(cfg.skipSec)
-        writing = outer
+        options.enabled:Raw():Set(cfg.enabled)
+        options.highMass:Raw():Set(cfg.highMass)
+        options.lowMass:Raw():Set(cfg.lowMass)
+        options.energyMin:Raw():Set(cfg.energyMin)
+        options.minSec:Raw():Set(cfg.minSec)
+        options.releaseHoldSec:Raw():Set(cfg.releaseHoldSec)
+        options.probeSec:Raw():Set(cfg.probeSec)
+        options.rescanSec:Raw():Set(cfg.rescanSec)
+        options.startGrace:Raw():Set(cfg.startGrace)
+        options.abortMove:Raw():Set(cfg.abortMove)
+        options.abortSec:Raw():Set(cfg.abortSec)
+        options.skipSec:Raw():Set(cfg.skipSec)
     end
 
     local function Refresh()

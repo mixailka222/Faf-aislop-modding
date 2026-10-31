@@ -33,18 +33,18 @@ ENV = dict(os.environ, PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1")
 
 ORIG = io.open(OPT, encoding="utf-8").read()
 
-SET_BLOCK = u"""        options.enabled:Set(cfg.enabled)
-        options.highMass:Set(cfg.highMass)
-        options.lowMass:Set(cfg.lowMass)
-        options.energyMin:Set(cfg.energyMin)
-        options.minSec:Set(cfg.minSec)
-        options.releaseHoldSec:Set(cfg.releaseHoldSec)
-        options.probeSec:Set(cfg.probeSec)
-        options.rescanSec:Set(cfg.rescanSec)
-        options.startGrace:Set(cfg.startGrace)
-        options.abortMove:Set(cfg.abortMove)
-        options.abortSec:Set(cfg.abortSec)
-        options.skipSec:Set(cfg.skipSec)
+SET_BLOCK = u"""        options.enabled:Raw():Set(cfg.enabled)
+        options.highMass:Raw():Set(cfg.highMass)
+        options.lowMass:Raw():Set(cfg.lowMass)
+        options.energyMin:Raw():Set(cfg.energyMin)
+        options.minSec:Raw():Set(cfg.minSec)
+        options.releaseHoldSec:Raw():Set(cfg.releaseHoldSec)
+        options.probeSec:Raw():Set(cfg.probeSec)
+        options.rescanSec:Raw():Set(cfg.rescanSec)
+        options.startGrace:Raw():Set(cfg.startGrace)
+        options.abortMove:Raw():Set(cfg.abortMove)
+        options.abortSec:Raw():Set(cfg.abortSec)
+        options.skipSec:Raw():Set(cfg.skipSec)
 """
 
 CALL_BLOCK = u"""        options.enabled(cfg.enabled)
@@ -61,15 +61,14 @@ CALL_BLOCK = u"""        options.enabled(cfg.enabled)
         options.skipSec(cfg.skipSec)
 """
 
-GUARD = u"""        if writing then return end
-
+STUCK = u"""            writing = false
 """
 
 CLEAR = u"""            options.resetFlag:Set(false)
 """
 
 BROKEN = [
-    (u"1. запись ползунков вызовом вместо :Set",
+    (u"1. запись ползунков вызовом вместо Raw():Set",
      SET_BLOCK, CALL_BLOCK),
 
     (u"2. галочка не снимает себя",
@@ -93,7 +92,7 @@ BROKEN = [
 """),
 
     (u"5. флаг writing залипает: Refresh выключен навсегда",
-     GUARD, u""),
+     STUCK, u""),
 
     (u"6. сброса нет вообще",
      u"        if options.resetFlag() then", u"        if false then"),

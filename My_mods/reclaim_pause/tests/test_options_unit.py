@@ -66,20 +66,36 @@ function Prefs.GetFromCurrentProfile(k) return PROFILE[k] end
 function Prefs.SetToCurrentProfile(k, v) PROFILE[k] = v end
 
 -- ------------------------------------------------------------ OptionVar.lua
+local LazyMetaTable = {}
+LazyMetaTable.__index = LazyMetaTable
+function LazyMetaTable:__call() return self._v end
+function LazyMetaTable:Set(v) self._v = v end
+
 local OptionVarMetaTable = {}
 OptionVarMetaTable.__index = OptionVarMetaTable
-function OptionVarMetaTable:__call() return self._v end
-function OptionVarMetaTable:Set(v) self._v = v self:OnChange() end
+function OptionVarMetaTable:__call() return self._lv() end
+function OptionVarMetaTable:Set(v)
+  if self._prev == nil then self._prev = self._lv() end
+  self._lv:Set(v)
+  self:OnChange()
+end
+function OptionVarMetaTable:Reset()
+  if self._prev ~= nil then
+    self:Set(self._prev)
+    self._prev = nil
+  end
+end
 function OptionVarMetaTable:Bind(fn) self.OnChange = fn self:OnChange() end
 function OptionVarMetaTable:Option() return self._o end
-function OptionVarMetaTable:Raw() return self end
+function OptionVarMetaTable:Raw() return self._lv end
 function OptionVarMetaTable:OnChange() end
 function OptionVarMetaTable:OnSave() end
 function OptionVarMetaTable:Save()
   local t = PROFILE[self._m] or {}
-  t[self._o] = self._v
+  t[self._o] = self._lv()
   PROFILE[self._m] = t
   self:OnSave()
+  self._prev = nil
 end
 function OptionVar(modOptionName, subOption, default)
   if default == nil then
@@ -93,7 +109,8 @@ function OptionVar(modOptionName, subOption, default)
     PROFILE[modOptionName] = t
     val = default
   end
-  return setmetatable({ _m = modOptionName, _o = subOption, _v = val },
+  return setmetatable({ _m = modOptionName, _o = subOption,
+                        _lv = setmetatable({ _v = val }, LazyMetaTable) },
     OptionVarMetaTable)
 end
 
@@ -412,6 +429,29 @@ check(opts.enabled() == true, 'включение клавишей дошло д
 opts.highMass:Set(91)
 check(SET.ReclaimPauseCfg.highMass == 91,
       'после клавиш ползунок снова управляет настройкой')
+
+print('')
+print('=== CANCEL В ОКНЕ НЕ ОТМЕНЯЕТ ГОРЯЧИЕ КЛАВИШИ ===')
+-- OK in the UMT window calls Save on every OptionVar, Cancel calls Reset.
+local function Window(method)
+  for i = 1, #expected do
+    local var = opts[expected[i]]
+    var[method](var)
+  end
+end
+Window('Save')
+
+SET.ReclaimPauseResetDefaults()
+Window('Reset')
+check(SET.ReclaimPauseCfg.highMass == SET.ReclaimPauseDefaults().highMass,
+      'Cancel не вернул порог после сброса клавишей (получено ' ..
+      tostring(SET.ReclaimPauseCfg.highMass) .. ')')
+
+WATCH.ReclaimPauseToggle()
+Window('Reset')
+check(SET.ReclaimPauseCfg.enabled == false,
+      'Cancel не включил мод обратно после выключения клавишей')
+WATCH.ReclaimPauseToggle()
 
 return fails
 '''
