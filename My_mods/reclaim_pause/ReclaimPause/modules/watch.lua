@@ -352,10 +352,6 @@ end
 -- 3) Возвращаем выделение и ПРОВЕРЯЕМ, что вернулось. Если не совпало -
 --    пишем в лог, иначе о такой проблеме узнаём только от игрока.
 local function WithAllEngineers(callback)
-    if PlayerInCommandMode() then
-        return false
-    end
-
     local saved = nil
     local beforeN = 0
     local ok, err = pcall(function()
@@ -386,6 +382,11 @@ end
 
 local function EnsureEngineers(force)
     if not force and (iterNo - rescanIter) * SCAN_SEC < rescanSec then
+        return nil
+    end
+    -- Before rescanIter changes: the scan has to run on the first pass after
+    -- the command mode ends, not rescanSec later.
+    if PlayerInCommandMode() then
         return nil
     end
     local box = {}

@@ -376,8 +376,8 @@ check(SCAN_CALLS == 0, 'при активном режиме команд обх
 check(CMDMODE_CACHE_CALLS == 0, 'режим команд игрока не перезапускался при обходе')
 check(not isPaused(203), 'инженер без обхода пока не найден')
 CMDMODE_ACTIVE = false
-for _ = 1, 4 do RunOnce() end
-check(isPaused(203), 'режим команд закончился - обход вернулся, инженер на паузе')
+RunOnce()
+check(isPaused(203), 'режим команд закончился - обход идёт на следующем же проходе')
 
 Reset(0.95, 1.0)
 add(eng(204, AM))
