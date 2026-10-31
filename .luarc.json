@@ -1,0 +1,49 @@
+{
+  "runtime": {
+    "version": "Lua 5.1",
+    "nonstandardSymbol": [
+      "continue",
+      "!="
+    ],
+    "special": {
+      "import": "require",
+      "doscript": "require",
+      "lazyimport": "require"
+    },
+    "path": [
+      "/?"
+    ],
+    "pathStrict": false,
+    "exportEnvDefault": true,
+    "plugin": "references/fa-addon/lua-ls-addon/plugin.lua"
+  },
+  "type": {
+    "weakNilCheck": true
+  },
+  "workspace": {
+    "library": [
+      "references/fa/engine",
+      "references/fa/lua",
+      "references/ui-libs/mods/ReUI",
+      "references/ui-libs/mods/UMT",
+      "DOCUMENTATION/tools/luals_types.lua"
+    ],
+    "ignoreDir": [
+      "references",
+      ".tools",
+      "research",
+      "DOCUMENTATION",
+      "tests"
+    ],
+    "checkThirdParty": false
+  },
+  "diagnostics": {
+    "globals": [
+      "__moduleinfo",
+      "__blueprints"
+    ],
+    "disable": [
+      "deprecated"
+    ]
+  }
+}
