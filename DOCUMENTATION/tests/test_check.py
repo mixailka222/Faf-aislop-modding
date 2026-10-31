@@ -158,6 +158,19 @@ class ProjectDirTests(unittest.TestCase):
         self.assertEqual(project.name, "overflow")
 
 
+class ModTestsOwnerTests(unittest.TestCase):
+    def test_mod_next_to_the_tests_owns_them(self):
+        mod = Path("My_mods/overflow/Overflow")
+        self.assertEqual(check.tests_project(mod), Path("My_mods/overflow"))
+
+    def test_nested_mod_does_not_own_project_tests(self):
+        self.assertIsNone(check.tests_project(Path("My_mods/overflow/diagnostic/testing")))
+
+    def test_project_folder_that_is_the_mod_owns_its_tests(self):
+        mod = Path("My_mods/single")
+        self.assertEqual(check.tests_project(mod), mod)
+
+
 class FindModsTests(RepoCase):
     def test_only_tracked_mods_are_found(self):
         tracked = self.mod("My_mods/one/Mod")
@@ -375,6 +388,17 @@ class LualsReportTests(unittest.TestCase):
         self.assertIn("5", problems[0])
         self.assertIn("undefined-global", problems[0])
 
+    def test_report_from_another_folder_is_an_error(self):
+        report = {Path("/elsewhere/Main.lua"): ["problem"]}
+        with self.assertRaises(check.CheckError):
+            check.require_paths_inside(report, Path("/repo"))
+
+    def test_report_inside_the_repository_is_accepted(self):
+        check.require_paths_inside({Path("/repo/My_mods/Main.lua"): ["problem"]}, Path("/repo"))
+
+    def test_empty_report_is_accepted(self):
+        check.require_paths_inside({}, Path("/repo"))
+
 
 class VersionsTests(RepoCase):
     def install(self, versions, *paths):
@@ -382,6 +406,14 @@ class VersionsTests(RepoCase):
         bootstrap.installed_file().write_text(json.dumps(versions), encoding="utf-8")
         for path in paths:
             write(path, "")
+        for name in bootstrap.SPARSE:
+            (self.root / "references" / name).mkdir(parents=True)
+
+    def test_deleted_source_folder_is_reported(self):
+        self.install(bootstrap.expected_versions(bootstrap.load_versions()),
+                     bootstrap.luals_path(), bootstrap.luac_path(), bootstrap.venv_python())
+        (self.root / "references" / "fa").rmdir()
+        self.assertIn("bootstrap.py", " ".join(check.check_versions()))
 
     def test_stale_tools_stop_the_check_with_a_command(self):
         self.assertIn("bootstrap.py", " ".join(check.check_versions()))
@@ -490,6 +522,12 @@ class LuacTests(RepoCase):
 
     def test_valid_files_are_accepted(self):
         self.assertEqual(check.check_luac(self.mod("My_mods/one/Mod")), [])
+
+    def test_failure_without_a_message_is_still_reported(self):
+        folder = self.mod("My_mods/one/Mod")
+        silent = subprocess.CompletedProcess([], 1, stdout="", stderr="")
+        with mock.patch.object(check.subprocess, "run", return_value=silent):
+            self.assertEqual(len(check.check_luac(folder)), 1)
 
 
 if __name__ == "__main__":

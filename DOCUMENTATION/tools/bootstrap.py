@@ -10,6 +10,7 @@ what differs is updated.
 import argparse
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -79,16 +80,23 @@ def load_versions() -> dict:
 
 
 def load_installed() -> dict:
+    """A damaged record counts as empty: the next run simply reinstalls."""
     if not installed_file().exists():
         return {}
-    return json.loads(installed_file().read_text(encoding="utf-8"))
+    try:
+        return json.loads(installed_file().read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
 
 
 def mark_installed(name: str, value: str) -> None:
     installed = load_installed()
     installed[name] = value
     installed_file().parent.mkdir(parents=True, exist_ok=True)
-    installed_file().write_text(json.dumps(installed, indent=2), encoding="utf-8")
+    # Written aside and swapped in, so an interrupted run cannot leave half a file.
+    partial = installed_file().with_suffix(".partial")
+    partial.write_text(json.dumps(installed, indent=2), encoding="utf-8")
+    os.replace(partial, installed_file())
 
 
 def expected_versions(versions: dict) -> dict:
@@ -151,15 +159,24 @@ def fetch_ref(folder: Path, ref: str) -> None:
     run(["git", "checkout", "-q", "--detach", "FETCH_HEAD"], folder)
 
 
+def same_repository(address: str, url: str) -> bool:
+    """One repository has several spellings: with .git, or as an SSH address."""
+    def normal(value: str) -> str:
+        value = re.sub(r"^git@github\.com:", "https://github.com/", value.strip())
+        return value.removesuffix("/").removesuffix(".git").lower()
+
+    return normal(address) == normal(url)
+
+
 def ensure_repo(name: str, spec: dict, sparse: list[str]) -> None:
     target = ROOT / "references" / name
     url = GITHUB + spec["repo"]
 
     if target.exists():
-        origin = None
+        origin = ""
         if (target / ".git").exists():
             origin = run(["git", "remote", "get-url", "origin"], target)
-        if origin != url:
+        if not same_repository(origin, url):
             raise BootstrapError(
                 f"Папка references/{name} уже занята чем-то другим. "
                 f"Ожидается клон {url}. Перенесите папку и запустите скрипт снова."
@@ -190,6 +207,16 @@ def luals_asset(version: str, platform: str) -> str:
     return f"lua-language-server-{version}-{suffixes[platform]}"
 
 
+def unpack(archive: Path, target: Path) -> None:
+    if archive.suffix == ".zip":
+        with zipfile.ZipFile(archive) as package:
+            package.extractall(target)
+    else:
+        safe = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
+        with tarfile.open(archive) as package:
+            package.extractall(target, **safe)
+
+
 def install_luals(version: str) -> None:
     asset = luals_asset(version, sys.platform)
     target = tools_dir() / "lua-language-server"
@@ -199,12 +226,7 @@ def install_luals(version: str) -> None:
     archive = partial / asset
     url = f"{GITHUB}LuaLS/lua-language-server/releases/download/{version}/{asset}"
     download(url, archive)
-    if asset.endswith(".zip"):
-        with zipfile.ZipFile(archive) as package:
-            package.extractall(partial)
-    else:
-        with tarfile.open(archive) as package:
-            package.extractall(partial)
+    unpack(archive, partial)
     archive.unlink()
     remove_tree(target)
     partial.rename(target)
@@ -262,7 +284,13 @@ def install(versions: dict, build_luac: bool) -> None:
                      luac_path(), lua_path())
 
 
-def fetch_json(url: str) -> dict:
+def last_commit(spec: dict, ref: str, folder: str) -> str:
+    """The commit that last touched folder. Compare lists are cut off on long ranges."""
+    url = f"{GITHUB_API}{spec['repo']}/commits?sha={ref}&path={folder}&per_page=1"
+    return fetch_json(url)[0]["sha"]
+
+
+def fetch_json(url: str) -> dict | list:
     command = ["curl", "-fsSL", "--retry", "3", "-H", "Accept: application/vnd.github+json"]
     if os.environ.get("GITHUB_TOKEN"):
         command += ["-H", f"Authorization: Bearer {os.environ['GITHUB_TOKEN']}"]
@@ -286,11 +314,10 @@ def latest_versions(versions: dict) -> dict:
             if release["tag_name"] != spec["ref"]:
                 updates[name] = release["tag_name"]
         elif isinstance(spec, dict):
-            changes = fetch_json(
-                f"{GITHUB_API}{spec['repo']}/compare/{spec['ref']}...{spec['branch']}")
-            folders = tuple(f"{folder}/" for folder in SPARSE[name])
-            if any(item["filename"].startswith(folders) for item in changes["files"]):
-                updates[name] = changes["commits"][-1]["sha"]
+            for folder in SPARSE[name]:
+                latest = last_commit(spec, spec["branch"], folder)
+                if latest != last_commit(spec, spec["ref"], folder):
+                    updates[name] = latest
     return updates
 
 

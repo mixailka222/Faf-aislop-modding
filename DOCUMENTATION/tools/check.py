@@ -64,6 +64,16 @@ def project_dir(mod: Path) -> Path:
     return Path(*parts[:parts.index("My_mods") + 2])
 
 
+def tests_project(mod: Path) -> Path | None:
+    """The project whose tests/ checks this mod.
+
+    Tests belong to the mod next to them. A mod nested deeper in the project, like a
+    diagnostic build, has no tests of its own and must not inherit their result.
+    """
+    project = project_dir(mod)
+    return project if mod == project or mod.parent == project else None
+
+
 def relative(root: Path, path: Path) -> str:
     return path.relative_to(root).as_posix()
 
@@ -127,6 +137,8 @@ def check_versions(no_luac: bool = False) -> list[str]:
         tools.append(bootstrap.luac_path())
     stale = bootstrap.outdated(expected, bootstrap.load_installed())
     stale += [tool.name for tool in tools if not tool.exists()]
+    stale += [f"references/{name}" for name in bootstrap.SPARSE
+              if not (bootstrap.ROOT / "references" / name).is_dir()]
     if not stale:
         return []
     return [f"Инструменты устарели или не установлены: {', '.join(stale)}. "
@@ -146,6 +158,12 @@ def parse_luals(raw: dict) -> dict[Path, list[str]]:
     return report
 
 
+def require_paths_inside(report: dict[Path, list[str]], root: Path) -> None:
+    """Paths that match no mod would look like a clean result, so this has to fail loudly."""
+    if report and not any(root in path.parents for path in report):
+        raise CheckError(f"Пути в отчёте LuaLS не совпали с {root}: {next(iter(report))}")
+
+
 def run_luals(root: Path) -> dict[Path, list[str]]:
     """One run for the whole repository: it takes seconds and the result is filtered by mod."""
     output = root / LUALS_REPORT
@@ -158,7 +176,9 @@ def run_luals(root: Path) -> dict[Path, list[str]]:
         raise CheckError(f"LuaLS не отработал: {done.stdout[-500:]} {done.stderr[-500:]}")
     if not output.exists():
         return {}
-    return parse_luals(json.loads(output.read_text(encoding="utf-8")))
+    report = parse_luals(json.loads(output.read_text(encoding="utf-8")))
+    require_paths_inside(report, root)
+    return report
 
 
 def luals_problems(report: dict[Path, list[str]], mod: Path) -> list[str]:
@@ -176,7 +196,8 @@ def check_luac(mod: Path) -> list[str]:
         done = subprocess.run([str(bootstrap.luac_path()), "-p", str(path)], capture_output=True,
                               encoding="utf-8", errors="replace")
         if done.returncode != 0:
-            problems.append(done.stderr.strip().splitlines()[0])
+            lines = done.stderr.strip().splitlines()
+            problems.append(lines[0] if lines else f"{path.name}: luac завершился с ошибкой")
     return problems
 
 
@@ -295,7 +316,7 @@ def report(title: str, problems: list[str]) -> bool:
     return not problems
 
 
-def check_mod(mod: Path, luals: dict, no_luac: bool, tested: set) -> bool:
+def check_mod(mod: Path, luals: dict, no_luac: bool) -> bool:
     print(f"== {relative(ROOT, mod)}")
     results = [report("LuaLS", luals_problems(luals, mod))]
     if no_luac:
@@ -306,10 +327,9 @@ def check_mod(mod: Path, luals: dict, no_luac: bool, tested: set) -> bool:
     results.append(report("импорты", check_imports(mod)))
     results.append(report("mod_info", check_mod_info(mod)))
     results.append(report("README", check_readme(mod)))
-    project = project_dir(mod)
-    if project not in tested:
-        tested.add(project)
-        results.append(report(f"тесты {project.name}", run_tests(project)))
+    project = tests_project(mod)
+    if project:
+        results.append(report(f"тесты {mod.name}", run_tests(project)))
     return all(results)
 
 
@@ -339,8 +359,7 @@ def main() -> int:
         else:
             mods = find_mods(ROOT)
         luals = run_luals(ROOT)
-        tested = set()
-        results = [check_mod(mod, luals, options.no_luac, tested) for mod in mods]
+        results = [check_mod(mod, luals, options.no_luac) for mod in mods]
         if not options.mod:
             results.append(report("база знаний", check_knowledge(ROOT)))
         if options.changed_since and os.environ.get("GITHUB_ACTIONS"):

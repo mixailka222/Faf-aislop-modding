@@ -1,8 +1,12 @@
 import json
+import re
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
+import warnings
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -23,9 +27,10 @@ class RootInTemp(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name) / "path with spaces"
         self.root.mkdir()
-        patcher = mock.patch.object(bootstrap, "ROOT", self.root)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        for patcher in (mock.patch.object(bootstrap, "ROOT", self.root),
+                        mock.patch.object(bootstrap, "print", create=True)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
 
 class OutdatedTests(unittest.TestCase):
@@ -64,7 +69,53 @@ class ExpectedVersionsTests(unittest.TestCase):
         )
 
 
+class SameRepositoryTests(unittest.TestCase):
+    URL = "https://github.com/owner/name"
+
+    def test_same_address_matches(self):
+        self.assertTrue(bootstrap.same_repository(self.URL, self.URL))
+
+    def test_git_suffix_is_ignored(self):
+        self.assertTrue(bootstrap.same_repository(self.URL + ".git", self.URL))
+
+    def test_ssh_address_matches(self):
+        self.assertTrue(bootstrap.same_repository("git@github.com:owner/name.git", self.URL))
+
+    def test_other_repository_does_not_match(self):
+        self.assertFalse(bootstrap.same_repository("https://github.com/owner/other", self.URL))
+
+
+class UnpackTests(RootInTemp):
+    def test_tarball_is_unpacked_without_warnings(self):
+        source = self.root / "bin"
+        source.mkdir()
+        (source / "tool").write_text("data")
+        archive = self.root / "tool.tar.gz"
+        with tarfile.open(archive, "w:gz") as package:
+            package.add(source, arcname="bin")
+        target = self.root / "out"
+        target.mkdir()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            bootstrap.unpack(archive, target)
+        self.assertEqual((target / "bin" / "tool").read_text(), "data")
+
+    def test_zip_is_unpacked(self):
+        archive = self.root / "tool.zip"
+        with zipfile.ZipFile(archive, "w") as package:
+            package.writestr("bin/tool", "data")
+        target = self.root / "out"
+        target.mkdir()
+        bootstrap.unpack(archive, target)
+        self.assertEqual((target / "bin" / "tool").read_text(), "data")
+
+
 class InstallStepTests(RootInTemp):
+    def test_damaged_record_counts_as_nothing_installed(self):
+        bootstrap.installed_file().parent.mkdir(parents=True)
+        bootstrap.installed_file().write_text('{"fa": "aa', encoding="utf-8")
+        self.assertEqual(bootstrap.load_installed(), {})
+
     def test_failed_step_is_not_marked_installed(self):
         calls = []
 
@@ -234,33 +285,35 @@ class LatestVersionsTests(unittest.TestCase):
         "lupa": "2.0",
     }
 
-    def fetch(self, files, head="bbb", lua_tag="v1", luals_tag="3.0"):
+    def fetch(self, folder_commits=None, lua_tag="v1", luals_tag="3.0"):
+        """folder_commits maps (ref, folder) to the last commit that touched the folder."""
+        folder_commits = folder_commits or {}
+
         def fake(url):
-            if "/compare/" in url:
-                return {
-                    "commits": [{"sha": head}],
-                    "files": [{"filename": name} for name in files],
-                }
+            if "/commits?" in url:
+                ref = re.search(r"sha=([^&]+)", url).group(1)
+                folder = re.search(r"path=([^&]+)", url).group(1)
+                return [{"sha": folder_commits.get((ref, folder), "same")}]
             if "o/lua/" in url:
                 return {"tag_name": lua_tag}
             return {"tag_name": luals_tag}
 
         return mock.patch.object(bootstrap, "fetch_json", fake)
 
-    def test_changes_outside_tracked_folders_are_ignored(self):
-        with self.fetch(["mods/Other/Main.lua"]):
+    def test_unchanged_tracked_folders_report_nothing(self):
+        with self.fetch():
             self.assertEqual(bootstrap.latest_versions(self.VERSIONS), {})
 
-    def test_changes_in_tracked_folders_are_reported(self):
-        with self.fetch(["mods/ReUI/Core/Main.lua"]):
+    def test_change_in_a_tracked_folder_is_reported(self):
+        with self.fetch({("dev", "mods/ReUI"): "bbb"}):
             self.assertEqual(bootstrap.latest_versions(self.VERSIONS), {"ui-libs": "bbb"})
 
     def test_new_compiler_release_is_reported(self):
-        with self.fetch([], lua_tag="v2"):
+        with self.fetch(lua_tag="v2"):
             self.assertEqual(bootstrap.latest_versions(self.VERSIONS), {"lua-lang": "v2"})
 
     def test_new_language_server_release_is_reported(self):
-        with self.fetch([], luals_tag="3.1"):
+        with self.fetch(luals_tag="3.1"):
             self.assertEqual(
                 bootstrap.latest_versions(self.VERSIONS), {"lua-language-server": "3.1"}
             )
