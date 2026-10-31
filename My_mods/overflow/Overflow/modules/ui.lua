@@ -437,6 +437,7 @@ local G = {
     reopenButton = nil,     -- кнопка, возвращающая свёрнутую панель
     labels    = {},
     collapsed = false,
+    beatErrors = 0,         -- ошибок Update подряд
 
     -- Подпись набора строк, под который сейчас собрана панель. Update()
     -- сравнивает её с текущей и перекладывает раскладку при изменении -
@@ -1659,6 +1660,25 @@ local function Update()
     ApplyMinSize()
 end
 
+local BEAT_ERROR_LIMIT = 3
+
+-- The game calls beat functions without pcall, so an error would repeat on every
+-- beat and stop the functions registered after this one.
+local function SafeUpdate()
+    local ok, err = pcall(Update)
+    if ok then
+        G.beatErrors = 0
+        return
+    end
+    G.beatErrors = G.beatErrors + 1
+    LOG('Overflow: Update FAILED (' .. tostring(G.beatErrors) .. '/' ..
+        tostring(BEAT_ERROR_LIMIT) .. '): ' .. tostring(err))
+    if G.beatErrors >= BEAT_ERROR_LIMIT then
+        pcall(GameMain.RemoveBeatFunction, SafeUpdate, 'Overflow')
+        LOG('Overflow: too many errors, panel stopped updating')
+    end
+end
+
 --------------------------------------------------------------------------------
 -- ВХОД
 --------------------------------------------------------------------------------
@@ -1718,7 +1738,7 @@ function OnCreateUI()
         -- beat теперь нужен ТОЛЬКО чтобы перерисовывать панель. Данные
         -- приходят примерно раз в 2 с, поэтому throttle = true достаточно.
         local ok3, err3 = pcall(function()
-            GameMain.AddBeatFunction(Update, true, 'Overflow')
+            GameMain.AddBeatFunction(SafeUpdate, true, 'Overflow')
         end)
         if not ok3 then
             LOG('Overflow: beat FAILED: ' .. tostring(err3))

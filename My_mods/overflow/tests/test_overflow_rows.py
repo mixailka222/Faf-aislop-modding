@@ -545,6 +545,7 @@ SYNCSTUB = {
         return true
     end,
     GetResult = function()
+        if SYNC_BROKEN then error('sync is broken') end
         return {
             ok = true,
             incoming = 100, outgoing = 20, own = 200,
@@ -588,8 +589,15 @@ G['MODULES'] = lua.eval('{}')
 # загрузке. Объявленная позже, она дала бы nil, и OnCreateUI упал бы в pcall:
 # панель создалась бы, но бит игры не подписался бы.
 lua.execute(r"""
-GameMainStub = { AddBeatFunction = function(f, throttle, id) BEAT = f end }
+GameMainStub = {
+    AddBeatFunction = function(f, throttle, id) BEAT = f end,
+    RemoveBeatFunction = function(f, id)
+        BEAT_REMOVED = f == BEAT
+        BEAT = function() end
+    end,
+}
 BEAT = nil
+BEAT_REMOVED = false
 """)
 
 # ------------------------------------------------------------------ rows.lua
@@ -1486,10 +1494,197 @@ return fails
 ''')
 
 # ==================== 6. физический запрет: полное хранилище => входящий = 0
+print("")
+f6 = run("=== 6: запрет на входящий при полном хранилище ===", r'''
+local fails = 0
+local function check(cond, label)
+    if cond then
+        print('  [OK  ] ' .. label)
+    else
+        fails = fails + 1
+        print('  [FAIL] ' .. label)
+    end
+end
+
+-- Один отсчёт Sync.Score для армии. Порядок полей повторяет sim/score.lua.
+local function Army(ein, eout, eexc, estore, emax,
+                   emin, mout, mexc, mstore, mmax)
+    return { resources = {
+        energyin  = { total = ein, reclaimed = 0 },
+        energyout = { total = eout, excess = eexc },
+        massin    = { total = emin, reclaimed = 0 },
+        massout   = { total = mout, excess = mexc },
+        storage   = { storedEnergy = estore, maxEnergy = emax,
+                      storedMass = mstore, maxMass = mmax },
+    } }
+end
+
+local function Feed(myBase, myLater, allyBase, allyLater)
+    -- Сброс счётчика ошибок ОБЯЗАТЕЛЕН перед каждым сценарием. Иначе
+    -- ошибки предыдущего сценария накопятся, NERR_LIMIT = 3 перебьют, и
+    -- sync.lua снимет колбэк - сценарий упадёт по причине, не связанной
+    -- с проверяемым.
+    SYNC.ResetCounters()
+    local before = table.concat(msgs, ' | ')
+    check(string.find(before, 'ERROR') == nil,
+          'sync.lua не оставил ошибок от прошлого сценария')
+    msgs = {}
+    TICK = 100
+    SCORE_CB({ [1] = myBase, [2] = allyBase })
+    TICK = 200
+    SCORE_CB({ [1] = myLater, [2] = allyLater })
+    return SYNC.GetResult()
+end
+
+-- Start() сначала, потом проверка: до него колбэк и не должен существовать.
+IMPORTED = {}
+SYNC.Start()
+check(SCORE_CB ~= nil, 'Start() зарегистрировал колбэк Sync.Score')
+local reimported = false
+for i = 1, #IMPORTED do
+    if IMPORTED[i] == '/lua/UserSync.lua' then reimported = true end
+end
+check(not reimported, 'UserSync.lua не выполняется второй раз')
+
+-- СЦЕНАРИЙ A. Мой запас стоит на потолке все окно, союзник отдаёт.
+--
+--   я:     запас 1000 из 1000, произвёл 100, ничего не потратил
+--   союзник: произвёл 100, запас 0 из 2000, ничего не потратил
+--
+-- Мод без запрета показал бы входящий 10/с и исходящий 10/с одновременно.
+-- Физически входящий невозможен: принимать некуда.
+local rA = Feed(
+    Army(0, 0, 0, 1000, 1000, 0, 0, 0, 500, 500),
+    Army(100, 0, 0, 1000, 1000, 0, 0, 0, 500, 500),
+    Army(0, 0, 0, 0, 2000, 0, 0, 0, 0, 2000),
+    Army(100, 0, 0, 0, 2000, 0, 0, 0, 0, 2000))
+
+check(rA ~= nil and rA.ok == true, 'окно опубликовано, сценарий A')
+if rA ~= nil then
+    check(rA.outgoing > 0,
+          'исходящий ненулевой, как и должно быть при полном запасе (' ..
+          tostring(rA.outgoing) .. ')')
+    check(rA.incoming == 0,
+          'входящий обнулён запретом: принимать некуда (было бы 10.0)')
+    check(string.find(table.concat(msgs, ' | '), 'GUARD E') ~= nil,
+          'в лог записана строка GUARD E с сырыми числами')
+    check(string.find(table.concat(msgs, ' | '), 'полный: true') ~= nil,
+          'в лог записано, что запас признан полным')
+end
+
+-- СЦЕНАРИЙ B. У меня есть место: 500 из 1000. Запрет неприменим.
+local rB = Feed(
+    Army(0, 0, 0, 500, 1000, 0, 0, 0, 500, 500),
+    Army(100, 0, 0, 500, 1000, 0, 0, 0, 500, 500),
+    Army(0, 0, 0, 0, 2000, 0, 0, 0, 0, 2000),
+    Army(100, 0, 0, 0, 2000, 0, 0, 0, 0, 2000))
+
+check(rB ~= nil and rB.ok == true, 'окно опубликовано, сценарий B')
+if rB ~= nil then
+    check(rB.incoming > 0,
+          'входящий остался: место было, запрет не тронул (' ..
+          tostring(rB.incoming) .. ')')
+    check(string.find(table.concat(msgs, ' | '), 'GUARD') == nil,
+          'GUARD не сработал там, где не должен')
+end
+
+-- СЦЕНАРИЙ C. Потолок ВЫРОС в середине окна: в начале места не было,
+-- в конце потолок 2000 при запасе 1000, то есть место появилось.
+--
+-- Именно здесь грубая проверка «минимум запаса >= минимум потолка» ошибалась
+-- и объявляла запас полным, обнуляя настоящий перелив.
+local rC = Feed(
+    Army(0, 0, 0, 1000, 1000, 0, 0, 0, 500, 500),
+    Army(100, 0, 0, 1000, 2000, 0, 0, 0, 500, 500),
+    Army(0, 0, 0, 0, 2000, 0, 0, 0, 0, 2000),
+    Army(100, 0, 0, 0, 2000, 0, 0, 0, 0, 2000))
+
+check(rC ~= nil and rC.ok == true, 'окно опубликовано, сценарий C')
+if rC ~= nil then
+    check(rC.incoming > 0,
+          'выросший потолок НЕ считается полным: место было, входящий остался (' ..
+          tostring(rC.incoming) .. ')')
+    check(string.find(table.concat(msgs, ' | '), 'GUARD') == nil,
+          'на растущем потолке GUARD не сработал')
+end
+
+-- СЦЕНАРИЙ D. Запас МАССЫ стоит на потолке всё окно, союзник отдаёт.
+-- Принимать некуда, поэтому входящий обязан обнулиться.
+local rD = Feed(
+    Army(0, 0, 0, 500, 1000, 0, 0, 0, 500, 500),
+    Army(100, 0, 0, 500, 1000, 100, 0, 0, 500, 500),
+    Army(0, 0, 0, 0, 2000, 0, 0, 0, 0, 2000),
+    Army(100, 0, 0, 0, 2000, 100, 0, 0, 0, 2000))
+
+check(rD ~= nil and rD.ok == true, 'окно опубликовано, сценарий D')
+if rD ~= nil then
+    check(rD.massIncoming == 0,
+          'входящая масса обнулена: хранилище массы полно (' ..
+          tostring(rD.massIncoming) .. ')')
+    check(string.find(table.concat(msgs, ' | '), 'GUARD M') ~= nil,
+          'в лог записана строка GUARD M с сырыми числами')
+end
+
+-- СЦЕНАРИЙ E. Общий приход массы за матч намного больше ёмкости, но в
+-- хранилище есть место. Свободное место считается по запасу, а не по приходу.
+local rE = Feed(
+    Army(0, 0, 0, 500, 1000, 5000, 0, 0, 100, 500),
+    Army(100, 0, 0, 500, 1000, 5100, 0, 0, 100, 500),
+    Army(0, 0, 0, 0, 2000, 0, 0, 0, 0, 2000),
+    Army(100, 0, 0, 0, 2000, 100, 0, 0, 0, 2000))
+
+check(rE ~= nil and rE.ok == true, 'окно опубликовано, сценарий E')
+if rE ~= nil then
+    check(rE.massIncoming > 0,
+          'входящая масса осталась: место в хранилище было (' ..
+          tostring(rE.massIncoming) .. ')')
+    check(string.find(table.concat(msgs, ' | '), 'GUARD') == nil,
+          'при свободном месте GUARD не сработал')
+end
+
+check(string.find(table.concat(msgs, ' | '), 'ERROR') == nil,
+      'sync.lua не сыпал ошибок ни в одном сценарии')
+
+return fails
+''')
+
+# =========================== 7. ошибка в функции бита не уходит в цикл игры
+print("")
+f7 = run("=== 7: ошибка в Update не уходит в цикл игры ===", r'''
+local fails = 0
+local function check(cond, label)
+    if cond then
+        print('  [OK  ] ' .. label)
+    else
+        fails = fails + 1
+        print('  [FAIL] ' .. label)
+    end
+end
+
+msgs = {}
+SYNC_BROKEN = true
+check(pcall(BEAT), 'первая ошибка Update поймана внутри мода')
+check(not BEAT_REMOVED, 'после одной ошибки панель продолжает работать')
+
+SYNC_BROKEN = false
+check(pcall(BEAT), 'без ошибки Update работает как обычно')
+
+SYNC_BROKEN = true
+for _ = 1, 10 do pcall(BEAT) end
+SYNC_BROKEN = false
+
+local told = 0
+for _ in string.gmatch(table.concat(msgs, ' | '), 'Update FAILED') do
+    told = told + 1
+end
+check(told == 4, 'в лог попали только ошибки до предела (' .. tostring(told) .. ')')
+check(BEAT_REMOVED, 'после трёх ошибок подряд функция бита снята')
+return fails
+''')
 
 print("")
 print("=== ИТОГ ===")
-fails = f1 + f2 + f3 + f4 + f5 + f6
+fails = f1 + f2 + f3 + f4 + f5 + f6 + f7
 if fails:
     print("провалено проверок: %d" % fails)
     sys.exit(1)
