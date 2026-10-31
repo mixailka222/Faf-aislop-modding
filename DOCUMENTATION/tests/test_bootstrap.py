@@ -1,0 +1,293 @@
+import json
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+
+import bootstrap
+
+
+def git(cwd, *args):
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+
+class RootInTemp(unittest.TestCase):
+    """Runs against a temporary root whose path contains spaces."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name) / "path with spaces"
+        self.root.mkdir()
+        patcher = mock.patch.object(bootstrap, "ROOT", self.root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+
+class OutdatedTests(unittest.TestCase):
+    def test_outdated_lists_only_changed_components(self):
+        self.assertEqual(bootstrap.outdated({"a": "1", "b": "2"}, {"a": "1", "b": "1"}), ["b"])
+
+    def test_outdated_lists_missing_components(self):
+        self.assertEqual(bootstrap.outdated({"a": "1"}, {}), ["a"])
+
+
+class ExpectedVersionsTests(unittest.TestCase):
+    VERSIONS = {
+        "fa": {"repo": "o/fa", "branch": "b", "ref": "aaa"},
+        "lua-lang": {"repo": "o/lua", "ref": "v1"},
+        "lua-language-server": "3.0",
+        "ziglang": "0.1",
+        "lupa": "2.0",
+    }
+
+    def test_repository_is_expected_at_its_ref(self):
+        self.assertEqual(bootstrap.expected_versions(self.VERSIONS)["fa"], "aaa")
+
+    def test_new_compiler_source_requires_a_rebuild(self):
+        changed = json.loads(json.dumps(self.VERSIONS))
+        changed["lua-lang"]["ref"] = "v2"
+        self.assertNotEqual(
+            bootstrap.expected_versions(self.VERSIONS)["faf-lua"],
+            bootstrap.expected_versions(changed)["faf-lua"],
+        )
+
+    def test_new_build_compiler_requires_a_rebuild(self):
+        changed = dict(self.VERSIONS, ziglang="0.2")
+        self.assertNotEqual(
+            bootstrap.expected_versions(self.VERSIONS)["faf-lua"],
+            bootstrap.expected_versions(changed)["faf-lua"],
+        )
+
+
+class InstallStepTests(RootInTemp):
+    def test_failed_step_is_not_marked_installed(self):
+        calls = []
+
+        def failing():
+            calls.append("failed")
+            raise bootstrap.BootstrapError("interrupted")
+
+        with self.assertRaises(bootstrap.BootstrapError):
+            bootstrap.install_step("fa", "aaa", failing)
+        self.assertEqual(bootstrap.load_installed(), {})
+
+        bootstrap.install_step("fa", "aaa", lambda: calls.append("done"))
+        self.assertEqual(calls, ["failed", "done"])
+        self.assertEqual(bootstrap.load_installed(), {"fa": "aaa"})
+
+    def test_finished_step_is_not_repeated(self):
+        calls = []
+        bootstrap.install_step("fa", "aaa", lambda: calls.append("run"))
+        bootstrap.install_step("fa", "aaa", lambda: calls.append("run"))
+        self.assertEqual(calls, ["run"])
+
+    def test_changed_version_repeats_the_step(self):
+        calls = []
+        bootstrap.install_step("fa", "aaa", lambda: calls.append("old"))
+        bootstrap.install_step("fa", "bbb", lambda: calls.append("new"))
+        self.assertEqual(calls, ["old", "new"])
+
+    def test_missing_files_repeat_the_step(self):
+        calls = []
+        tool = self.root / "tool.exe"
+        bootstrap.install_step("luals", "1", lambda: calls.append("run"), tool)
+        bootstrap.install_step("luals", "1", lambda: calls.append("run"), tool)
+        self.assertEqual(calls, ["run", "run"])
+
+
+class EnsureRepoTests(RootInTemp):
+    def setUp(self):
+        super().setUp()
+        self.github = self.root / "github"
+        origin = self.github / "owner" / "name"
+        origin.mkdir(parents=True)
+        git(origin, "init", "-q", "-b", "main")
+        git(origin, "config", "user.email", "test@example.com")
+        git(origin, "config", "user.name", "test")
+        git(origin, "config", "uploadpack.allowAnySHA1InWant", "true")
+        (origin / "lua").mkdir()
+        (origin / "other").mkdir()
+        (origin / "lua" / "x.lua").write_text("first")
+        (origin / "other" / "y.lua").write_text("skip")
+        git(origin, "add", ".")
+        git(origin, "commit", "-q", "-m", "first")
+        self.first = self.head(origin)
+        (origin / "lua" / "x.lua").write_text("second")
+        git(origin, "commit", "-q", "-am", "second")
+        self.second = self.head(origin)
+        patcher = mock.patch.object(bootstrap, "GITHUB", self.github.as_uri() + "/")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def head(cwd):
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=cwd, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    def spec(self, ref):
+        return {"repo": "owner/name", "branch": "main", "ref": ref}
+
+    def test_repository_is_checked_out_at_pinned_commit(self):
+        bootstrap.ensure_repo("fa", self.spec(self.first), ["lua"])
+        self.assertEqual((self.root / "references/fa/lua/x.lua").read_text(), "first")
+
+    def test_only_sparse_folders_are_checked_out(self):
+        bootstrap.ensure_repo("fa", self.spec(self.first), ["lua"])
+        self.assertFalse((self.root / "references/fa/other/y.lua").exists())
+
+    def test_existing_clone_moves_to_new_commit(self):
+        bootstrap.ensure_repo("fa", self.spec(self.first), ["lua"])
+        bootstrap.ensure_repo("fa", self.spec(self.second), ["lua"])
+        self.assertEqual((self.root / "references/fa/lua/x.lua").read_text(), "second")
+
+    def test_foreign_folder_is_refused_and_kept(self):
+        foreign = self.root / "references/fa"
+        foreign.mkdir(parents=True)
+        (foreign / "keep.txt").write_text("mine")
+        with self.assertRaises(bootstrap.BootstrapError):
+            bootstrap.ensure_repo("fa", self.spec(self.first), ["lua"])
+        self.assertEqual((foreign / "keep.txt").read_text(), "mine")
+
+    def test_clone_of_other_repository_is_refused_and_kept(self):
+        foreign = self.root / "references/fa"
+        foreign.mkdir(parents=True)
+        git(foreign, "init", "-q")
+        git(foreign, "remote", "add", "origin", "https://example.com/other.git")
+        (foreign / "keep.txt").write_text("mine")
+        with self.assertRaises(bootstrap.BootstrapError):
+            bootstrap.ensure_repo("fa", self.spec(self.first), ["lua"])
+        self.assertEqual((foreign / "keep.txt").read_text(), "mine")
+
+    def test_interrupted_clone_is_repeated(self):
+        with self.assertRaises(bootstrap.BootstrapError):
+            bootstrap.ensure_repo("fa", self.spec("0" * 40), ["lua"])
+        self.assertFalse((self.root / "references/fa").exists())
+
+        bootstrap.ensure_repo("fa", self.spec(self.first), ["lua"])
+        self.assertEqual((self.root / "references/fa/lua/x.lua").read_text(), "first")
+
+
+class DownloadTests(RootInTemp):
+    def test_file_is_downloaded(self):
+        source = self.root / "source.txt"
+        source.write_text("data")
+        target = self.root / "target.txt"
+        bootstrap.download(source.as_uri(), target)
+        self.assertEqual(target.read_text(), "data")
+
+    def test_failed_download_is_reported(self):
+        missing = (self.root / "missing.txt").as_uri()
+        with self.assertRaises(bootstrap.BootstrapError):
+            bootstrap.download(missing, self.root / "target.txt")
+
+    def test_json_is_parsed(self):
+        source = self.root / "data.json"
+        source.write_text('{"tag_name": "v1"}')
+        self.assertEqual(bootstrap.fetch_json(source.as_uri()), {"tag_name": "v1"})
+
+    def test_failed_json_request_is_reported(self):
+        with self.assertRaises(bootstrap.BootstrapError):
+            bootstrap.fetch_json((self.root / "missing.json").as_uri())
+
+
+class LualsAssetTests(unittest.TestCase):
+    def test_windows_uses_zip(self):
+        self.assertEqual(
+            bootstrap.luals_asset("3.1", "win32"), "lua-language-server-3.1-win32-x64.zip"
+        )
+
+    def test_linux_uses_tarball(self):
+        self.assertEqual(
+            bootstrap.luals_asset("3.1", "linux"), "lua-language-server-3.1-linux-x64.tar.gz"
+        )
+
+    def test_unknown_system_is_an_error(self):
+        with self.assertRaises(bootstrap.BootstrapError):
+            bootstrap.luals_asset("3.1", "plan9")
+
+
+class LatestVersionsTests(unittest.TestCase):
+    VERSIONS = {
+        "ui-libs": {"repo": "o/mods", "branch": "dev", "ref": "aaa"},
+        "lua-lang": {"repo": "o/lua", "ref": "v1"},
+        "lua-language-server": "3.0",
+        "ziglang": "0.1",
+        "lupa": "2.0",
+    }
+
+    def fetch(self, files, head="bbb", lua_tag="v1", luals_tag="3.0"):
+        def fake(url):
+            if "/compare/" in url:
+                return {
+                    "commits": [{"sha": head}],
+                    "files": [{"filename": name} for name in files],
+                }
+            if "o/lua/" in url:
+                return {"tag_name": lua_tag}
+            return {"tag_name": luals_tag}
+
+        return mock.patch.object(bootstrap, "fetch_json", fake)
+
+    def test_changes_outside_tracked_folders_are_ignored(self):
+        with self.fetch(["mods/Other/Main.lua"]):
+            self.assertEqual(bootstrap.latest_versions(self.VERSIONS), {})
+
+    def test_changes_in_tracked_folders_are_reported(self):
+        with self.fetch(["mods/ReUI/Core/Main.lua"]):
+            self.assertEqual(bootstrap.latest_versions(self.VERSIONS), {"ui-libs": "bbb"})
+
+    def test_new_compiler_release_is_reported(self):
+        with self.fetch([], lua_tag="v2"):
+            self.assertEqual(bootstrap.latest_versions(self.VERSIONS), {"lua-lang": "v2"})
+
+    def test_new_language_server_release_is_reported(self):
+        with self.fetch([], luals_tag="3.1"):
+            self.assertEqual(
+                bootstrap.latest_versions(self.VERSIONS), {"lua-language-server": "3.1"}
+            )
+
+
+@unittest.skipUnless(bootstrap.luac_path().exists(), "FAF Lua is not built")
+class BuiltLuaTests(unittest.TestCase):
+    def lua_prints(self, code):
+        with tempfile.TemporaryDirectory() as folder:
+            script = Path(folder) / "script.lua"
+            script.write_text(code)
+            done = subprocess.run(
+                [str(bootstrap.lua_path()), str(script)], capture_output=True, text=True
+            )
+        return done.stdout.strip()
+
+    def luac_accepts(self, code):
+        with tempfile.TemporaryDirectory() as folder:
+            script = Path(folder) / "script.lua"
+            script.write_text(code)
+            done = subprocess.run(
+                [str(bootstrap.luac_path()), "-p", str(script)], capture_output=True, text=True
+            )
+        return done.returncode == 0
+
+    def test_numbers_are_single_precision_as_in_the_game(self):
+        self.assertEqual(self.lua_prints("print(0.1 + 0.2 == 0.3)"), "true")
+
+    def test_caret_is_xor(self):
+        self.assertEqual(self.lua_prints("print(5 ^ 3)"), "6")
+
+    def test_modulo_is_rejected(self):
+        self.assertFalse(self.luac_accepts("local a = 7 % 3\n"))
+
+    def test_upvalue_limit_is_enforced(self):
+        names = [f"v{index}" for index in range(33)]
+        code = "".join(f"local {name} = 1\n" for name in names)
+        code += "function F()\n    return " + " + ".join(names) + "\nend\n"
+        self.assertFalse(self.luac_accepts(code))
+
+
+if __name__ == "__main__":
+    unittest.main()

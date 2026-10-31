@@ -1,0 +1,24 @@
+{
+  "fa": {
+    "repo": "FAForever/fa",
+    "branch": "deploy/faf",
+    "ref": "412ec953f6fd4dc3eb3b3abbf1d52514a8c264d2"
+  },
+  "fa-addon": {
+    "repo": "FAForever/fa",
+    "branch": "develop",
+    "ref": "6d961481b47538a1f9a9defe702f4d6d39fa1708"
+  },
+  "ui-libs": {
+    "repo": "4z0t/FAF-UI-Mods",
+    "branch": "develop",
+    "ref": "cff547467221ac10b6d55f7d34e728fa86f427fd"
+  },
+  "lua-lang": {
+    "repo": "FAForever/lua-lang",
+    "ref": "v5.0-3"
+  },
+  "lua-language-server": "3.19.2",
+  "ziglang": "0.16.0",
+  "lupa": "2.8"
+}
