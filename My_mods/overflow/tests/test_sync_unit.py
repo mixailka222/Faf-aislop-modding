@@ -25,7 +25,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SYNC = os.path.abspath(os.path.join(os.path.dirname(HERE),
                                    "Overflow", "modules", "sync.lua"))
 src = io.open(SYNC, encoding="utf-8").read()
-# единственная правка формы обхода, см. раздел 3.21 методички
+# единственная правка формы обхода: в lupa не работает for k in t do
 src = src.replace("for armyIdx in scoreData do", "for armyIdx in next, scoreData do")
 
 lua = lupa.LuaRuntime(unpack_returned_tuples=True)

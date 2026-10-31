@@ -177,8 +177,7 @@ local function UnitsBelongTo(selection, included, excluded)
 end
 
 --- True when at least one selected unit can build something: an engineer,
---- commander or Megalith (the same test hotbuild itself uses, see
---- gamefiles\lua\keymap\hotbuild.lua:367) or a factory.
+--- commander or Megalith (the same test hotbuild itself uses) or a factory.
 --- @param selection UserUnit[]?
 --- @return boolean
 local function SelectionCanBuild(selection)
@@ -303,9 +302,9 @@ function Main()
         -- AKA's own hotkey "Select nearest air scout / build sensors" has the
         -- same dead end this mod was fixed for: its last branch always runs
         -- Hotbuild "Sensors", which only does something for engineers and
-        -- factories, so with a fighter selected the press did nothing
-        -- (references/AKA/Main.lua:388-400). AKA is a third-party mod and is
-        -- not patched here, so the same hotkey is offered with the rule above.
+        -- factories, so with a fighter selected the press did nothing. AKA is a
+        -- third-party mod and is not patched here, so the same hotkey is offered
+        -- with the rule above.
         -- The description differs on purpose: ReUI.Actions keeps actions by
         -- name, and two equal names would overwrite each other in whatever
         -- order the mods happen to load.
