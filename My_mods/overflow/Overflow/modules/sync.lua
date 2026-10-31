@@ -356,17 +356,17 @@ local function Compute(scoreData, me, tickNow)
 
     -- границы запаса нашей армии за окно
     local mineNow = fresh[me]
-    if mineNow and mineNow.estore and mineNow.emin then
+    if mineNow and mineNow.estore and mineNow.mstore then
         if minStoreE == nil or mineNow.estore < minStoreE then minStoreE = mineNow.estore end
         if maxStoreE == nil or mineNow.estore > maxStoreE then maxStoreE = mineNow.estore end
-        if minStoreM == nil or mineNow.emin < minStoreM then minStoreM = mineNow.emin end
-        if maxStoreM == nil or mineNow.emin > maxStoreM then maxStoreM = mineNow.emin end
+        if minStoreM == nil or mineNow.mstore < minStoreM then minStoreM = mineNow.mstore end
+        if maxStoreM == nil or mineNow.mstore > maxStoreM then maxStoreM = mineNow.mstore end
         if mineNow.emax ~= nil and mineNow.estore ~= nil then
             local headE = mineNow.emax - mineNow.estore
             if maxHeadE == nil or headE > maxHeadE then maxHeadE = headE end
         end
-        if mineNow.mmax ~= nil and mineNow.emin ~= nil then
-            local headM = mineNow.mmax - mineNow.emin
+        if mineNow.mmax ~= nil then
+            local headM = mineNow.mmax - mineNow.mstore
             if maxHeadM == nil or headM > maxHeadM then maxHeadM = headM end
         end
     end
