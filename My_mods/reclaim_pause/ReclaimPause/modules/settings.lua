@@ -61,6 +61,9 @@ ReclaimPauseCfg = {
     skipSec = DEFAULTS.skipSec,
 }
 
+-- Set by the UMT page. Without UMT it stays nil and there is nothing to update.
+local windowPush = nil
+
 -- Приведение к допустимому виду. Нужно и на случай испорченного профиля,
 -- и на случай absurdных значений из окна настроек.
 local function SaneInt(val, def, lo, hi)
@@ -150,10 +153,28 @@ function ReclaimPauseResetDefaults()
     ReclaimPauseCfg.abortSec  = DEFAULTS.abortSec
     ReclaimPauseCfg.skipSec   = DEFAULTS.skipSec
     ReclaimPauseSaveSettings()
+    ReclaimPausePushToWindow()
     LOG(PFX .. 'settings reset to defaults: mass=' ..
         tostring(DEFAULTS.lowMass) .. '..' .. tostring(DEFAULTS.highMass) ..
         ' energyMin=' .. tostring(DEFAULTS.energyMin))
     return ReclaimPauseSettingsLine()
+end
+
+---The UMT page passes a function that copies ReclaimPauseCfg into its OptionVars.
+function ReclaimPauseBindWindow(fn)
+    windowPush = fn
+end
+
+---Hotkeys change the settings past the page. The page must get the new values:
+---its next slider move reads all OptionVars and would write the old ones back.
+function ReclaimPausePushToWindow()
+    if windowPush == nil then
+        return
+    end
+    local ok, err = pcall(windowPush)
+    if not ok then
+        LOG(PFX .. 'PushToWindow FAILED: ' .. tostring(err))
+    end
 end
 
 ---Записать текущие значения в профиль.

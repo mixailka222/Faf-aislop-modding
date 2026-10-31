@@ -279,6 +279,21 @@ end
 check(badRange == '', 'диапазоны ползунков в пределах SaneInt' ..
       (badRange == '' and '' or (' НАРУШЕНО: ' .. badRange)))
 
+-- A slider shows only multiples of its step, so a default between two steps
+-- would be displayed as another number.
+local defaults = SET.ReclaimPauseDefaults()
+local offStep = ''
+for i = 1, #build do
+  local line = build[i]
+  if line.type == 'slider' and line.optionVar ~= nil then
+    local nm = line.optionVar:Option()
+    local steps = (defaults[nm] - line.mn) / line.inc
+    if steps ~= math.floor(steps) then offStep = offStep .. nm .. ' ' end
+  end
+end
+check(offStep == '', 'значение по умолчанию попадает на шаг ползунка' ..
+      (offStep == '' and '' or (' НАРУШЕНО: ' .. offStep)))
+
 -- ГЛАВНОЕ. Имитируем работу игрока с ползунками: OptionVar:Set держит
 -- значение в памяти и НЕ пишет в профиль - ровно как настоящий
 -- (OptionVar.lua:24-30). Если мод читает профиль, он увидит старое.
@@ -372,6 +387,31 @@ check(SET.ReclaimPauseCfg.highMass == 88,
 local after = table.concat(msgs, ' | ')
 check(string.find(after, 'RESET FROM PAGE') ~= nil,
       'в лог попала строка RESET FROM PAGE')
+
+print('')
+print('=== СБРОС И ПЕРЕКЛЮЧЕНИЕ ГОРЯЧЕЙ КЛАВИШЕЙ ===')
+-- Hotkeys change the settings past the page. Any slider move makes the page read
+-- all its OptionVars, so they must already hold the new values.
+opts.highMass:Set(95)
+SET.ReclaimPauseResetDefaults()
+check(opts.highMass() == SET.ReclaimPauseDefaults().highMass,
+      'сброс клавишей дошёл до ползунка (получено ' .. tostring(opts.highMass()) .. ')')
+opts.minSec:Set(7)
+check(SET.ReclaimPauseCfg.highMass == SET.ReclaimPauseDefaults().highMass,
+      'движение другого ползунка не вернуло порог после сброса клавишей (получено ' ..
+      tostring(SET.ReclaimPauseCfg.highMass) .. ')')
+
+WATCH.ReclaimPauseToggle()
+check(opts.enabled() == false, 'выключение клавишей дошло до галочки в окне')
+opts.minSec:Set(8)
+check(SET.ReclaimPauseCfg.enabled == false,
+      'движение ползунка не включило мод обратно')
+WATCH.ReclaimPauseToggle()
+check(opts.enabled() == true, 'включение клавишей дошло до галочки в окне')
+
+opts.highMass:Set(91)
+check(SET.ReclaimPauseCfg.highMass == 91,
+      'после клавиш ползунок снова управляет настройкой')
 
 return fails
 '''

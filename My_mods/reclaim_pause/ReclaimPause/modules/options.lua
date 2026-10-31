@@ -112,6 +112,28 @@ function Main()
     -- вызовов, 12 лишних сохранений профиля и 12 лишних строк в логе.
     local writing = false
 
+    -- Запись идёт через :Set, а НЕ вызовом options.x(значение): по
+    -- OptionVar.lua:18-20 __call только ВОЗВРАЩАЕТ значение и аргументов не
+    -- принимает, поэтому options.x(v) молча ничего бы не записал.
+    local function PushToWindow()
+        local cfg = Settings.ReclaimPauseCfg
+        local outer = writing
+        writing = true
+        options.enabled:Set(cfg.enabled)
+        options.highMass:Set(cfg.highMass)
+        options.lowMass:Set(cfg.lowMass)
+        options.energyMin:Set(cfg.energyMin)
+        options.minSec:Set(cfg.minSec)
+        options.releaseHoldSec:Set(cfg.releaseHoldSec)
+        options.probeSec:Set(cfg.probeSec)
+        options.rescanSec:Set(cfg.rescanSec)
+        options.startGrace:Set(cfg.startGrace)
+        options.abortMove:Set(cfg.abortMove)
+        options.abortSec:Set(cfg.abortSec)
+        options.skipSec:Set(cfg.skipSec)
+        writing = outer
+    end
+
     local function Refresh()
         if writing then return end
 
@@ -119,30 +141,12 @@ function Main()
 
         -- СБРОС К УМОЛЧАНИЯМ. Идёт ПЕРВЫМ: если поставить его ниже,
         -- строки после присвоят cfg старые значения и затрут сброс.
-        --
-        -- Запись в ползунки идёт через :Set, а НЕ вызовом
-        -- options.x(значение): по OptionVar.lua:18-20 __call только
-        -- ВОЗВРАЩАЕТ значение и аргументов не принимает, поэтому
-        -- options.x(v) молча ничего бы не записал и игрок увидел бы
-        -- в окне старые числа. Ровно тот симптом, что был с горячей
-        -- клавишей.
+        -- Значения в ползунки пишет PushToWindow через ReclaimPauseBindWindow.
         if options.resetFlag() then
             writing = true
             options.resetFlag:Set(false)
             Settings.ReclaimPauseResetDefaults()
             cfg = Settings.ReclaimPauseCfg
-            options.enabled:Set(cfg.enabled)
-            options.highMass:Set(cfg.highMass)
-            options.lowMass:Set(cfg.lowMass)
-            options.energyMin:Set(cfg.energyMin)
-            options.minSec:Set(cfg.minSec)
-            options.releaseHoldSec:Set(cfg.releaseHoldSec)
-            options.probeSec:Set(cfg.probeSec)
-            options.rescanSec:Set(cfg.rescanSec)
-            options.startGrace:Set(cfg.startGrace)
-            options.abortMove:Set(cfg.abortMove)
-            options.abortSec:Set(cfg.abortSec)
-            options.skipSec:Set(cfg.skipSec)
             writing = false
             LOG(PFX .. 'RESET FROM PAGE: ' .. Settings.ReclaimPauseSettingsLine())
         end
@@ -182,6 +186,7 @@ function Main()
     options.abortSec:Bind(Refresh)
     options.skipSec:Bind(Refresh)
     options.resetFlag:Bind(Refresh)
+    Settings.ReclaimPauseBindWindow(PushToWindow)
 
     -- ШАГ 4: описание окна. Ползунки не выходят за границы SaneInt
     -- в settings.lua, иначе окно и мод станут считать разные значения.
@@ -206,7 +211,7 @@ function Main()
         Options.Slider("Первые N секунд матча не трогать выделение", 0, 60, 5, options.startGrace, 16),
         Options.Filter("Останавливать на месте (обрыв маршрута)", options.abortMove, 16),
         Options.Slider("Повторять обрыв каждые N секунд", 1, 15, 1, options.abortSec, 16),
-        Options.Slider("Не трогать N секунд после ручного снятия", 0, 300, 15, options.skipSec, 16),
+        Options.Slider("Не трогать N секунд после ручного снятия", 0, 60, 1, options.skipSec, 16),
         Options.Title("Сброс", 14, nil, nil, 16),
         -- Галочка вместо кнопки: UMT не умеет рисовать кнопки.
         -- OptionsWindow.lua:238-412 знает всего восемь типов
