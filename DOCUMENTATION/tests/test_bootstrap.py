@@ -292,6 +292,12 @@ class BuiltLuaTests(unittest.TestCase):
     def test_select_does_not_exist(self):
         self.assertEqual(self.lua_prints("print(select)"), "nil")
 
+    def test_math_huge_does_not_exist(self):
+        self.assertEqual(self.lua_prints("print(math.huge)"), "nil")
+
+    def test_integer_format_truncates(self):
+        self.assertEqual(self.lua_prints('print(string.format("%d", 3.7))'), "3")
+
     def test_bare_table_can_be_iterated(self):
         self.assertEqual(self.lua_prints(
             "local s = 0\nfor k, v in {1, 2} do\n    s = s + v\nend\nprint(s)\n"), "3")

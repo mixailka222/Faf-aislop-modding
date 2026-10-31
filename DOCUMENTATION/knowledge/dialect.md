@@ -28,6 +28,18 @@
 
 Источник: lua-lang:src/lparser.c#create_local(ls, "arg")
 
+### Нет `math.huge`
+
+`math.huge` равно `nil`.
+
+Источник: fa:lua/sim/Projectile.lua#Since `math.huge` does not exist
+
+### `%d` в `string.format` отбрасывает дробную часть
+
+`string.format("%d", 3.7)` даёт `3`.
+
+Наблюдение: запуск `lua`, собранного из `references/lua-lang`.
+
 ### Нет длинных строк с уровнем
 
 Работает только `[[текст]]`. Запись `[=[текст]=]` не компилируется.

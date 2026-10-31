@@ -44,6 +44,15 @@ research/                     черновики, в git нет, источни�
 | Задача | Что прочитать |
 |---|---|
 | Любой код на Lua | `DOCUMENTATION/knowledge/dialect.md`, `DOCUMENTATION/code_style.md` |
+| Новый мод, `mod_info.lua`, `import`, установка | `DOCUMENTATION/knowledge/mod_structure.md` |
+| Перехват функций игры, файлы `hook/` | `DOCUMENTATION/knowledge/hooks.md` |
+| Контролы, окна, раскладка, команды | `DOCUMENTATION/knowledge/ui.md` |
+| Юниты, категории, выделение, очереди приказов | `DOCUMENTATION/knowledge/units_and_categories.md` |
+| Обмен данными между sim и UI, `Sync` | `DOCUMENTATION/knowledge/sim_ui_sync.md` |
+| Настройки, `Prefs`, страницы настроек | `DOCUMENTATION/knowledge/settings.md` |
+| Логи и ошибки движка | `DOCUMENTATION/knowledge/debugging.md` |
+| Ресурсы и доход | `DOCUMENTATION/knowledge/economy.md` |
+| Конкретный мод | `README.md` его проекта |
 
 ## Обязательная проверка
 
