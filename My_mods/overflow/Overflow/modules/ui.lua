@@ -944,7 +944,8 @@ local function PlaceRows()
                 -- только Height, Left и Right, круг движка не замкнут, и
                 -- чтение Top() уходит в переполнение стека
                 -- (control.lua:31-42; в логе это предупреждение LazyVar).
-                ctl.Height:Set(LayoutHelpers.ScaleNumber(L.DIV_H))
+                -- ScaleNumber rounds down: at ui_scale 0.8 one pixel becomes zero.
+                ctl.Height:Set(MathMax(1, LayoutHelpers.ScaleNumber(L.DIV_H)))
                 LayoutHelpers.AtLeftIn(ctl, client, 0)
                 LayoutHelpers.AtRightIn(ctl, client, 0)
                 LayoutHelpers.AtTopIn(ctl, client, top)

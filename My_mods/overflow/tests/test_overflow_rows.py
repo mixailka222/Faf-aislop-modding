@@ -1800,6 +1800,18 @@ check(reopen ~= nil and math.abs(reopen.Left() - win.Left()) <= 1
       tostring(reopen and reopen.Left()) .. ', ' .. tostring(reopen and reopen.Top()) ..
       ' при окне ' .. tostring(win.Left()) .. ', ' .. tostring(win.Top()) .. ')')
 
+-- The smallest scale of the game: one pixel scaled by 0.8 floors to zero.
+local small = Build(0.8)
+local thinnest = nil
+for i = mark + 1, #MADE do
+    local c = MADE[i]
+    if c._kind == 'Bitmap' and c._parent == small.ClientGroup then
+        if thinnest == nil or c.Height() < thinnest then thinnest = c.Height() end
+    end
+end
+check(thinnest ~= nil and thinnest >= 1,
+      'разделитель не исчезает при масштабе 80% (высота ' .. tostring(thinnest) .. ')')
+
 pixelScaleFactor = 1.0
 return fails
 ''')
