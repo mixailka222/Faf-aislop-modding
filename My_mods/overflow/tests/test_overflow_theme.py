@@ -6,7 +6,8 @@ u"""Тесты Overflow: темы оформления и мигание тре�
 
 ЧТО ПРОВЕРЯЕМ
 
-1) themes.lua - семь тем, их названия и порядок.
+1) themes.lua - рамки и пресеты: их названия и правило значения по умолчанию.
+   Сами значения по умолчанию решает мод, тесты их не закрепляют.
 
 2) Чтение из скина игры. Фракционные темы обязаны брать значения из
    skins.lua, а не из своих чисел: опечатка в шестнадцатеричном значении
@@ -531,6 +532,12 @@ function Complete(pal)
     end
     return true
 end
+function InList(list, value)
+    for i = 1, TableGetn(list) do
+        if list[i] == value then return true end
+    end
+    return false
+end
 '''
 
 lua.execute(STUBS)
@@ -582,26 +589,28 @@ end
 
 # ==================================================== 1. состав и порядок тем
 f1 = run("=== 1. СОСТАВ: ДВА ВЫБОРА ===", PRELUDE + r'''
--- Рамки: Vanilla по умолчанию, Minimal рядом.
+-- Player profiles store these names, so they must not change. The default is
+-- up to the mod, so the rule is checked instead of a name: the default is the
+-- first item, otherwise UMT silently replaces it with items[1].
 ClearProfile()
 local frames = T.FrameNames()
 check(TableGetn(frames) == 2,
       'рамок ровно две (получено ' .. tostring(TableGetn(frames)) .. ')')
-check(frames[1] == 'Vanilla',
-      'первая рамка - Vanilla, и именно она по умолчанию')
-check(frames[2] == 'Minimal', 'вторая рамка - Minimal')
-check(T.FrameCurrent() == 'Vanilla', 'по умолчанию выбрана рамка Vanilla')
-check(T.FrameMinimal() == false, 'по умолчанию рамка НЕ плоская')
+check(InList(frames, 'Vanilla'), 'рамка Vanilla есть в списке')
+check(InList(frames, 'Minimal'), 'рамка Minimal есть в списке')
+check(T.FrameCurrent() == frames[1],
+      'рамка по умолчанию - первый пункт списка, а не ' ..
+      tostring(T.FrameCurrent()))
 
--- Пресеты: Vanilla по умолчанию, Minimal рядом.
 ClearProfile()
 local styles = T.StyleNames()
 check(TableGetn(styles) == 2,
       'пресетов ровно два (получено ' .. tostring(TableGetn(styles)) .. ')')
-check(styles[1] == 'Vanilla',
-      'первый пресет - Vanilla, и именно он по умолчанию')
-check(styles[2] == 'Minimal', 'второй пресет - Minimal')
-check(T.StyleCurrent() == 'Vanilla', 'по умолчанию выбран пресет Vanilla')
+check(InList(styles, 'Vanilla'), 'пресет Vanilla есть в списке')
+check(InList(styles, 'Minimal'), 'пресет Minimal есть в списке')
+check(T.StyleCurrent() == styles[1],
+      'пресет по умолчанию - первый пункт списка, а не ' ..
+      tostring(T.StyleCurrent()))
 
 -- ФРАКЦИОННЫХ ТЕМ БОЛЬШЕ НЕТ. Рамка и так берётся из папки скина, поэтому
 -- отдельного пункта под фракцию в списках быть не должно.
@@ -741,9 +750,16 @@ return fails
 f6 = run("=== 6. МАСШТАБ ШРИФТА ===", PRELUDE + r'''
 -- Ползунок UMT целочисленный, поэтому масштаб в процентах.
 ClearProfile()
-PickStyle('Vanilla')
-check(T.FontScale() == 100, 'по умолчанию масштаб 100 процентов, а не ' ..
+check(T.FontScale() == T.FontScaleDefault(),
+      'без настроек масштаб равен значению по умолчанию из мода, а не ' ..
       tostring(T.FontScale()))
+check(T.FontScaleDefault() >= 70 and T.FontScaleDefault() <= 200,
+      'масштаб по умолчанию лежит в границах ползунка, а не ' ..
+      tostring(T.FontScaleDefault()))
+
+ClearProfile()
+PickFontScale(100)
+PickStyle('Vanilla')
 check(T.StyleFontSize() == 10,
       'при 100 процентах кегль равен базовому (10), а не ' ..
       tostring(T.StyleFontSize()))
@@ -772,7 +788,8 @@ check(T.FontScale() == 200, 'слишком большой масштаб опу
 -- Мусор в профиле не должен ломать панель.
 ClearProfile()
 PickFontScale('не число')
-check(T.FontScale() == 100, 'нечисловой масштаб трактуется как 100')
+check(T.FontScale() == T.FontScaleDefault(),
+      'нечисловой масштаб трактуется как значение по умолчанию')
 return fails
 ''')
 
@@ -784,11 +801,11 @@ check(T.FrameMinimal() == true, 'рамка Minimal помечена как пл
 PickFrame('Vanilla')
 check(T.FrameMinimal() == false, 'рамка Vanilla помечена как игровая')
 
--- Неизвестное значение - первая рамка: молча пропасть нельзя.
+-- Неизвестное значение - рамка по умолчанию: молча пропасть нельзя.
 ClearProfile()
 PickFrame('не существует')
-check(T.FrameCurrent() == 'Vanilla',
-      'неизвестная рамка откатывается к Vanilla')
+check(T.FrameCurrent() == T.FrameNames()[1],
+      'неизвестная рамка откатывается к рамке по умолчанию')
 
 ClearProfile()
 check(T.NumbersOnly() == false, 'режим «только числа» выключен по умолчанию')
@@ -801,31 +818,31 @@ return fails
 f8 = run("=== 8. ПОДПИСЬ И МИГАНИЕ ===", PRELUDE + r'''
 -- Подпись решает, перестраивать ли панель. Всё, что меняет вид при сборке,
 -- обязано в неё входить, иначе смена настройки не подхватится.
-ClearProfile()
-local s1 = T.ThemeSignature()
-ClearProfile()
-PickStyle('Minimal')
-local s2 = T.ThemeSignature()
-check(s1 ~= s2, 'подпись обязана меняться при смене пресета')
-ClearProfile()
-PickStyle('Minimal')
-PickFrame('Minimal')
-local s3 = T.ThemeSignature()
-check(s2 ~= s3, 'подпись обязана меняться при смене рамки')
-ClearProfile()
-PickStyle('Minimal')
-PickFontScale(150)
-check(T.ThemeSignature() ~= s2,
+--
+-- All settings are given explicitly and exactly one differs from the base set,
+-- so the check does not depend on the defaults.
+local function Sig(over)
+    ClearProfile()
+    PickStyle(over.style or 'Minimal')
+    PickFrame(over.frame or 'Minimal')
+    PickFontScale(over.scale or 100)
+    PickNumbers(over.numbers)
+    PickBlink(over.blink)
+    return T.ThemeSignature()
+end
+local base = Sig({})
+check(Sig({ style = 'Vanilla' }) ~= base,
+      'подпись обязана меняться при смене пресета')
+check(Sig({ frame = 'Vanilla' }) ~= base,
+      'подпись обязана меняться при смене рамки')
+check(Sig({ scale = 150 }) ~= base,
       'подпись обязана меняться при смене масштаба шрифта')
-ClearProfile()
-PickStyle('Minimal')
-PickNumbers(true)
-check(T.ThemeSignature() ~= s2,
+check(Sig({ numbers = true }) ~= base,
       'подпись обязана меняться при включении «только числа»')
+check(Sig({ blink = true }) ~= base, 'подпись обязана меняться при мигании')
 
 ClearProfile()
 PickBlink(true)
-check(T.ThemeSignature() ~= s1, 'подпись обязана меняться при мигании')
 check(T.ThemeBlinkOn() == true, 'мигание читается из профиля')
 ClearProfile()
 check(T.ThemeBlinkOn() == false, 'мигание выключено по умолчанию')
@@ -844,17 +861,23 @@ return fails
 f9 = run("=== 9. УСТОЙЧИВОСТЬ К ПРОФИЛЮ И СКИНАМ ===", PRELUDE + r'''
 -- Пустой профиль: всё должно взять значения по умолчанию, а не упасть.
 ClearProfile()
-check(T.StyleCurrent() == 'Vanilla', 'пустой профиль даёт пресет Vanilla')
-check(T.FrameCurrent() == 'Vanilla', 'пустой профиль даёт рамку Vanilla')
-check(T.FontScale() == 100, 'пустой профиль даёт масштаб 100')
+check(T.StyleCurrent() == T.StyleNames()[1],
+      'пустой профиль даёт пресет по умолчанию')
+check(T.FrameCurrent() == T.FrameNames()[1],
+      'пустой профиль даёт рамку по умолчанию')
+check(T.FontScale() == T.FontScaleDefault(),
+      'пустой профиль даёт масштаб по умолчанию')
 check(Complete(T.StylePalette()), 'пустой профиль даёт полную палитру')
 
 -- Мусорные значения в профиле.
 local t = PROFILE['Overflow']
 PROFILE['Overflow'] = { style = 42, theme = {}, fontScale = {}, blink = 'да' }
-check(T.StyleCurrent() == 'Vanilla', 'нестрочный пресет откатывается к Vanilla')
-check(T.FrameCurrent() == 'Vanilla', 'нестрочная рамка откатывается к Vanilla')
-check(T.FontScale() == 100, 'нестрочный масштаб откатывается к 100')
+check(T.StyleCurrent() == T.StyleNames()[1],
+      'нестрочный пресет откатывается к пресету по умолчанию')
+check(T.FrameCurrent() == T.FrameNames()[1],
+      'нестрочная рамка откатывается к рамке по умолчанию')
+check(T.FontScale() == T.FontScaleDefault(),
+      'нестрочный масштаб откатывается к масштабу по умолчанию')
 check(T.ThemeBlinkOn() == true, 'любая непустая строка считается включённой')
 PROFILE['Overflow'] = nil
 

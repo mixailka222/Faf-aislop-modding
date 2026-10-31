@@ -117,7 +117,7 @@ CASES = [
      "rows.lua",
      "            v = DEFAULTS[rowKey]\n        end",
      "            v = false\n        end",
-     "без настроек видны все семь строк"),
+     "без настроек видны строки по умолчанию"),
 
     ("2: raskladka ne schitaetsya po vidimym strokam",
      "ui.lua",

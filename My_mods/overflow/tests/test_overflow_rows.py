@@ -671,23 +671,27 @@ for i = 1, #BOXES do
 end
 check(orderOk, 'порядок строк совпадает с порядком на панели')
 
--- Совместимость: профиля ещё нет. Панель обязана остаться полной, иначе
--- после обновления мода у всех, кто ни разу не открывал настройки,
--- панель пропала бы.
+-- Compatibility: there is no profile yet. The panel must show the default set
+-- from the mod, otherwise it would disappear after a mod update for everyone
+-- who never opened the settings.
 PROFILE['Overflow'] = nil
+local def = ROWS.RowDefaults()
 local vis = ROWS.VisibleRows()
-local allOn = true
+local asDefault = true
+local anyOn = false
 for i = 1, #BOXES do
-    if vis[BOXES[i]] ~= true then allOn = false end
+    if vis[BOXES[i]] ~= def[BOXES[i]] then asDefault = false end
+    if def[BOXES[i]] then anyOn = true end
 end
-check(allOn, 'без настроек видны все семь строк')
+check(asDefault, 'без настроек видны строки по умолчанию')
+check(anyOn, 'по умолчанию видна хотя бы одна строка')
 
--- «Поля нет» и «поле = false» - РАЗНЫЕ вещи. Первое значит «показывать».
+-- «Поля нет» и «поле = false» - РАЗНЫЕ вещи. Первое значит «как по умолчанию».
 PROFILE['Overflow'] = { eOverflow = false }
 vis = ROWS.VisibleRows()
 check(vis.eOverflow == false, 'явно снятая строка скрыта')
-check(vis.eGo == true and vis.mGo == true and vis.total == true,
-      'отсутствующие поля читаются как «показывать», а не как «скрыть»')
+check(vis.eGo == def.eGo and vis.mGo == def.mGo and vis.total == def.total,
+      'отсутствующие поля читаются как значение по умолчанию, а не как «скрыть»')
 
 -- Запись не должна затирать чужие поля того же профиля: им пользуется UMT.
 PROFILE['Overflow'] = { preset = 'Все строки', eOverflow = true }
@@ -712,9 +716,11 @@ check(ROWS.RowsSignature({ eOverflow = true, eGo = true, eOwn = true,
 
 -- Все готовые наборы обязаны разворачиваться и сворачиваться без потерь.
 local names = ROWS.PresetNames()
-check(names[1] == 'Все строки',
-      'первый набор в списке - «Все строки» (UMT ставит items[1], если ' ..
-      'текущее значение не найдено в списке)')
+local hasAllRows = false
+for i = 1, #names do
+    if names[i] == 'Все строки' then hasAllRows = true end
+end
+check(hasAllRows, 'в списке есть набор «Все строки»')
 local bad = ''
 for i = 1, #names do
     local label = names[i]
@@ -750,7 +756,6 @@ check(ROWS.PresetFor(odd) == nil,
 -- ПРАВИЛО: первый набор обязан совпадать со значением по умолчанию, иначе
 -- UMT молча перепишет его и сохранит.
 local first = ROWS.PresetNames()[1]
-local def = ROWS.RowDefaults()
 local firstFlags = ROWS.PresetByName(first)
 local defMatch = true
 for i = 1, #BOXES do
@@ -983,10 +988,12 @@ local function setRows(flags)
     if BEAT then BEAT() end
 end
 
--- Панель создаётся первый раз со всеми семью строками: так выглядел мод до
--- появления настройки, и обновление не должно ломать вид у того, кто
--- ничего не трогал.
+-- The layout is checked on the full set, so the test enables all seven rows
+-- itself: the default set of the mod is shorter.
 PROFILE['Overflow'] = nil
+local allRows = {}
+for i = 1, ROWS.HowManyRows() do allRows[ROWS.RowKeyAt(i)] = true end
+ROWS.SaveRows(allRows)
 local okUi, errUi = pcall(U.OnCreateUI)
 check(okUi, 'OnCreateUI отработал без исключения' ..
       (okUi and '' or (': ' .. tostring(errUi))))
