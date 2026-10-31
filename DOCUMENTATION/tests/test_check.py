@@ -73,6 +73,21 @@ class ValidateTests(unittest.TestCase):
     def test_byte_order_mark_is_reported(self):
         self.assertEqual(len(self.problems(b"\xef\xbb\xbflocal a = 1\n")), 1)
 
+    def test_method_called_with_a_dot_is_reported(self):
+        code = "local function F(unit)\n    return unit.GetPosition()\nend\n"
+        self.assertIn("unit.GetPosition", " ".join(self.problems(code)))
+
+    def test_method_called_with_a_colon_is_allowed(self):
+        code = "local function F(unit)\n    return unit:GetPosition()\nend\n"
+        self.assertEqual(self.problems(code), [])
+
+    def test_control_size_getter_is_allowed(self):
+        self.assertEqual(self.problems("local w = panel.Width() + panel.Left()\n"), [])
+
+    def test_function_of_an_imported_module_is_allowed(self):
+        code = 'local options = import("/lua/options.lua")\noptions.Start()\n'
+        self.assertEqual(self.problems(code), [])
+
     def test_common_variable_names_are_allowed(self):
         code = "local line, index, name = 1, 2, 3\nlocal count = line + index + name\n"
         self.assertEqual(self.problems(code), [])

@@ -50,7 +50,7 @@
 # ==========================================
 
 /.tools/
-/check.json
+/WORKSPACE_MAP.md
 __pycache__/
 *.pyc
 

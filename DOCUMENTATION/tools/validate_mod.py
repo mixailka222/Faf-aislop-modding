@@ -15,6 +15,11 @@ PREFS_CALL = re.compile(
 STRING_ASSIGN = re.compile(r"\blocal\s+([A-Za-z_]\w*)\s*=\s*(['\"])([^'\"]*)\2")
 STRING_LITERAL = re.compile(r"^(['\"])([^'\"]*)\1$")
 TABLE_RETURN = re.compile(r"^\s*return\s*\{")
+METHOD_CALL = re.compile(r"(?<![\w:.])([a-z_]\w*)\.([A-Z]\w*)\s*\(")
+MODULE_LOCAL = re.compile(r"\blocal\s+([a-z_]\w*)\s*=\s*import\b")
+# Control sizes are properties that are read with a dot.
+PROPERTY_GETTERS = {"Left", "Right", "Top", "Bottom", "Width", "Height", "Depth", "Alpha",
+                    "Scroll", "ItemHeight"}
 
 
 def strip_comments(source: str) -> str:
@@ -93,6 +98,17 @@ def table_returns(path: Path, code: str) -> list[str]:
     ]
 
 
+def dotted_method_calls(code: str) -> list[str]:
+    """LuaLS sees this only when it knows the type, an untyped parameter needs this rule."""
+    modules = set(MODULE_LOCAL.findall(code))
+    return [
+        f"строка {number}: {call.group(1)}.{call.group(2)}() вызван через точку, нужно двоеточие"
+        for number, line in enumerate(blank_strings(code).split("\n"), 1)
+        for call in METHOD_CALL.finditer(line)
+        if call.group(1) not in modules and call.group(2) not in PROPERTY_GETTERS
+    ]
+
+
 def check_file(path: Path) -> list[str]:
     raw = path.read_bytes()
     problems = []
@@ -101,4 +117,4 @@ def check_file(path: Path) -> list[str]:
         raw = raw[len(BYTE_ORDER_MARK):]
     code = strip_comments(raw.decode("utf-8", errors="replace"))
     return (problems + wait_inside_pcall(code) + dotted_prefs_keys(code)
-            + table_returns(path, code))
+            + table_returns(path, code) + dotted_method_calls(code))
