@@ -4,9 +4,10 @@
 
 ### Хук дописывается в конец игрового файла
 
-Файл из `hook/` не заменяет игровой. Он склеивается с ним и выполняется как одно целое, в окружении этого файла. Хуки всех модов дописываются друг за другом.
+Файл из `hook/` не заменяет игровой. Он склеивается с ним и выполняется как одно целое, в окружении этого файла, поэтому хук видит `local` оригинального файла: хук ReUI читает `ignoreSelection`, объявленную в `gamemain.lua` как `local`. Хуки всех модов дописываются друг за другом.
 
 Источник: fa:lua/MODS.LUA#it defines a hook of the same name; if so, the file is concatenated to the end of the script before
+Источник: ui-libs:mods/ReUI/hook/lua/ui/game/gamemain.lua#return ignoreSelection or import('/lua/ui/game/selection.lua').IsHidden()
 
 ### Код хука оборачивают в `do ... end`
 
@@ -16,7 +17,7 @@
 
 ### Хук функции вызывает прежнюю версию
 
-Прежнюю версию нужно сохранить и вызвать, иначе теряется исходное поведение и изменения других модов.
+Функцию оригинала заменяют обычным объявлением. Прежнюю версию нужно сохранить в локальной переменной и вызвать, иначе теряется исходное поведение и изменения других модов.
 
 ```lua
 do
@@ -85,6 +86,7 @@ end
 
 Номер равен сумме строк игрового файла, предыдущих хуков и строки внутри своего хука. Порядок хуков виден в логе по строкам `Hooked <файл> with <хук>`.
 
+Источник: fa:lua/MODS.LUA#it defines a hook of the same name; if so, the file is concatenated to the end of the script before
 Наблюдение: трассировка `gamemain.lua(1884)` при 1248 строках в игровом файле и 13 хуках на него. Суммирование строк сошлось с реальным местом ошибки.
 
 ### Хук выполняется при загрузке файла, а `CreateUI` позже
@@ -123,16 +125,11 @@ end
 
 Не подтверждено: нужен запуск игры с хуком, сохранённым с BOM.
 
-### Хук `defaultKeyMap` не действует у игрока со своей раскладкой
+### Хук `defaultKeyMap.lua` действует не всегда
 
-`GetCurrentKeyMap` возвращает `UserKeyMap`, если он есть, и только иначе карту по умолчанию: это замена, а не слияние. Первая правка клавиши копирует текущую карту в `UserKeyMap` целиком, поэтому клавиши мода, подключённого позже, туда не попадают. Действие из `keyActions` остаётся, и игрок может назначить его вручную.
+`GetCurrentKeyMap` берёт `GetUserKeyMap() or GetDefaultKeyMap()`, поэтому своя карта игрока целиком заменяет карту по умолчанию: это замена, а не слияние. Первая правка клавиши копирует текущую карту в `UserKeyMap` целиком, поэтому клавиши мода, подключённого позже, туда не попадают. Файл карты по умолчанию выбирает `GetDefaultKeyMapName` по настройке `UserKeyMapName`: при другом пресете читается другой файл со своей таблицей `defaultKeyMap`, и хук файла `defaultKeyMap.lua` к нему не относится. Надёжный путь: действие из `keyActions` остаётся, а клавишу игрок назначает в меню вручную.
 
 Источник: fa:lua/keymap/keymapper.lua#return GetUserKeyMap() or GetDefaultKeyMap()
-
-### Карта по умолчанию зависит от пресета
-
-`GetDefaultKeyMapName` читает `UserKeyMapName`. При другом пресете читается другой файл со своей таблицей `defaultKeyMap`, и хук файла `defaultKeyMap.lua` к нему не относится.
-
 Источник: fa:lua/keymap/keymapper.lua#return Prefs.GetFromCurrentProfile("UserKeyMapName") or "/lua/keymap/defaultkeymap.lua"
 
 ### Клавиша `pause_unit` зависит от раскладки
@@ -141,39 +138,9 @@ end
 
 Источник: fa:lua/keymap/alternativeKeyMap.lua#['Tab']                 = 'pause_unit',
 
-### Хук дописывается в конец файла игры
-
-Поэтому номер строки в ошибке относится к склеенному файлу: базовый файл плюс хуки всех модов по порядку.
-
-Источник: fa:lua/MODS.LUA#it defines a hook of the same name; if so, the file is concatenated to the end of the script before
-
-### Обращение к несуществующему глобалу вызывает ошибку
-
-Модуль ищет неизвестные имена в `_G`, а у `_G` стоит обработчик с `error`. Внутри `pcall` такая ошибка не видна, и проверка вида `pcall(function() return Name() end)` просто молча не срабатывает.
-
-Источник: fa:lua/system/config.lua#error("access to nonexistent global variable " .. repr(key), 2)
-
-### InCommandMode это функция модуля commandmode.lua
-
-Глобальной она не является, вызывать надо через импорт: `import('/lua/ui/game/commandmode.lua').InCommandMode()`.
-
-Источник: fa:lua/ui/game/commandmode.lua#function InCommandMode()
-
-### Файл из `hook/` выполняется как продолжение оригинала
-
-Хук видит `local` оригинального файла: хук ReUI читает `ignoreSelection`, объявленную в `gamemain.lua` как `local`. Функцию оригинала заменяют обычным объявлением, сохранив старую в локальной переменной.
-
-Источник: ui-libs:mods/ReUI/hook/lua/ui/game/gamemain.lua#return ignoreSelection or import('/lua/ui/game/selection.lua').IsHidden()
-
 ### Ошибка в `CreateUI` прерывает создание интерфейса
 
-`CreateGameInterface` вызывает `CreateUI(isReplay)` без `pcall`, поэтому ошибка в хуке прерывает его, и код после вызова не выполняется. В хуке сначала зовут оригинал, затем свой код под `pcall`, а `CreateUI` заменяют только если модуль мода загрузился.
+`CreateGameInterface` вызывает `CreateUI(isReplay)` без `pcall`, поэтому необработанная ошибка в хуке прерывает его, код после вызова не выполняется, и остаётся чёрный экран. В хуке сначала зовут оригинал, затем свой код под `pcall` с записью ошибки в лог, а `CreateUI` заменяют только если модуль мода загрузился.
 
 Источник: fa:lua/ui/game/gamemain.lua#provider.CreateGameInterface = function(self, inIsReplay)
-
-### Хук `defaultKeyMap.lua` действует не всегда
-
-`GetCurrentKeyMap` берёт `GetUserKeyMap() or GetDefaultKeyMap()`, поэтому своя карта игрока целиком заменяет карту по умолчанию. Файл карты по умолчанию тоже выбирается настройкой `UserKeyMapName`, и при другом пресете хук `defaultKeyMap.lua` не участвует. Надёжный путь: действие в `keyActions`, а клавишу игрок назначает в меню.
-
-Источник: fa:lua/keymap/keymapper.lua#return GetUserKeyMap() or GetDefaultKeyMap()
-Источник: fa:lua/keymap/keymapper.lua#return Prefs.GetFromCurrentProfile("UserKeyMapName") or "/lua/keymap/defaultkeymap.lua"
+Наблюдение: партия с модом, в котором ошибка возникала при построении интерфейса.

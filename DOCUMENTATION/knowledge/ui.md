@@ -15,21 +15,16 @@ LayoutHelpers.AtLeftTopIn(label, panel, 8, 6)
 
 Источник: fa:lua/ui/uiutil.lua#function CreateText(parent, label, pointSize, font, dropshadow)
 
-### Свойства контрола читают точкой, методы зовут двоеточием
+### `Left`, `Width` и другие размеры контрола это LazyVar
 
-`panel.Left()` читает значение, `panel.Left:Set(100)` пишет его, `label:SetText('x')` вызывает метод. Функции модуля зовут точкой: `LayoutHelpers.SetDimensions(...)`.
+Читают их вызовом через точку: `c.Left()`. Задают через двоеточие: `c.Left:Set(v)`, значением или функцией. Методы вызывают через двоеточие: `c:Hide()`, `label:SetText('x')`. Функции модуля зовут точкой: `LayoutHelpers.SetDimensions(...)`.
 
+Источник: fa:lua/maui/control.lua#self.Left:Set(function() return self.Right() - self.Width() end)
 Источник: fa:lua/ui/game/massfabs.lua#self.Left:Set(math.min(math.max(x - offX, self._parent.Left()), self._parent.Right() - self.Width()))
-
-### Перетаскивание контрола
-
-Образец: `Dragger`, его `OnMove` и `OnRelease`, запуск через `PostDragger` в `HandleEvent`.
-
-Источник: fa:lua/ui/game/massfabs.lua#PostDragger(self:GetRootFrame(), event.KeyCode, drag)
 
 ### `AddBeatFunction(fn, throttle, key)`
 
-`fn` вызывается на каждом бите симуляции. `throttle = true` ограничивает вызовы десятью в секунду. По `key` функцию можно снять через `RemoveBeatFunction`.
+`GameMain.AddBeatFunction(fn, throttle, key)` подписывает `fn` на sim beat: она вызывается на каждом бите симуляции. При `throttle = true` вызов пропускается, если с прошлого прошло меньше 0.1 реальной секунды, и только когда `GetSimRate()` больше нуля, поэтому вызовов не больше десяти в секунду. Снятие подписки делает `RemoveBeatFunction(fn, key)`.
 
 Источник: fa:lua/ui/game/gamemain.lua#function AddBeatFunction(fn, throttle, key)
 
@@ -55,17 +50,21 @@ commandMode.RestoreCommandMode(true)
 ```
 
 Источник: fa:lua/userInit.lua#commandMode.CacheAndClearCommandMode()
+Источник: fa:lua/ui/game/hotkeys/dock-damaged.lua#gameMain.SetIgnoreSelection(true)
+Источник: ui-libs:mods/UMT/modules/units.lua#CommandMode.CacheAndClearCommandMode()
 
-### `SetIgnoreSelection` из `gamemain.lua` ставит два флага
+### `SetIgnoreSelection` это функция модуля `gamemain.lua`
 
-Флаг в `gamemain.lua` заставляет `OnSelectionChanged` выйти сразу. Флаг в `commandmode.lua` заставляет сразу выйти `EndCommandMode`.
+Глобальной функции с таким именем нет, берут её через `import("/lua/ui/game/gamemain.lua")`. Она ставит два флага: флаг в `gamemain.lua` заставляет `OnSelectionChanged` выйти сразу, флаг в `commandmode.lua` заставляет сразу выйти `EndCommandMode`. Поэтому пока флаг стоит, смена выделения не закрывает режим команд.
 
 Источник: fa:lua/ui/game/gamemain.lua#import("/lua/ui/game/commandmode.lua").SetIgnoreSelection(ignore)
+Источник: fa:lua/userInit.lua#-- prevents losing command mode
 
-### `Selection.Hidden` тоже скрывает смену выделения, но не глушит `EndCommandMode`
+### `SetIgnoreSelection` и `Selection.Hidden` одинаково глушат `OnSelectionChanged`
 
-Его флаг проверяет только `OnSelectionChanged`. В конце он вызывает `StartCommandMode`, а тот при активном режиме выполняет `EndCommandMode(true)` полностью, вместе с `ClearBuildTemplates`.
+Обе проверки стоят в начале функции, поэтому `ObserveSelection` и хуки ниже них не срабатывают. Разница в режиме приказов: `SetIgnoreSelection` блокирует `EndCommandMode`, а флаг `Hidden` проверяет только `OnSelectionChanged`. `Hidden` запоминает режим и в конце вызывает `StartCommandMode`, а тот при активном режиме выполняет `EndCommandMode(true)` полностью, вместе с `ClearBuildTemplates`.
 
+Источник: fa:lua/ui/game/gamemain.lua#if import("/lua/ui/game/selection.lua").IsHidden() then
 Источник: fa:lua/ui/game/selection.lua#CM.StartCommandMode(current_command[1], current_command[2])
 
 ### Смена выделения завершает режим приказов
@@ -82,9 +81,9 @@ commandMode.RestoreCommandMode(true)
 
 ### `InCommandMode` не глобальная функция
 
-Это функция модуля `commandmode.lua`: `import("/lua/ui/game/commandmode.lua").InCommandMode()`.
+Это функция модуля `commandmode.lua`, вызывать её надо через импорт: `import("/lua/ui/game/commandmode.lua").InCommandMode()`.
 
-Источник: fa:lua/ui/game/commandmode.lua#function InCommandMode
+Источник: fa:lua/ui/game/commandmode.lua#function InCommandMode()
 
 ### На старте матча игра сама выделяет командира
 
@@ -92,53 +91,25 @@ commandMode.RestoreCommandMode(true)
 
 Источник: fa:lua/ui/game/gamemain.lua#until not table.empty(selected) or GameTick() > 50
 
-### Всех юнитов можно получить только через скрытое выделение
-
-Глобальной функции `GetUnits()` в UI нет, она есть в чужих библиотеках как обёртка над этим приёмом. Функция из чужого мода перестаёт работать, если игрок этот мод отключил.
-
-Источник: ui-libs:mods/UMT/modules/units.lua#UISelectionByCategory("ALLUNITS", false, false, false, false)
-
-### Частичные списки юнитов есть без выделения
-
-`GetIdleEngineers()`, `GetIdleFactories()`, `GetArmyAvatars()`, `GetValidAttackingUnits()`, а по id работает `GetUnitById(id)`.
-
-Источник: fa:engine/User.lua#function GetIdleEngineers()
-
 ### В UI `WaitSeconds` считает реальное время, а `WaitTicks` игровые тики
 
 `WaitTicks` не завершится, пока игра на паузе, потому что `GameTick()` стоит на месте. `WaitSeconds` на паузе продолжает идти.
 
 Источник: fa:lua/userInit.lua#until (start + ticks) <= GameTick()
 
-### Результат `UISelectionByCategory` + `GetSelectedUnits` бывает пустым
-
-Пустой список не означает отсутствие юнитов, это неудачный замер. Прежний результат им не заменяют.
-
-Наблюдение: достройка здания при обходе армии: список пуст, при этом доход читается верно. Точная причина не установлена.
-
-### Скрытое выделение делается через `SetIgnoreSelection`
-
-Порядок из кода игры: `CacheAndClearCommandMode()`, `SetIgnoreSelection(true)`, `SelectUnits(list)`, действие, `SelectUnits(saved)`, `SetIgnoreSelection(false)`, `RestoreCommandMode()`. Пока флаг стоит, `OnSelectionChanged` и `EndCommandMode` сразу выходят.
-
-Источник: fa:lua/ui/game/hotkeys/dock-damaged.lua#gameMain.SetIgnoreSelection(true)
-
 ### `Selection.Hidden(callback)` это готовая обёртка скрытого выделения
 
-Функция запоминает выделение и режим команд, вызывает `callback`, затем всё возвращает. `IsHidden()` сообщает обработчикам, что выделение временное. Защиты от ошибки нет: если `callback` упадёт, флаг останется поднятым и `OnSelectionChanged` перестанет работать.
+Функция ставит `hidden_select = true`, запоминает выделение и режим команд, вызывает `callback()` без `pcall`, затем всё возвращает. `IsHidden()` сообщает обработчикам, что выделение временное. Защиты от ошибки нет: если `callback` упал, выделение не вернётся, `IsHidden()` останется `true`, и `OnSelectionChanged` будет выходить сразу до конца партии. Внешний `pcall` этого не чинит, ошибки ловят внутри `callback`.
 
 Источник: fa:lua/ui/game/selection.lua#function Hidden(callback)
+Источник: fa:lua/ui/game/selection.lua#hidden_select = true
 
-### `RestoreCommandMode` перезапускает режим команд
+### `CacheAndClearCommandMode` и `RestoreCommandMode` идут парой
 
-Если режим был закэширован, вызывается `StartCommandMode`, и его обработчики запуска выполняются заново. Поэтому скрытое выделение откладывают, пока `InCommandMode()` истинно. Аргумент `true` ещё сбрасывает `issuedOneCommand`: этот флаг закрывает режим на ближайшем бите, если не зажат Shift.
+`GetCommandMode` и `StartCommandMode` для этого не нужны: режим кэшируется и возвращается этими двумя функциями из `commandmode.lua`. Если режим был закэширован, `RestoreCommandMode` вызывает `StartCommandMode`, и его обработчики запуска выполняются заново. Поэтому скрытое выделение откладывают, пока `InCommandMode()` истинно. Аргумент `true` ещё сбрасывает `issuedOneCommand`: этот флаг закрывает режим на ближайшем бите, если не зажат Shift.
 
 Источник: fa:lua/ui/game/commandmode.lua#function RestoreCommandMode(ignorePreviousCommands)
-
-### `SimCallback(cb, true)` добавляет текущее выделение
-
-Колбэк получает юнитов вторым параметром, поэтому перед вызовом они должны быть выделены.
-
-Источник: fa:engine/User.lua#--- Optionally appends the unit selection to the arguments.
+Источник: fa:lua/ui/game/commandmode.lua#function CacheAndClearCommandMode()
 
 ### Помощники LayoutHelpers сами умножают числа на масштаб интерфейса
 
@@ -212,9 +183,9 @@ commandMode.RestoreCommandMode(true)
 
 Источник: fa:engine/Core.lua#---@alias Color string `EnumColor` or hexcode like `'RrGgBb'`, or `'AaRrGgBb'` with transparency
 
-### GetFrame(0) это корневой кадр основного монитора
+### `GetFrame(0)` и `GetFrame(1)`
 
-`GetFrame(1)` возвращает кадр второго монитора.
+`GetFrame(0)` это корневой кадр основного монитора, `GetFrame(1)` второго. Количество кадров даёт `GetNumRootFrames()`.
 
 Источник: fa:engine/User.lua#Returns the root UI frame for a given adapter.
 
@@ -244,7 +215,7 @@ commandMode.RestoreCommandMode(true)
 
 ### Перетаскивание делается через Dragger и PostDragger
 
-`PostDragger` это глобальная функция движка. Обработчики получают экранные координаты.
+`Dragger()` с `OnMove` и `OnRelease` запускается через глобальную функцию движка `PostDragger` из `HandleEvent`. Обработчики получают экранные координаты. Готовые образцы: `lua/ui/game/massfabs.lua` и `lua/maui/window.lua`.
 
 ```lua
 if event.Type == 'ButtonPress' then
@@ -289,53 +260,17 @@ end
 
 Источник: fa:engine/User/CMauiControl.lua#--- Stops rendering and hit testing the control
 
-### `Left`, `Width` и другие размеры контрола это LazyVar
-
-Читают их вызовом через точку: `c.Left()`. Задают через двоеточие: `c.Left:Set(v)`, значением или функцией. Методы движка, наоборот, вызываются через двоеточие: `c:Hide()`.
-
-Источник: fa:lua/maui/control.lua#self.Left:Set(function() return self.Right() - self.Width() end)
-
 ### `Group` не обрезает детей
 
 `Group` это только `InternalCreateGroup`, средств обрезки у него нет; обрезка есть лишь у `Text` через `SetClipToWidth`. Если сжать панель, дочерние строки останутся на экране, поэтому их надо скрывать через `Hide()`.
 
 Источник: fa:lua/maui/text.lua#SetClipToWidth = function(self, clipToWidth)
 
-### `Selection.Hidden(callback)` не защищён от ошибки
-
-`Hidden` ставит `hidden_select = true`, вызывает `callback()` без `pcall`, затем возвращает выделение и режим команд. Если `callback` упал, выделение не вернётся, а `IsHidden()` останется `true`, и `OnSelectionChanged` будет выходить сразу. Внешний `pcall` этого не чинит, ошибки ловят внутри `callback`.
-
-Источник: fa:lua/ui/game/selection.lua#function Hidden(callback)
-
-### `SetIgnoreSelection` это функция модуля `gamemain.lua`
-
-Глобальной функции с таким именем нет, берут её через `import("/lua/ui/game/gamemain.lua")`. Она глушит `OnSelectionChanged` и не даёт смене выделения закрыть режим команд. Сама игра для служебной подмены выделения делает так: `CacheAndClearCommandMode`, `SetIgnoreSelection(true)`, запомнить выделение, работа, вернуть выделение, `SetIgnoreSelection(false)`, `RestoreCommandMode(true)`.
-
-Источник: fa:lua/userInit.lua#-- prevents losing command mode
-
-### `CacheAndClearCommandMode` и `RestoreCommandMode` идут парой
-
-`GetCommandMode` и `StartCommandMode` для этого не нужны: режим кэшируется и возвращается этими двумя функциями из `commandmode.lua`. Аргумент `true` у `RestoreCommandMode` сбрасывает признак `issuedOneCommand`.
-
-Источник: fa:lua/ui/game/commandmode.lua#function CacheAndClearCommandMode()
-
 ### Где лежат базовые элементы интерфейса
 
 `CreateText`, `CreateBitmap`, `UIFile` находятся в `/lua/ui/uiutil.lua`, раскладка в `/lua/maui/layouthelpers.lua`, классы в `/lua/maui/group.lua`, `bitmap.lua`, `button.lua`, `dragger.lua`, `statusbar.lua`, `window.lua`. Реестр элементов игры это `Get(key)` в `/lua/ui/controls.lua`.
 
 Источник: fa:lua/ui/uiutil.lua#function CreateText(parent, label, pointSize, font, dropshadow)
-
-### Перетаскивание панели в коде игры
-
-`Dragger()` с `OnMove` и `OnRelease` запускается через глобальную функцию движка `PostDragger(self:GetRootFrame(), event.KeyCode, drag)` из `HandleEvent`. Готовые образцы: `lua/ui/game/massfabs.lua` и `lua/maui/window.lua`.
-
-Источник: fa:lua/ui/game/massfabs.lua#PostDragger(self:GetRootFrame(), event.KeyCode, drag)
-
-### `GetFrame(0)` и `GetFrame(1)`
-
-`GetFrame(0)` это корневой кадр основного монитора, `GetFrame(1)` второго. Количество кадров даёт `GetNumRootFrames()`.
-
-Источник: fa:engine/User.lua#Returns the root UI frame for a given adapter
 
 ### Условия, при которых ReUI видит мод
 

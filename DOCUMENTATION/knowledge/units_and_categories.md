@@ -4,9 +4,10 @@
 
 ### Очередь приказов: в UI тип строкой, в sim числом
 
-В UI `unit:GetCommandQueue()` даёт записи `{ type, ID, position }`, где `type` это строка, например `'Move'`. В sim запись содержит число `commandType` и координаты `x`, `y`, `z`.
+В UI `unit:GetCommandQueue()` возвращает список записей `{ type, ID, position }`, текущий приказ стоит первым, а `type` это строка, например `'Move'` или `'Script'`. У юнита с категорией `FACTORY` вместо очереди приказов приходит очередь точки сбора. В sim запись содержит число `commandType` и координаты `x`, `y`, `z`.
 
 Источник: fa:engine/User/UserUnit.lua#---@class UICommandInfo
+Источник: fa:engine/User/UserUnit.lua#Returns a table of commands. If the unit has the `FACTORY` category, returns the rally point command queue.
 
 ### Коды приказов sim
 
@@ -14,10 +15,11 @@
 
 Источник: fa:lua/sim/commands/shared.lua#---| "AggressiveMove"               # 35
 
-### Кнопка атак-мува создаёт Script-пустышку
+### Атак-мув с кнопки это `Script` с `TaskName = 'AttackMove'`
 
-Кнопка ставит Script-задачу `AttackMove`, а колбэк sim тут же выдаёт настоящий `AggressiveMove` всем юнитам, кроме зданий. В очереди движущегося юнита после этого лежит тип `AggressiveMove`. Задача-пустышка завершается на первом тике.
+Кнопка отдаёт команду типа `Script` с параметрами `TaskName` и `AbilityName`, а `commandmode.lua` превращает её в `SimCallback` с `Func = "AttackMove"`. Колбэк sim тут же выдаёт настоящий `AggressiveMove` всем юнитам, кроме зданий, поэтому в очереди движущегося юнита после этого лежит тип `AggressiveMove`. Сам класс задачи в `lua/sim/tasks/AttackMove.lua` пустой, задача-пустышка завершается на первом тике.
 
+Источник: fa:lua/ui/game/commandmode.lua#if command.LuaParams.TaskName == 'AttackMove' then
 Источник: fa:lua/SimCallbacks.lua#IssueAggressiveMove(allNonStructures, { x, y, z })
 
 ### `LuaParams` виден только при выдаче приказа
@@ -26,11 +28,11 @@
 
 Источник: fa:lua/ui/game/commandmode.lua#if command.LuaParams.TaskName == 'AttackMove' then
 
-### `IsUnitState` есть только у sim-юнита
+### `UserUnit` и `Unit` это разные объекты
 
-У `UserUnit` такого метода нет. Состояние `Building` или `Reclaiming` из UI так не прочитать, вызов падает с ошибкой. В UI есть `unit:IsIdle()`.
+В интерфейсе юнит это `UserUnit`: у него нет `IsUnitState`, `AddUnitCallback`, `GetNavigator` и других методов симуляции. Вызов такого метода из интерфейса падает с `attempt to call method`, а под `pcall` выглядит как обычный `false`, и проверка состояния всегда ложна. Поэтому состояние `Building` или `Reclaiming` из UI так не прочитать, в UI есть `unit:IsIdle()`. Команду в sim-слой передают через `SimCallback`.
 
-Источник: fa:engine/Sim/Unit.lua#function Unit:IsUnitState
+Источник: fa:engine/Sim/Unit.lua#function Unit:IsUnitState(stateName)
 
 ### Выработка недостроенного здания кодом Lua не определена
 
@@ -46,45 +48,37 @@
 
 ### `GetIsPaused` отвечает за группу, `GetIsPausedOfUnit` за один юнит
 
-`GetIsPaused(units)` истинно, если на паузе хотя бы один юнит из списка. `GetIsPausedOfUnit(unit)` есть в движке, игра вызывает его напрямую, без проверки наличия.
+`GetIsPaused(list)` истинно, если на паузе хотя бы один юнит из списка. `GetIsPausedOfUnit(unit)` и `SetPausedOfUnit(unit, pause)` это функции из `userInit.lua`: они кладут юнита в одну общую таблицу, поэтому мусора не создают. Игра вызывает `GetIsPausedOfUnit` напрямую, без проверки наличия.
 
 Источник: fa:lua/ui/game/orders.lua#if not GetIsPausedOfUnit(silo) then
+Источник: fa:lua/userInit.lua#_G.GetIsPausedOfUnit = function(unit)
 
-### Пауза на реклейме сохраняет цель
+### Пауза не отменяет реклейм
 
-`OnPaused` выключает только эффекты и звук, `EntityBeingReclaimed` остаётся. Скорость реклейма на паузе равна 0 за счёт патча движка, `OnUnpaused` возвращает эффекты.
+`OnPaused` в sim-слое выключает только эффекты и звук, поле `EntityBeingReclaimed` не обнуляется. Скорость реклейма на паузе равна 0 за счёт патча движка. `OnUnpaused` запускает эффекты для той же цели.
 
 Источник: fa:lua/sim/Unit.lua#-- When paused we reclaim at a speed of 0, with thanks to:
 
 ### Пауза флагом не останавливает движение и не трогает приказ
 
-Инженер на атак-муве под `SetPaused` продолжает идти к точке, а после снятия паузы продолжает приказ. Очередь у юнита на паузе читается, поэтому пустой ответ `GetCommandQueue()` паузой не объясняется.
+Инженер на атак-муве под `SetPaused` перестаёт реклеймить, но идёт к точке дальше, там встаёт и приказ не теряет: после снятия паузы он продолжает приказ. Очередь у юнита на паузе читается, поэтому пустой ответ `GetCommandQueue()` паузой не объясняется.
 
 Наблюдение: инженеры на атак-муве, ручная пауза и пауза от мода, несколько игр; у 20 инженеров через секунду после паузы очередь вернула `AggressiveMove`.
+Наблюдение: инженеры на атак-муве в матче, флаг `SetPaused(units, true)`, сдвиг координат из лога ReclaimPause и ручная проверка в игре.
 
 ### `Pause` как приказ и как флаг это разные механизмы
 
-Команда типа 33 `Pause` уходит в очередь приказов и может сработать не сразу, а `SetPaused` действует сразу. Сама игра выдаёт этот приказ только ракетным шахтам и только если они не на паузе.
+Команда типа 33 `Pause` уходит в очередь приказов и может сработать не сразу, а `SetPaused` действует сразу. Сама игра выдаёт этот приказ только ракетным шахтам и только если они не на паузе. `IssueUnitCommand(units, 'Pause')` останавливает инженера, но снимает приказ атак-мув. Повторная выдача работает как переключатель, поэтому состояние паузы расходится с `GetIsPaused` и с тем, что ожидает вызывающий код. Для паузы без потери приказа используют `SetPaused`.
 
 Источник: fa:lua/ui/game/orders.lua#IssueUnitCommandToUnit(silo, 'Pause')
-
-### Приказ `Pause` не годится для удержания инженера с атак-мувом
-
-`IssueUnitCommand(units, 'Pause')` останавливает инженера, но атак-мув теряется. Повторная выдача работает как переключатель, поэтому состояние паузы расходится с тем, что ожидает вызывающий код.
-
 Наблюдение: инженеры на атак-муве, сравнение с `SetPaused` в игре; в логе `engineers=9 nowPaused=0` при приказной паузе.
+Наблюдение: инженер на атак-муве в матче, сравнение команды и флага вручную и по логу ReclaimPause.
 
 ### Неверное имя команды в `IssueUnitCommand` роняет игру
 
 То же относится к `IssueUnitCommandToUnit` и `IssueCommand`. Имя берут из списка `UserUnitCommand`.
 
 Источник: fa:engine/User.lua#---@param command UserUnitCommand # Will crash the game if not a valid command.
-
-### `GetCommandQueue` у завода возвращает очередь точки сбора
-
-У остальных юнитов это очередь приказов. Запись содержит поля `type`, `ID`, `position`.
-
-Источник: fa:engine/User/UserUnit.lua#If the unit has the `FACTORY` category, returns the rally point command queue.
 
 ### `AbortNavigation` обрывает путь и не трогает очередь
 
@@ -94,7 +88,7 @@
 
 ### `AbortNavigation` принимается раз в 6 тактов на игрока
 
-Защита от автоматизации отклоняет вызов, если с прошлого принятого прошло 5 тактов или меньше. Счётчик один на источник команд, а не на юнита, и при 10 тактах в секунду это 0.6 с игрового времени. Отказ печатает `Unable to interrupt path finding`, эта же строка выходит при пустом выделении и при выделении без инженеров. Принятый вызов печатает `Interrupted pathfinding for N unit(s)`.
+Защита от автоматизации отклоняет вызов, если с прошлого принятого прошло 5 тактов или меньше. Счётчик один на источник команд, а не на юнита, и при 10 тактах в секунду это 0.6 с игрового времени. Отказ печатает `Unable to interrupt path finding`.
 
 Источник: fa:lua/SimCallbacks.lua#if commandSourceGuard and commandSourceGuard + 5 >= gameTick then
 
@@ -118,7 +112,7 @@
 
 ### Инженеры на атак-муве и патруле сами бросают реклейм при почти полном хранилище
 
-Игра сообщает об этом только в подсказке загрузки. Числа и проверки уровня хранилища в Lua нет, условие находится в движке.
+Игра сообщает об этом только в подсказке загрузки. Числа там нет, и в Lua-файлах игры порог и проверка уровня хранилища не найдены, поэтому его считают условием движка.
 
 Источник: fa:lua/ui/help/loadingtips.lua#Engineers on an Attack-Move or Patrol order will stop reclaiming when your storage is nearly full
 
@@ -152,12 +146,6 @@ X лежит в `[1]`, Y в `[2]`, Z в `[3]`. Пару значений сох�
 
 Источник: fa:lua/keymap/selectedinfo.lua#info.armyIndex = unit:GetArmy() - 1
 
-### EconData содержит шесть вещественных полей
-
-`energyProduced`, `energyRequested`, `energyConsumed`, `massProduced`, `massRequested`, `massConsumed`. Дробными значения стали благодаря патчам движка.
-
-Источник: fa:engine/User/UserUnit.lua#-- Thanks to the following engine patches this contains floats instead of ints:
-
 ### energyProduced отражает бонус соседства
 
 Панель под выделенным юнитом показывает это значение, поэтому видны числа с учётом соседей.
@@ -184,38 +172,11 @@ X лежит в `[1]`, Y в `[2]`, Z в `[3]`. Пару значений сох�
 
 ### В UI нет функции «все мои юниты»
 
-Готовые списки есть только частичные: `GetSelectedUnits`, `GetIdleEngineers`, `GetIdleFactories`, `GetArmyAvatars`. Отдельный объект достаётся через `GetUnitById(id)`. Полный список собирают скрытым выделением.
+Глобальной функции `GetUnits()` нет, она есть в чужих библиотеках как обёртка над скрытым выделением, и функция из чужого мода перестаёт работать, если игрок этот мод отключил. Готовые списки есть только частичные: `GetSelectedUnits()`, `GetIdleEngineers()`, `GetIdleFactories()`, `GetArmyAvatars()`, `GetValidAttackingUnits()`. Отдельный объект достаётся через `GetUnitById(id)`. Полный список собирают скрытой подменой выделения: внутри неё вызывают `UISelectionByCategory('ALLUNITS', false, false, false, false)` и читают `GetSelectedUnits() or {}`, потому что при пустом выделении `GetSelectedUnits()` даёт `nil`.
 
 Источник: fa:engine/User.lua#function GetIdleEngineers()
-
-### Скрытое выделение целиком
-
-`SetIgnoreSelection` это функция `gamemain.lua`, а не глобальная. `CacheAndClearCommandMode` и `RestoreCommandMode` сохраняют режим приказов игрока. `GetSelectedUnits()` при пустом выделении даёт `nil`.
-
-```lua
-CommandMode.CacheAndClearCommandMode()
-GameMain.SetIgnoreSelection(true)
-local old = GetSelectedUnits()
-UISelectionByCategory('ALLUNITS', false, false, false, false)
-local units = GetSelectedUnits() or {}
-SelectUnits(old)
-GameMain.SetIgnoreSelection(false)
-CommandMode.RestoreCommandMode(true)
-```
-
-Источник: ui-libs:mods/UMT/modules/units.lua#CommandMode.CacheAndClearCommandMode()
-
-### SetIgnoreSelection и Selection.Hidden одинаково глушат OnSelectionChanged
-
-Обе проверки стоят в начале функции, поэтому `ObserveSelection` и хуки ниже них не срабатывают. Разница в режиме приказов: `SetIgnoreSelection` блокирует `EndCommandMode`, а `Hidden` запоминает режим и перезапускает его.
-
-Источник: fa:lua/ui/game/gamemain.lua#if import("/lua/ui/game/selection.lua").IsHidden() then
-
-### Selection.Hidden не защищён от ошибок
-
-`Hidden` вызывает функцию без `pcall`. Ошибка внутри оставит `hidden_select = true`, и `OnSelectionChanged` перестанет работать до конца партии.
-
-Источник: fa:lua/ui/game/selection.lua#hidden_select = true
+Источник: fa:engine/User.lua#function UISelectionByCategory(expression, addToCurSel, inViewFrustum, nearestToMouse, mustBeIdle)
+Источник: ui-libs:mods/UMT/modules/units.lua#UISelectionByCategory("ALLUNITS", false, false, false, false)
 
 ### Внутри OnSelectionChanged GetSelectedUnits даёт nil
 
@@ -231,9 +192,10 @@ CommandMode.RestoreCommandMode(true)
 
 ### Пустой результат скана не означает «юнитов нет»
 
-Такой замер отбрасывают и оставляют прошлый результат. Причина пустого ответа не установлена.
+Результат `UISelectionByCategory` + `GetSelectedUnits` бывает пустым, и это неудачный замер: его отбрасывают и оставляют прошлый результат. Причина пустого ответа не установлена.
 
 Наблюдение: партия с UI-сканом `UISelectionByCategory` и `GetSelectedUnits`, пустой список в момент достройки здания.
+Наблюдение: достройка здания при обходе армии: список пуст, при этом доход читается верно. Точная причина не установлена.
 
 ### Параметры UISelectionByCategory
 
@@ -335,65 +297,11 @@ T1 `xxb1101`, гидро `xxb1102`, T2 `xxb1201`, T3 `xxb1301`. Префиксы
 
 Не подтверждено: нужен файл `units/UEB1102/UEB1102_unit.bp`.
 
-### В интерфейсе нет функции «все юниты армии»
-
-Есть `GetSelectedUnits()`, `GetIdleEngineers()`, `GetIdleFactories()` и `GetUnitById(id)`. Полный список получают скрытым выделением через `UISelectionByCategory(expression, addToCurSel, inViewFrustum, nearestToMouse, mustBeIdle)` и `GetSelectedUnits()`.
-
-Источник: fa:engine/User.lua#function UISelectionByCategory(expression, addToCurSel, inViewFrustum, nearestToMouse, mustBeIdle)
-
-### `UserUnit` и `Unit` это разные объекты
-
-В интерфейсе юнит это `UserUnit`: у него нет `IsUnitState`, `AddUnitCallback`, `GetNavigator` и других методов симуляции. Вызов такого метода падает, а под `pcall` выглядит как обычный `false`. Команду в sim-слой передают через `SimCallback`.
-
-Источник: fa:engine/Sim/Unit.lua#function Unit:IsUnitState(stateName)
-
-### Очередь приказов в интерфейсе
-
-`unit:GetCommandQueue()` возвращает список с полями `ID`, `type`, `position`, текущий приказ стоит первым, а `type` это строка, например `'Script'`. У юнита с категорией `FACTORY` вместо очереди приходит очередь точки сбора.
-
-Источник: fa:engine/User/UserUnit.lua#Returns a table of commands. If the unit has the `FACTORY` category, returns the rally point command queue.
-
-### Атак-мув с кнопки это `Script` с `TaskName = 'AttackMove'`
-
-Кнопка отдаёт команду типа `Script` с параметрами `TaskName` и `AbilityName`, а `commandmode.lua` превращает её в `SimCallback` с `Func = "AttackMove"`. Сам класс задачи в `lua/sim/tasks/AttackMove.lua` пустой.
-
-Источник: fa:lua/ui/game/commandmode.lua#if command.LuaParams.TaskName == 'AttackMove' then
-
-### `GetEconData()` даёт экономику одного юнита
-
-Поля: `energyConsumed`, `energyProduced`, `energyRequested`, `massConsumed`, `massProduced`, `massRequested`. Значения дробные благодаря патчам движка.
-
-Источник: fa:engine/User/UserUnit.lua#---@class EconData
-
 ### `GetFocusArmy()` равен `-1` у наблюдателя
 
 Иначе это номер армии, на которой стоит фокус. Код, которому нужна своя армия, проверяет этот случай отдельно.
 
 Источник: fa:engine/Core.lua#The current army number that the player has focused, or `-1` for none (i.e. observer)
-
-### Пауза не отменяет реклейм
-
-`OnPaused` в sim-слое останавливает только эффекты и звук, поле `EntityBeingReclaimed` не обнуляется, а реклейм на паузе идёт со скоростью 0. `OnUnpaused` запускает эффекты для той же цели.
-
-Источник: fa:lua/sim/Unit.lua#-- When paused we reclaim at a speed of 0, with thanks to:
-
-### `SetPaused` не останавливает движение
-
-Инженер на атак-муве с флагом паузы перестаёт реклеймить, но идёт к точке дальше, там встаёт и приказ не теряет.
-
-Наблюдение: инженеры на атак-муве в матче, флаг `SetPaused(units, true)`, сдвиг координат из лога ReclaimPause и ручная проверка в игре.
-
-### Команда `'Pause'` это не то же, что `SetPaused`
-
-`IssueUnitCommand(units, 'Pause')` снимала с инженера приказ атак-мув, а состояние паузы после неё расходилось с `GetIsPaused`. Для паузы без потери приказа используют `SetPaused`.
-
-Наблюдение: инженер на атак-муве в матче, сравнение команды и флага вручную и по логу ReclaimPause.
-
-### `GetIsPaused`, `GetIsPausedOfUnit`, `SetPausedOfUnit`
-
-`GetIsPaused(list)` отвечает, стоит ли на паузе хотя бы один юнит списка. `GetIsPausedOfUnit(unit)` и `SetPausedOfUnit(unit, pause)` это функции из `userInit.lua`: они кладут юнита в одну общую таблицу, поэтому мусора не создают.
-
-Источник: fa:lua/userInit.lua#_G.GetIsPausedOfUnit = function(unit)
 
 ### На паузе апгрейд не стартует
 
@@ -401,20 +309,8 @@ T1 `xxb1101`, гидро `xxb1102`, T2 `xxb1201`, T3 `xxb1301`. Префиксы
 
 Источник: fa:lua/ui/game/commandmode.lua#-- paused units do not start upgrades
 
-### Инженеры на атак-муве и патруле сами перестают реклеймить
-
-Об этом сказано в подсказке загрузки игры: при почти полном хранилище реклейм прекращается. Числа там нет, и в Lua-файлах игры порог не найден, поэтому его считают условием движка.
-
-Источник: fa:lua/ui/help/loadingtips.lua#Engineers on an Attack-Move or Patrol order will stop reclaiming when your storage is nearly full
-
 ### Порог остановки реклейма около 76.5% массы
 
 Скорость реклейма упала со 140 до 10 массы в секунду между заполнением 76.4% и 76.6% и больше не восстановилась, а доля идущих инженеров выросла. Зависимость от скорости наполнения и от запаса энергии не проверялась.
 
 Наблюдение: один замер, 137 инженеров, шаг 1 с, энергия 100%, скорость из накопительного `GetEconomyTotals().reclaimed`.
-
-### `GetResourceSharing()` не даёт объём перелива
-
-В аннотациях функция возвращает `boolean`, а в Lua игры она не вызывается. Что именно она значит, не проверялось.
-
-Источник: fa:engine/User.lua#function GetResourceSharing()

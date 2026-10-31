@@ -2,35 +2,35 @@
 
 Логи, сообщения движка и как их читать.
 
-### Чтение несуществующего глобала вызывает ошибку
+### `access to nonexistent global variable "X"`
 
-На `_G` висит `__index` с `error`, поэтому результат не `nil`, а сообщение `access to nonexistent global variable "X"`. При загрузке модуля такая ошибка отключает модуль, в работающем коде обрывает только текущий вызов.
+Прочитано имя, которого нет ни в таблице модуля, ни в `_G`: таблица модуля читает через `__index = _G`, а у `_G` стоит `__index`, вызывающий `error()`. Поэтому результат не `nil`: и `X == nil`, и `type(module.X)`, и `if Mod.Name then` падают на отсутствующем имени. То же сообщение даёт чтение отсутствующего поля модуля (`Mod.Start`), и тогда X это имя поля, а причина часто в другом файле, который не скомпилировался. На верхнем уровне файла такая ошибка прерывает его загрузку и отключает модуль, в работающем коде обрывает только текущий вызов. Внутри `pcall` такая ошибка не видна, и проверка вида `pcall(function() return Name() end)` просто молча не срабатывает. Наличие проверяют через `rawget(_G, 'X')` или `rawget(Mod, 'X')`, так делает сама игра. Для модуля сначала проверяют `type(Mod) == 'table'`, потому что `rawget` принимает только таблицу.
 
 Источник: fa:lua/system/config.lua#error("access to nonexistent global variable " .. repr(key), 2)
-
-### Отсутствующее поле модуля читается как несуществующий глобал
-
-У таблицы модуля `__index` указывает на `_G`, поэтому `Mod.Missing` падает с тем же сообщением. `if Mod.Missing then` тоже падает. Наличие поля проверяют через `rawget(Mod, 'Missing')`.
-
 Источник: fa:lua/system/import.lua#__index = _G
+Источник: fa:lua/system/import.lua#__module_metatable = {
+Источник: fa:lua/simInit.lua#if rawget(_G, "SetNavigatorPersonalPosMaxDistance") then
 
-### Ошибка компиляции модуля не вызывает ошибку `import`
+### `SCR_LuaDoFileConcat: Loading "..." failed`: файл не скомпилировался
 
-`doscript` пишет `WARNING: SCR_LuaDoFileConcat: Loading "..." failed: ...` и завершается без ошибки. `pcall(import, path)` возвращает `true` и пустой модуль, а виновным в логе выглядит файл, который читает его поле. Отказ файла ищут в логе по `SCR_LuaDoFileConcat`.
+В логе это `WARNING: SCR_LuaDoFileConcat: Loading "<файл>" failed: <причина>`, и только здесь видны файл, строка и причина. `doscript` завершается без ошибки, поэтому `import` её не бросает: `pcall(import, path)` возвращает `true` и пустой модуль. Чтение его поля вне `pcall` падает, и виновным в логе выглядит файл, который читает это поле: следующая ошибка обычно указывает на другой файл. В хуке `gamemain.lua` это ломает загрузку самого `gamemain.lua`, поэтому в хуке точку входа читают только через `rawget`. Если мод загрузился, но молчит, эту строку ищут первой.
 
 Источник: fa:lua/sim/Profiler.lua#this doesn't catch any errors inside `doscript`, only explicit Lua errors
+Источник: fa:lua/sim/Profiler.lua#there's likely a 'WARNING: SCR_LuaDoFileConcat' right above me
 
-### `Error importing` значит, что файла нет или он упал при выполнении
+### `Error importing '<путь>'`
 
-Настоящая причина записана строкой `WARN` прямо перед этой ошибкой.
+`import` бросает это, когда `doscript` файла завершился ошибкой: файла нет или ошибка случилась при выполнении верхнего уровня файла. Модуль при этом убирается из реестра. Настоящая причина напечатана строкой `WARN` прямо перед этой ошибкой. Ошибка компиляции сюда не попадает, её показывает `SCR_LuaDoFileConcat`.
 
 Источник: fa:lua/system/import.lua#error("Error importing '" .. name .. "'", 2)
 
-### Ожидание внутри `pcall` обрывает функцию
+### `attempt to yield across metamethod/C-call boundary`: ожидание внутри `pcall`
 
-`WaitSeconds`, `WaitTicks`, `WaitFrames` это `coroutine.yield`, а уступить управление через C-функцию нельзя. `pcall` вернёт `false` с текстом `attempt to yield across metamethod/C-call boundary`, код после ожидания не выполнится, а поток продолжит работу после `pcall`. То же касается `xpcall`, метаметодов и колбэков C-функций.
+`WaitSeconds`, `WaitTicks`, `WaitFrames` это `coroutine.yield`, а `pcall`, `xpcall`, метаметоды, компаратор `table.sort`, колбэк `string.gsub` и другие колбэки C-функций работают через C-границу, и передать управление через неё нельзя. Внутри `pcall` это приходит как `false` и текст ошибки: код после ожидания не выполнится, а поток продолжит работу после `pcall` без ожидания. Цикл с таким ожиданием крутится без пауз. Ожидание ставят вне `pcall`, и `pcall` оборачивает только работу между ожиданиями.
 
 Источник: lua-lang:src/ldo.c#attempt to yield across metamethod/C-call boundary
+Источник: fa:lua/userInit.lua#WaitFrames = coroutine.yield
+Наблюдение: проверено запуском в `.tools/faf-lua/lua.exe`.
 
 ### `ForkThread` внутри `pcall` безопасен
 
@@ -44,11 +44,12 @@
 
 Источник: fa:lua/userInit.lua#WaitFrames = coroutine.yield
 
-### `Expected a game object` означает вызов метода через точку
+### `Expected a game object. (Did you call with '.' instead of ':'?)`
 
-Компилятор такое не ловит, ошибка возникает в момент вызова.
+Метод движка получил первым аргументом не объект, обычно из-за точки вместо двоеточия: `control.EnableHitTest(true)`. Компилятор такое не ловит, ошибка возникает в момент вызова. Рядом в движке лежат `Game object has been destroyed` и `Incorrect type of game object.`: объект уже уничтожен или это объект другого класса.
 
 Наблюдение: строка `Expected a game object. (Did you call with '.' instead of ':'?)` есть в `ForgedAlliance.exe`, в логе она появилась при `control.EnableHitTest(true)`.
+Наблюдение: все три текста найдены поиском строк в bin/ForgedAlliance.exe, в Lua-исходниках их нет; смысл двух последних выведен из их текста.
 
 ### Имена локальных переменных не ограничены
 
@@ -58,13 +59,14 @@
 
 ### Где лежит лог
 
-`%APPDATA%\Forged Alliance Forever\logs\`: `game_<id>.log` для матчей и `replay_<id>.log` для реплеев. Метка уровня в файле пишется строчными буквами, например `info:`, поэтому поиск ведут без учёта регистра.
+`%APPDATA%\Forged Alliance Forever\logs\`: `game_<id>.log` для матчей, по одному на партию, и `replay_<id>.log` для реплеев. Метка уровня в файле пишется строчными буквами, например `info:`, поэтому поиск ведут без учёта регистра.
 
 Наблюдение: содержимое папки логов на компьютере разработчика.
+Наблюдение: путь взят из команды запуска игры в файле краша, клиент FAF.
 
-### Полнота лога текущей сессии
+### Лог текущей партии может быть неполным до выхода из игры
 
-Пока игра открыта, файл текущей партии может быть неполным, а самый свежий по дате файл может относиться к прошлой сессии.
+Пока игра открыта, файл текущей партии может быть неполным, поэтому отсутствие строки в файле не доказывает, что код её не писал. Самый свежий по дате файл может относиться к прошлой сессии.
 
 Не подтверждено: нужно открыть лог во время матча и сравнить его с файлом после выхода из игры.
 
@@ -92,12 +94,6 @@
 
 Источник: lua-lang:src/lib/lauxlib.c#for (n = 1; ; n++) {  /* else must count elements */
 
-### `WaitSeconds` внутри `pcall` не ждёт
-
-`WaitSeconds` использует `coroutine.yield`, а через `pcall` уступить управление нельзя. `pcall` вернёт `false` и `attempt to yield across metamethod/C-call boundary`, а поток пойдёт дальше без ожидания. Цикл с таким ожиданием крутится без пауз.
-
-Источник: lua-lang:src/ldo.c#attempt to yield across metamethod/C-call boundary
-
 ### Дефис в шаблоне Lua это ленивый квантификатор
 
 `string.find(s, 'release-in')` не находит текст `release-in`: шаблон читается как `releas`, ноль или больше `e`, затем `in`. Дефис экранируют (`'release%-in'`) или ищут подстроку через `string.find(s, 'release-in', 1, true)`.
@@ -110,17 +106,18 @@
 
 Источник: fa:lua/system/config.lua#error("access to nonexistent global variable " .. repr(key), 2)
 
-### Ошибка `too many upvalues` указывает на место использования
+### `too many upvalues (limit=32)`
 
-Строка в сообщении относится к обращению функции к 33-й внешней переменной, а не к её объявлению. Файл при этом не компилируется, и `import` заканчивается ошибкой.
+Ошибка компиляции: файл не компилируется, в логе она стоит внутри строки `SCR_LuaDoFileConcat`. Текст ошибки: ``too many upvalues (limit=32) near `end'``, расположение указано в формате лога игры или `luac`, см. «Формат ошибок Lua в логе игры». Строка относится к обращению функции к 33-й внешней переменной, где её встретил парсер, а не к её объявлению и не к началу функции. Таблица считается одним upvalue, поэтому константы и состояние складывают в таблицы.
 
 Источник: lua-lang:src/lparser.c#luaX_checklimit(fs->ls, f->nups + 1, MAXUPVALUES, "upvalues");
+Источник: lua-lang:src/llex.c#msg = luaO_pushfstring(ls->L, "too many %s (limit=%d)", msg, limit);
 
-### Как ведёт себя необработанная ошибка в потоке `ForkThread`
+### Пишется ли в лог ошибка внутри потока `ForkThread`
 
-Тело долгого цикла кладут в `pcall` и пишут ошибку в лог, а `WaitSeconds` оставляют снаружи. Попадает ли в лог ошибка вне `pcall`, не установлено.
+В `bin/ForgedAlliance.exe` есть строки `Error running lua script: %s` и `Error running lua script from destroyed thread: %s`, поэтому утверждать, что поток умирает без следа в логе, нельзя. Попадает ли в лог ошибка вне `pcall`, не установлено. Цикл в упавшем потоке после ошибки не работает, поэтому тело долгого цикла всё равно кладут в `pcall` и пишут ошибку в лог, а `WaitSeconds` оставляют снаружи.
 
-Не подтверждено: нужен опыт в игре, `ForkThread(function() error('x') end)` и поиск строки в логе.
+Не подтверждено: нужен опыт в игре: вызвать `error()` внутри `ForkThread`, например `ForkThread(function() error('x') end)`, и прочитать лог.
 
 ### Строки лога о клавишах показывают шаг поломки
 
@@ -133,18 +130,6 @@
 `LOG`, `WARN` и `SPEW` доступны без импорта. Аннотации всех трёх предупреждают, что они не для рабочего кода.
 
 Источник: fa:engine/Core.lua#--- Prints a debug message to the moholog, this shouldn't be used in production code
-
-### Лог партии в клиенте FAF
-
-Файл `%APPDATA%\Forged Alliance Forever\logs\game_<id>.log`, по одному на партию.
-
-Наблюдение: путь взят из команды запуска игры в файле краша, клиент FAF.
-
-### Лог текущей партии может быть неполным до выхода из игры
-
-Поэтому пока игра открыта, отсутствие строки в файле не доказывает, что код её не писал.
-
-Не подтверждено: нужно сравнить содержимое файла во время партии и после выхода.
 
 ### Команда чата /debug-log есть только с ключом /debug
 
@@ -164,15 +149,9 @@
 
 Наблюдение: логи FAF с ошибками модов, например `ui.lua(418): too many upvalues (limit=32) near `,'`. Локальный формат проверен запуском `.tools/faf-lua`.
 
-### Необработанная ошибка в CreateUI оставляет чёрный экран
-
-Вызов своего кода из хука `CreateUI` защищают `pcall`, а ошибку пишут в лог.
-
-Наблюдение: партия с модом, в котором ошибка возникала при построении интерфейса.
-
 ### pcall возвращает все значения функции
 
-`local ok, a, b = pcall(fn)` даёт оба результата `fn`. Ждать внутри `pcall` нельзя: `coroutine.yield` падает с ошибкой `attempt to yield across metamethod/C-call boundary`.
+`local ok, a, b = pcall(fn)` даёт оба результата `fn`.
 
 Наблюдение: проверено запуском в `.tools/faf-lua/lua.exe`.
 
@@ -181,31 +160,6 @@
 Движок печатает имя между обратным апострофом и прямым: ``attempt to call method `Foo' (a nil value)``. Искать в логе надо именно такой вид, а не `'Foo'`.
 
 Источник: lua-lang:src/ldebug.c#luaG_runerror(L, "attempt to %s %s `%s' (a %s value)",
-
-### `attempt to yield across metamethod/C-call boundary`: ожидание внутри `pcall`
-
-`WaitSeconds` сводится к `coroutine.yield`, а `pcall`, метаметоды, компаратор `table.sort` и колбэк `string.gsub` работают через C-границу, и передать управление через неё нельзя. Внутри `pcall` это приходит как `false` и текст ошибки, а всё после ожидания не выполняется. Ожидание ставят вне `pcall`, и `pcall` оборачивает только работу между ожиданиями.
-
-Источник: lua-lang:src/ldo.c#attempt to yield across metamethod/C-call boundary
-Источник: fa:lua/userInit.lua#WaitFrames = coroutine.yield
-
-### `SCR_LuaDoFileConcat: Loading "..." failed`: файл не скомпилировался
-
-В логе это `WARNING: SCR_LuaDoFileConcat: Loading "<файл>" failed: <причина>`, и только здесь видны файл, строка и причина. `import` после этого не бросает ошибку и отдаёт пустой модуль, поэтому следующая ошибка в логе обычно указывает на другой файл. Если мод загрузился, но молчит, эту строку ищут первой.
-
-Источник: fa:lua/sim/Profiler.lua#there's likely a 'WARNING: SCR_LuaDoFileConcat' right above me
-
-### `Expected a game object. (Did you call with '.' instead of ':'?)`
-
-Метод движка получил первым аргументом не объект, обычно из-за точки вместо двоеточия: `control.EnableHitTest(true)`. Рядом в движке лежат `Game object has been destroyed` и `Incorrect type of game object.`: объект уже уничтожен или это объект другого класса.
-
-Наблюдение: все три текста найдены поиском строк в bin/ForgedAlliance.exe, в Lua-исходниках их нет; смысл двух последних выведен из их текста.
-
-### `access to nonexistent global variable "X"`
-
-Прочитано имя, которого нет ни в таблице модуля, ни в `_G`: у `_G` стоит `__index`, вызывающий `error()`. То же сообщение даёт чтение отсутствующего поля модуля (`Mod.Start`), и тогда X это имя поля, а причина часто в другом файле, который не скомпилировался. На верхнем уровне файла такая ошибка прерывает его загрузку.
-
-Источник: fa:lua/system/config.lua#error("access to nonexistent global variable " .. repr(key), 2)
 
 ### ``unexpected symbol near `X'``
 
@@ -249,21 +203,9 @@
 
 Источник: fa:lua/sim/Projectile.lua#Since `math.huge` does not exist
 
-### `too many upvalues (limit=32)`
-
-Ошибка компиляции, в логе она стоит внутри строки `SCR_LuaDoFileConcat`; полный вид ``<файл>:<строка>: too many upvalues (limit=32) near `end'``. Строка показывает, где парсер встретил 33-е внешнее имя, а не начало функции. Таблица считается одним upvalue, поэтому константы и состояние складывают в таблицы.
-
-Источник: lua-lang:src/llex.c#msg = luaO_pushfstring(ls->L, "too many %s (limit=%d)", msg, limit);
-
-### `Error importing '<путь>'`
-
-`import` бросает это, когда `doscript` файла завершился ошибкой: файла нет или ошибка случилась при выполнении верхнего уровня файла. Настоящая причина напечатана строкой выше через `WARN`. Ошибка компиляции сюда не попадает, её показывает `SCR_LuaDoFileConcat`.
-
-Источник: fa:lua/system/import.lua#error("Error importing '" .. name .. "'", 2)
-
 ### `Unable to interrupt path finding`
 
-Это не ошибка движка, а `print` из sim-колбэка `AbortNavigation`, и печатается он только у армии, отдавшей приказ. Причин три: в выделении не осталось своих юнитов, в нём нет `ENGINEER` или `COMMAND`, либо прошлый вызов от этого источника был не больше 5 тиков назад. Значит, вызов проходит не чаще раза в 6 тиков.
+Это не ошибка движка, а `print` из sim-колбэка `AbortNavigation`, и печатается он только у армии, отдавшей приказ. Причин три: в выделении не осталось своих юнитов, в нём нет `ENGINEER` или `COMMAND`, либо прошлый вызов от этого источника был не больше 5 тиков назад. Принятый вызов печатает `Interrupted pathfinding for N unit(s)`.
 
 Источник: fa:lua/SimCallbacks.lua#if commandSourceGuard and commandSourceGuard + 5 >= gameTick then
 
@@ -272,9 +214,3 @@
 Не сообщение движка: эту строку пишут хуки `gamemain.lua` наших модов, когда `import` не удался или нет точки входа. Рядом стоит `Reason:`, а настоящая причина лежит выше в логе, в `SCR_LuaDoFileConcat` или в `WARN` перед `Error importing`.
 
 Наблюдение: строка есть только в hook/lua/ui/game/gamemain.lua модов из My_mods, поиск по references/fa её не находит.
-
-### Пишется ли в лог ошибка внутри потока `ForkThread`
-
-В `bin/ForgedAlliance.exe` есть строки `Error running lua script: %s` и `Error running lua script from destroyed thread: %s`, поэтому утверждать, что поток умирает без следа в логе, нельзя. Цикл в упавшем потоке после ошибки не работает, так что тело цикла всё равно держат под `pcall`.
-
-Не подтверждено: нужен опыт в игре: вызвать `error()` внутри `ForkThread` и прочитать лог.

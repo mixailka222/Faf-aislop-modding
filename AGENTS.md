@@ -62,7 +62,7 @@ research/                     черновики, в git нет, источни�
 python DOCUMENTATION/tools/check.py "My_mods/<проект>/<Мод>"
 ```
 
-Если инструмент изменил `DOCUMENTATION/tools/`, дополнительно запусти `python -m unittest discover -s DOCUMENTATION/tests`.
+Если менялись файлы в `DOCUMENTATION/tools/`, дополнительно запусти `python -m unittest discover -s DOCUMENTATION/tests`. Если менялась база знаний, запусти `python DOCUMENTATION/tools/check.py` без аргументов: только так проверяются её источники.
 
 - Вывод проверки приводится в отчёте.
 - Нельзя отключать проверку, менять тест ради зелёного результата или подавлять замечание без написанной рядом причины.

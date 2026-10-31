@@ -34,7 +34,7 @@ python DOCUMENTATION/tools/bootstrap.py
 python DOCUMENTATION/tools/check.py "My_mods/<проект>/<Мод>"
 ```
 
-Для этого нужны только Python и Git.
+Для этого нужны Python 3.10 или новее, Git и curl. В Windows 10 и 11 curl уже есть.
 
 ## Лицензия
 
