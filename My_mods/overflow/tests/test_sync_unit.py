@@ -22,11 +22,8 @@ import io, os, sys
 from lupa import luajit21 as lupa
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-# Базa - os.path.dirname(HERE) = My_mods\reclaim_pause, поэтому одного
-# ".." достаточно, чтобы попасть в My_mods\, где и лежит overflow\.
 SYNC = os.path.abspath(os.path.join(os.path.dirname(HERE),
-                                   "..", "overflow", "Overflow",
-                                   "modules", "sync.lua"))
+                                   "Overflow", "modules", "sync.lua"))
 src = io.open(SYNC, encoding="utf-8").read()
 # единственная правка формы обхода, см. раздел 3.21 методички
 src = src.replace("for armyIdx in scoreData do", "for armyIdx in next, scoreData do")
