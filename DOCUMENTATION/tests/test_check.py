@@ -335,6 +335,50 @@ class CommandLineTests(unittest.TestCase):
         self.assertNotIn(b"Traceback", done.stderr)
 
 
+class KnowledgeTests(RepoCase):
+    def setUp(self):
+        super().setUp()
+        write(self.root / "references/fa/lua/commandmode.lua", "function InCommandMode()\nend\n")
+
+    def problems(self, text):
+        write(self.root / "DOCUMENTATION/knowledge/topic.md", text)
+        return check.check_knowledge(self.root)
+
+    def test_fact_with_found_source_passes(self):
+        text = "### Fact\n\nText.\n\nИсточник: fa:lua/commandmode.lua#function InCommandMode\n"
+        self.assertEqual(self.problems(text), [])
+
+    def test_missing_source_file_is_reported(self):
+        text = "### Fact\n\nИсточник: fa:lua/gone.lua#function InCommandMode\n"
+        self.assertIn("lua/gone.lua", " ".join(self.problems(text)))
+
+    def test_missing_source_text_is_reported(self):
+        text = "### Fact\n\nИсточник: fa:lua/commandmode.lua#function Removed\n"
+        self.assertIn("function Removed", " ".join(self.problems(text)))
+
+    def test_fact_without_source_is_reported(self):
+        self.assertIn("Fact", " ".join(self.problems("### Fact\n\nJust text.\n")))
+
+    def test_observation_needs_no_file(self):
+        self.assertEqual(self.problems("### Fact\n\nНаблюдение: game, 2 players.\n"), [])
+
+    def test_unconfirmed_mark_is_accepted(self):
+        self.assertEqual(self.problems("### Fact\n\nНе подтверждено: needs a log.\n"), [])
+
+    def test_web_source_is_accepted(self):
+        text = "### Fact\n\nИсточник: https://github.com/FAForever/fa\n"
+        self.assertEqual(self.problems(text), [])
+
+    def test_unknown_source_format_is_reported(self):
+        self.assertEqual(len(self.problems("### Fact\n\nИсточник: somewhere\n")), 1)
+
+    def test_text_before_the_first_fact_is_free(self):
+        self.assertEqual(self.problems("# Title\n\nIntro.\n"), [])
+
+    def test_missing_folder_is_reported(self):
+        self.assertEqual(len(check.check_knowledge(self.root)), 1)
+
+
 REAL_LUAC = TOOLS.parents[1] / ".tools" / "faf-lua" / f"luac{bootstrap.EXE}"
 
 

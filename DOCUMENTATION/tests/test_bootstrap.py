@@ -273,6 +273,29 @@ class BuiltLuaTests(unittest.TestCase):
             )
         return done.returncode == 0
 
+    def test_hash_starts_a_comment(self):
+        self.assertEqual(self.lua_prints("print(1) # print(2)"), "1")
+
+    def test_long_string_with_level_is_rejected(self):
+        self.assertFalse(self.luac_accepts("local s = [=[text]=]\n"))
+
+    def test_vararg_expression_is_rejected(self):
+        self.assertFalse(self.luac_accepts("function F(...)\n    return ...\nend\n"))
+
+    def test_varargs_are_in_the_arg_table(self):
+        self.assertEqual(self.lua_prints(
+            "function F(...)\n    return arg.n\nend\nprint(F(1, 2))\n"), "2")
+
+    def test_math_library_replaces_missing_operators(self):
+        self.assertEqual(self.lua_prints("print(math.mod(7, 3), math.pow(2, 3))"), "1\t8")
+
+    def test_select_does_not_exist(self):
+        self.assertEqual(self.lua_prints("print(select)"), "nil")
+
+    def test_bare_table_can_be_iterated(self):
+        self.assertEqual(self.lua_prints(
+            "local s = 0\nfor k, v in {1, 2} do\n    s = s + v\nend\nprint(s)\n"), "3")
+
     def test_numbers_are_single_precision_as_in_the_game(self):
         self.assertEqual(self.lua_prints("print(0.1 + 0.2 == 0.3)"), "true")
 

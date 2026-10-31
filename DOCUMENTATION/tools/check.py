@@ -25,8 +25,17 @@ VERSIONS_PATH = "DOCUMENTATION/tools/tool_versions.json"
 LUALS_REPORT = ".tools/luals_report.json"
 REQUIRED_FIELDS = ("name", "version", "uid", "description", "ui_only")
 LIBRARIES = {"reui": "ReUI", "umt": "UMT"}
+KNOWLEDGE_DIR = "DOCUMENTATION/knowledge"
+SOURCE_ROOTS = {
+    "fa": "references/fa",
+    "ui-libs": "references/ui-libs",
+    "lua-lang": "references/lua-lang",
+}
+SOURCE_MARK = "Источник:"
+FACT_MARKS = ("Наблюдение:", "Не подтверждено:")
 
-IMPORT = re.compile(r"""\bimport\s*\(?\s*(['"])([^'"]+)\1\s*(\.\.)?""")
+SOURCE = re.compile(r"^(fa|ui-libs|lua-lang):([^#]+)#(.+)$")
+IMPORT =re.compile(r"""\bimport\s*\(?\s*(['"])([^'"]+)\1\s*(\.\.)?""")
 FIELD = re.compile(r"^([A-Za-z_]\w*)\s*=", re.MULTILINE)
 LIBRARY_TAG = re.compile(r"""^ReUI\s*=\s*['"]([^'"=]+)""", re.MULTILINE)
 
@@ -233,6 +242,41 @@ def run_tests(project: Path) -> list[str]:
     return problems
 
 
+def source_problem(root: Path, value: str) -> str | None:
+    if value.startswith("https://"):
+        return None
+    source = SOURCE.match(value)
+    if not source:
+        return f"неизвестный формат источника: {value}"
+    base, name, text = source.groups()
+    path = root / SOURCE_ROOTS[base] / name
+    if not path.is_file():
+        return f"нет файла {name}"
+    if text not in path.read_text(encoding="utf-8", errors="replace"):
+        return f"в {name} не найдено: {text}"
+    return None
+
+
+def check_knowledge(root: Path) -> list[str]:
+    """Every fact needs a mark. A source is checked, so a removed function turns the check red."""
+    folder = root / KNOWLEDGE_DIR
+    if not folder.is_dir():
+        return [f"нет папки {KNOWLEDGE_DIR}"]
+    problems = []
+    for path in sorted(folder.glob("*.md")):
+        for fact in re.split(r"^### ", path.read_text(encoding="utf-8"), flags=re.M)[1:]:
+            lines = fact.splitlines()
+            sources = [line[len(SOURCE_MARK):].strip() for line in lines
+                       if line.startswith(SOURCE_MARK)]
+            if not sources and not any(line.startswith(FACT_MARKS) for line in lines):
+                problems.append(f"{path.name}: факт без источника: {lines[0]}")
+            for source in sources:
+                problem = source_problem(root, source)
+                if problem:
+                    problems.append(f"{path.name}: {lines[0]}: {problem}")
+    return problems
+
+
 def report(title: str, problems: list[str]) -> bool:
     print(f"[{'FAIL' if problems else 'OK'}] {title}")
     for problem in problems:
@@ -282,6 +326,8 @@ def main() -> int:
         luals = run_luals(ROOT)
         tested = set()
         results = [check_mod(mod, luals, options.no_luac, tested) for mod in mods]
+        if not options.mod:
+            results.append(report("база знаний", check_knowledge(ROOT)))
         if options.changed_since and os.environ.get("GITHUB_ACTIONS"):
             for warning in readme_warnings(ROOT, options.changed_since):
                 print(f"::warning::{warning}")
