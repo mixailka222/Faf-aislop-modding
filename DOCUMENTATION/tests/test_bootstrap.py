@@ -173,6 +173,19 @@ class EnsureRepoTests(RootInTemp):
         self.assertEqual((self.root / "references/fa/lua/x.lua").read_text(), "first")
 
 
+class RemoveTreeTests(RootInTemp):
+    def test_link_targets_keep_their_permissions(self):
+        # A Linux venv links bin/python to a system file that chmod must not touch.
+        folder = self.root / "venv"
+        (folder / "bin").mkdir(parents=True)
+        (folder / "bin" / "python").write_text("link")
+        with mock.patch.object(Path, "is_symlink", return_value=True), \
+                mock.patch.object(bootstrap.os, "chmod") as chmod:
+            bootstrap.remove_tree(folder)
+        chmod.assert_not_called()
+        self.assertFalse(folder.exists())
+
+
 class DownloadTests(RootInTemp):
     def test_file_is_downloaded(self):
         source = self.root / "source.txt"

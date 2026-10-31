@@ -138,9 +138,11 @@ def download(url: str, target: Path) -> None:
 def remove_tree(path: Path) -> None:
     if not path.exists():
         return
-    # Git marks its objects read-only, which stops rmtree on Windows.
+    # Git marks its objects read-only, which stops rmtree on Windows. Links are skipped:
+    # chmod follows them, and a Linux venv links python to a system file.
     for item in path.rglob("*"):
-        os.chmod(item, stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
+        if not item.is_symlink():
+            os.chmod(item, stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
     shutil.rmtree(path)
 
 
@@ -301,6 +303,9 @@ def main() -> int:
                         help="показать новые версии у источников и ничего не менять")
     options = parser.parse_args()
 
+    if options.no_luac and not os.environ.get("GITHUB_ACTIONS"):
+        print("[FAIL] Ключ --no-luac работает только в CI")
+        return 1
     try:
         if options.check_updates:
             for name, value in latest_versions(load_versions()).items():

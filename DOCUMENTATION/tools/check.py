@@ -69,21 +69,27 @@ def relative(root: Path, path: Path) -> str:
 
 
 def changed_files(root: Path, base: str) -> list[str]:
-    return git(root, "diff", "--name-only", "-z", base, "HEAD")
+    """Changes of this branch only: commits that landed on base meanwhile do not count.
+
+    Without --no-renames a moved file is listed under its new path only, and the mod
+    it left would not be checked.
+    """
+    return git(root, "diff", "--name-only", "--no-renames", "-z", f"{base}...HEAD")
 
 
 def versions_changed(root: Path, base: str, files: list[str]) -> bool:
     """The first appearance of the file is not a version change."""
     if VERSIONS_PATH not in files:
         return False
-    known = subprocess.run(["git", "cat-file", "-e", f"{base}:{VERSIONS_PATH}"], cwd=root,
+    fork = git(root, "merge-base", base, "HEAD")[0].strip()
+    known = subprocess.run(["git", "cat-file", "-e", f"{fork}:{VERSIONS_PATH}"], cwd=root,
                            capture_output=True)
     return known.returncode == 0
 
 
 def touches_code(root: Path, mod: Path, files: list[str]) -> bool:
     prefix = relative(root, mod) + "/"
-    return any(name.startswith(prefix) for name in files)
+    return any(name.startswith(prefix) and not name.endswith("README.md") for name in files)
 
 
 def touches_tests(root: Path, mod: Path, files: list[str]) -> bool:
@@ -316,6 +322,9 @@ def main() -> int:
     parser.add_argument("--changed-since", metavar="REF", help="только изменённые моды")
     options = parser.parse_args()
 
+    if options.no_luac and not os.environ.get("GITHUB_ACTIONS"):
+        print("[FAIL] Ключ --no-luac работает только в CI")
+        return 1
     if options.mod and not (Path(options.mod) / MOD_INFO).exists():
         print(f"[FAIL] В папке '{options.mod}' нет {MOD_INFO}")
         return 1

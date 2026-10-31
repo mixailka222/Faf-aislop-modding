@@ -286,6 +286,38 @@ class ChangedModsTests(RepoCase):
         self.commit()
         self.assertNotIn(self.two, check.changed_mods(self.root, self.base))
 
+    def test_readme_inside_the_mod_folder_selects_nothing(self):
+        write(self.two / "README.md", "")
+        self.commit()
+        self.assertNotIn(self.two, check.changed_mods(self.root, self.base))
+
+    def test_file_moved_out_of_a_mod_selects_that_mod(self):
+        write(self.two / "Main.lua", "code")
+        base = self.commit()
+        git(self.root, "mv", "My_mods/two/ModTwo/Main.lua", "moved.lua")
+        self.commit()
+        self.assertIn(self.two, check.changed_mods(self.root, base))
+
+    def test_commits_made_only_on_the_base_branch_are_ignored(self):
+        git(self.root, "switch", "-q", "-c", "topic")
+        write(self.root / "notes.txt", "notes")
+        self.commit()
+        git(self.root, "switch", "-q", "main")
+        write(self.two / "Main.lua", "code")
+        self.commit()
+        git(self.root, "switch", "-q", "topic")
+        self.assertNotIn(self.two, check.changed_mods(self.root, "main"))
+
+    def test_versions_added_only_on_the_base_branch_are_ignored(self):
+        git(self.root, "switch", "-q", "-c", "topic")
+        write(self.root / check.VERSIONS_PATH, "{}")
+        self.commit()
+        git(self.root, "switch", "-q", "main")
+        write(self.root / check.VERSIONS_PATH, '{"a": 1}')
+        self.commit()
+        git(self.root, "switch", "-q", "topic")
+        self.assertNotIn(self.two, check.changed_mods(self.root, "main"))
+
     def test_first_appearance_of_versions_is_not_a_bump(self):
         write(self.root / check.VERSIONS_PATH, "{}")
         self.commit()
@@ -372,6 +404,22 @@ class VersionsTests(RepoCase):
 
 
 class CommandLineTests(unittest.TestCase):
+    def run_outside_ci(self, script, *args):
+        env = {key: value for key, value in os.environ.items() if key != "GITHUB_ACTIONS"}
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        return subprocess.run([sys.executable, str(TOOLS / script), *args], capture_output=True,
+                              env=env, encoding="utf-8", errors="replace")
+
+    def test_no_luac_is_refused_outside_ci(self):
+        done = self.run_outside_ci("check.py", "--no-luac")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("--no-luac", done.stdout)
+
+    def test_bootstrap_no_luac_is_refused_outside_ci(self):
+        done = self.run_outside_ci("bootstrap.py", "--no-luac")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("--no-luac", done.stdout)
+
     def test_console_without_cyrillic_does_not_crash(self):
         env = dict(os.environ, PYTHONIOENCODING="ascii", PYTHONDONTWRITEBYTECODE="1")
         done = subprocess.run([sys.executable, str(TOOLS / "check.py"), "no such folder"],
