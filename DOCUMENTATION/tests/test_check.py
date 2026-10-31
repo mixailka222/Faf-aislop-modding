@@ -373,6 +373,9 @@ class ReadmeWarningTests(RepoCase):
 
 
 class LualsReportTests(unittest.TestCase):
+    def test_clean_run_writes_an_empty_list(self):
+        self.assertEqual(check.parse_luals([]), {})
+
     def test_report_is_grouped_by_file(self):
         raw = {
             "file:///c%3A/repo%20name/My_mods/one/Mod/Main.lua": [{

@@ -145,7 +145,10 @@ def check_versions(no_luac: bool = False) -> list[str]:
             "Запусти: python DOCUMENTATION/tools/bootstrap.py"]
 
 
-def parse_luals(raw: dict) -> dict[Path, list[str]]:
+def parse_luals(raw: dict | list) -> dict[Path, list[str]]:
+    """LuaLS writes an object of files, but an empty list when it found nothing."""
+    if raw == []:
+        return {}
     report = {}
     for uri, diagnostics in raw.items():
         name = unquote(urlparse(uri).path)
