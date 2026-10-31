@@ -47,7 +47,13 @@ GameMain = {}
 function GameMain.SetIgnoreSelection(v) IGNORE_SEL = v end
 
 CommandMode = {}
-function CommandMode.CacheAndClearCommandMode() CMDMODE_CACHED = true end
+CMDMODE_ACTIVE = false
+CMDMODE_CACHE_CALLS = 0
+function CommandMode.InCommandMode() return CMDMODE_ACTIVE end
+function CommandMode.CacheAndClearCommandMode()
+  CMDMODE_CACHED = true
+  CMDMODE_CACHE_CALLS = CMDMODE_CACHE_CALLS + 1
+end
 function CommandMode.RestoreCommandMode(v) CMDMODE_CACHED = false end
 
 -- import() возвращает таблицу модуля. Так же ведёт себя движок.
@@ -181,6 +187,13 @@ end
 function ForkThread(f) THREAD = f end
 function WaitSeconds(x) error('__LOOPSTOP__', 0) end
 
+-- The unit a builder is focused on. Only the method the mod reads is present.
+function MakeFocus(fraction)
+  local f = {}
+  function f:GetFractionComplete() return fraction end
+  return f
+end
+
 function MakeUnit(id, opts)
   opts = opts or {}
   local u = {}
@@ -189,18 +202,14 @@ function MakeUnit(id, opts)
   u.dead = opts.dead or false
   u.cats = opts.cats or {}
   u.queue = opts.queue or {}
-  u.building = opts.building or false
+  u.focus = opts.focus
   u.cbs = {}
   function u:GetArmy() return self.army end
   function u:IsDead() return self.dead end
   function u:IsInCategory(c) return self.cats[c] == true end
-  -- IsUnitState в игре из слоя интерфейса НЕдоступен (проверено:
-  -- recl=0/0 при 120 инженерах). Заглушка отвечает только на
-  -- 'Building' - это нужно проверке зданий. На 'Reclaiming' ответа нет,
-  -- и код не должен на него опираться.
-  u.reclaiming = opts.reclaiming or false
-  function u:SetReclaiming(v) self.reclaiming = v end
-  function u:IsUnitState(s) return s == 'Building' and self.building or false end
+  -- UserUnit has no IsUnitState, that method belongs to the sim layer. The stub
+  -- must not have it either, otherwise a call that fails in the game passes here.
+  function u:GetFocus() return self.focus end
   -- Шаг в одну сторону: mod меряет пройденное расстояние.
   function u:Walk(dx, dz)
     self.pos = { self.pos[1] + (dx or 0), self.pos[2], self.pos[3] + (dz or 0) }
@@ -247,6 +256,8 @@ function Reset(mass, energy)
   PAUSED = {}
   ABORTED = {}
   SCAN_CALLS = 0
+  CMDMODE_ACTIVE = false
+  CMDMODE_CACHE_CALLS = 0
   HIDE_QUEUE_WHEN_PAUSED = false
   -- Sync.Reclaim публикует {mass=...} из sim/Prop.lua:390. Падение массы
   -- пропа между замерами означает, что реклейм идёт прямо сейчас.
@@ -393,11 +404,40 @@ check(not isPaused(104), 'при пустом хранилище инженер 
 print('')
 print('=== 7: строителей и командиров не трогаем ===')
 Reset(0.95, 1.0)
-add(MakeUnit(200, { cats = ENGINEER, queue = AM, building = true }))
+add(MakeUnit(200, { cats = ENGINEER, queue = PATROL, focus = MakeFocus(0.5) }))
 add(MakeUnit(201, { cats = CMD, queue = AM }))
+add(MakeUnit(202, { cats = ENGINEER, queue = RECLAIM_N, focus = MakeFocus(1.0) }))
 RunOnce()
-check(not isPaused(200), 'инженер со статусом Building не тронут')
+check(not isPaused(200), 'инженер с недостроенным юнитом в фокусе не тронут')
 check(not isPaused(201), 'командир не тронут')
+check(isPaused(202), 'инженер с готовым юнитом в фокусе встаёт на паузу: он не строит')
+
+print('')
+print('=== 7a: режим команд игрока не трогаем ===')
+Reset(0.95, 1.0)
+add(eng(203, AM))
+CMDMODE_ACTIVE = true
+for _ = 1, 4 do RunOnce() end
+check(SCAN_CALLS == 0, 'при активном режиме команд обхода инженеров нет')
+check(CMDMODE_CACHE_CALLS == 0, 'режим команд игрока не перезапускался при обходе')
+check(not isPaused(203), 'инженер без обхода пока не найден')
+CMDMODE_ACTIVE = false
+for _ = 1, 4 do RunOnce() end
+check(isPaused(203), 'режим команд закончился - обход вернулся, инженер на паузе')
+
+Reset(0.95, 1.0)
+add(eng(204, AM))
+RunOnce()
+check(isPaused(204), 'поставили на паузу до режима команд')
+ABORTED = {}
+CMDMODE_CACHE_CALLS = 0
+CMDMODE_ACTIVE = true
+for _ = 1, 6 do RunOnce() end
+check(table.getn(ABORTED) == 0, 'обрыв маршрута ждёт конца режима команд')
+check(CMDMODE_CACHE_CALLS == 0, 'режим команд игрока не перезапускался при обрыве')
+CMDMODE_ACTIVE = false
+for _ = 1, 3 do RunOnce() end
+check(table.getn(ABORTED) > 0, 'режим команд закончился - обрыв маршрута продолжился')
 
 print('')
 print('=== 8: чужие и мёртвые не тронуты ===')
@@ -902,12 +942,6 @@ local jQ = table.concat(msgs, ' | ')
 check(string.find(jQ, 'held=0') ~= nil, 'мод никого не держит: хранилище 60%')
 check(string.find(jQ, 'mov=0/1') ~= nil,
       'инженер найден и замерен: mov=0/1 - стоит на месте')
--- st накапливается по одному за проход, поэтому сравниваем ОК с ПОПЫТКАМИ,
--- а не конкретные числа.
-local stA, stB = string.match(jQ, 'st=(%d+)/(%d+)')
-check(stA ~= nil and stA == stB and tonumber(stB) > 0,
-      'счётчик IsUnitState растёт и ошибок нет: st=' .. tostring(stA) ..
-      '/' .. tostring(stB))
 
 print('')
 print('=== 39d: движущийся инженер считается ===')

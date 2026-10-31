@@ -30,9 +30,17 @@
 
 ### `UserUnit` и `Unit` это разные объекты
 
-В интерфейсе юнит это `UserUnit`: у него нет `IsUnitState`, `AddUnitCallback`, `GetNavigator` и других методов симуляции. Вызов такого метода из интерфейса падает с `attempt to call method`, а под `pcall` выглядит как обычный `false`, и проверка состояния всегда ложна. Поэтому состояние `Building` или `Reclaiming` из UI так не прочитать, в UI есть `unit:IsIdle()`. Команду в sim-слой передают через `SimCallback`.
+В интерфейсе юнит это `UserUnit`: у него нет `IsUnitState`, `AddUnitCallback`, `GetNavigator` и других методов симуляции. Вызов такого метода из интерфейса падает с `attempt to call method`, а под `pcall` выглядит как обычный `false`, и проверка состояния всегда ложна. Поэтому состояние `Building` или `Reclaiming` из UI так не прочитать, в UI есть `unit:IsIdle()` и `unit:GetFocus()`. Команду в sim-слой передают через `SimCallback`.
 
 Источник: fa:engine/Sim/Unit.lua#function Unit:IsUnitState(stateName)
+
+### Что строит инженер, из UI видно через `GetFocus`
+
+`unit:GetFocus()` возвращает юнит, на котором сосредоточен инженер, или `nil`. Так игра сравнивает, строят ли два инженера одно и то же. Недостроенный юнит отличается по `GetFractionComplete() < 1`.
+
+Источник: fa:lua/ui/game/commandmode.lua#if targetFocus and targetFocus == engineer:GetFocus() then
+
+Не подтверждено: что возвращает `GetFocus` инженеру на реклейме обломка. Sim-слой делает цель реклейма фокусом, но обломок не юнит, поэтому ожидается `nil`. Нужен опыт в игре.
 
 ### Выработка недостроенного здания кодом Lua не определена
 

@@ -122,26 +122,12 @@ local gstop = {
     mass = 0,      -- заполнение хранилища на текущем проходе
     fresh = nil,   -- последний обход инженеров: id -> unit
     pos = {},      -- id -> {x, z}, последняя замеренная позиция
-    stTry = 0,     -- сколько раз спрашивали IsUnitState
-    stOk = 0,      -- сколько юнитов ответили
     rec = 0,       -- скорость реклейма в секунду (из счётчика игры)
     recPrev = nil, -- предыдущее значение econ.reclaimed.MASS
     recIter = 0,   -- проход, на котором взяли предыдущее значение
     logRec = 0,    -- счётчик компактной строки замера REC
 }
 
--- КОЛБЭКИ ЗДЕСЬ БОЛЬШЕ НЕ РАБОТАЮТ, И ЭТО ПРОВЕРЕНО В ИГРЕ.
---
--- AddUnitCallback определён в sim/Unit.lua:4171 - это метод слоя
--- СИМУЛЯЦИИ. В слое интерфейса у юнита такого метода нет. Проверено
--- 2026-10-10: "attempt to call method `AddUnitCallback' (a nil value)",
--- cb=0/325 при 325 инженерах. Колбэки из ui_only-мода невозможны в
--- принципе, а не "возможны, но не сработали".
---
--- Вместо события - опрос состояния 'Reclaiming': игра сама ставит его
--- в sim/Unit.lua:871 и снимает в sim/Unit.lua:898. Метод IsUnitState
--- тот же, что мод уже вызывает для 'Building', и он работает.
---
 -- Разбор, почему инженер НЕ попал под паузу. Без него на вопрос
 -- "почему они не встали" приходится отвечать догадками.
 --
@@ -255,12 +241,19 @@ local function IsAlive(unit)
     return not res
 end
 
+-- UserUnit has no IsUnitState, that method belongs to the sim layer. A builder
+-- has the unfinished unit in focus. A finished unit in focus means other work,
+-- for example reclaiming that unit.
 local function IsBuilding(unit)
-    local ok, res = pcall(function() return unit:IsUnitState('Building') end)
-    if not ok or not res then
+    local ok, res = pcall(function()
+        local focus = unit:GetFocus()
+        return focus ~= nil and focus:GetFractionComplete() < 1
+    end)
+    if not ok then
+        LOG(PFX .. 'IsBuilding FAILED: ' .. tostring(res))
         return false
     end
-    return true
+    return res
 end
 
 -- GetIsPaused принимает СПИСОК юнитов, не один юнит.
@@ -329,6 +322,17 @@ end
 -- останется с кучей выделенных инженеров.
 --------------------------------------------------------------------------------
 
+-- If the check fails, the selection stays untouched: a missed pass costs one
+-- second, a restarted command mode costs the player a build order.
+local function PlayerInCommandMode()
+    local ok, res = pcall(CommandMode.InCommandMode)
+    if not ok then
+        LOG(PFX .. 'InCommandMode FAILED: ' .. tostring(res))
+        return true
+    end
+    return res
+end
+
 local function CollectEngineers(picked)
     local found = {}
     local n = 0
@@ -359,8 +363,7 @@ end
 -- 3) Возвращаем выделение и ПРОВЕРЯЕМ, что вернулось. Если не совпало -
 --    пишем в лог, иначе о такой проблеме узнаём только от игрока.
 local function WithAllEngineers(callback)
-    local okMode, inMode = pcall(function() return InCommandMode() end)
-    if okMode and inMode then
+    if PlayerInCommandMode() then
         return false
     end
 
@@ -494,6 +497,9 @@ local function AbortMove(list, n)
         return
     end
     if not Settings.ReclaimPauseCfg.abortMove then
+        return
+    end
+    if PlayerInCommandMode() then
         return
     end
     local saved = nil
@@ -870,7 +876,7 @@ end
 -- Вердикт и прибор пишем ВСЕГДА: игрок не обязан знать про горячую
 -- клавишу, чтобы понять, работает мод или нет.
 local function PeriodicLog(cfg, massFill, energyFill, holdSec, probeSec,
-    movN, movM, movFar, stOk, stTry, rec)
+    movN, movM, movFar, rec)
     logTick = logTick + 1
     -- У порога пишем чаще. Именно в этом окне решается, кто кого обгонит:
     -- мод или игра. При редком логе момент остановки реклейма просто не
@@ -903,8 +909,6 @@ local function PeriodicLog(cfg, massFill, energyFill, holdSec, probeSec,
         ' rec=' .. string.format('%.0f', rec) ..
         ' mov=' .. tostring(movN) .. '/' .. tostring(movM) ..
         ' far=' .. string.format('%.1f', movFar) ..
-        -- Разовая диагностика: работает ли IsUnitState из интерфейса.
-        ' st=' .. tostring(stOk) .. '/' .. tostring(stTry) ..
         ' held=' .. tostring(HeldCount()) ..
         ' verdict=' .. Explain(cfg, massFill, energyFill) ..
         ' hold=' .. ExplainHold(cfg, massFill, holdSec) ..
@@ -1079,9 +1083,6 @@ local function TickOnce()
     -- интерфейса: в игре recl=0/0 при engineers=120 и
     -- "attempt to call method `AddUnitCallback' (a nil value)". Оба
     -- метента принадлежат слою симуляции.
-    --
-    -- Рядом считаем st=OK/TRY по IsUnitState: вопрос закрывается один
-    -- раз, иначе будет всплывать снова.
     local movN = 0
     local movM = 0
     local movFar = 0
@@ -1104,14 +1105,6 @@ local function TickOnce()
                     end
                 end
                 gstop.pos[id] = { x = p[1], z = p[3] }
-            end
-            -- Разовая диагностика: работает ли IsUnitState из интерфейса.
-            -- Считаем всегда: ответ не меняется, а переменная-флаг стоила
-            -- бы одного upvalue, а TickOnce уже впритык к пределу 32.
-            gstop.stTry = gstop.stTry + 1
-            local okS = pcall(function() return unit:IsUnitState('Reclaiming') end)
-            if okS then
-                gstop.stOk = gstop.stOk + 1
             end
         end
         for id in pairs(gstop.pos) do
@@ -1336,7 +1329,7 @@ local function TickOnce()
     end
 
     PeriodicLog(cfg, massFill, energyFill, holdSec, probeSec, movN, movM, movFar,
-        gstop.stOk, gstop.stTry, gstop.rec)
+        gstop.rec)
 end
 
 --------------------------------------------------------------------------------
@@ -1412,8 +1405,6 @@ function ReclaimPauseStart()
     syncSeen = false
     gstop.mass = 0
     gstop.pos = {}
-    gstop.stOk = 0
-    gstop.stTry = 0
     gstop.rec = 0
     gstop.recPrev = nil
     gstop.recIter = 0
