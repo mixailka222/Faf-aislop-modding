@@ -299,6 +299,16 @@ class ChangedModsTests(RepoCase):
         self.assertEqual(len(check.changed_mods(self.root, base)), 3)
 
 
+class ReadmeTests(RepoCase):
+    def test_project_without_readme_is_reported(self):
+        self.assertEqual(len(check.check_readme(self.mod("My_mods/one/Mod"))), 1)
+
+    def test_project_with_readme_passes(self):
+        folder = self.mod("My_mods/one/Mod")
+        write(self.root / "My_mods/one/README.md", "")
+        self.assertEqual(check.check_readme(folder), [])
+
+
 class ReadmeWarningTests(RepoCase):
     def setUp(self):
         super().setUp()

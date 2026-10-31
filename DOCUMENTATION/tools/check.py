@@ -224,6 +224,11 @@ def check_mod_info(mod: Path) -> list[str]:
     return problems
 
 
+def check_readme(mod: Path) -> list[str]:
+    readme = project_dir(mod) / "README.md"
+    return [] if readme.exists() else [f"нет файла {readme.name} в {project_dir(mod).name}"]
+
+
 def run_tests(project: Path) -> list[str]:
     """Only test_*.py: other scripts in tests/ may rewrite the mod sources while they run."""
     folder = project / "tests"
@@ -294,6 +299,7 @@ def check_mod(mod: Path, luals: dict, no_luac: bool, tested: set) -> bool:
     results.append(report("правила", check_rules(mod)))
     results.append(report("импорты", check_imports(mod)))
     results.append(report("mod_info", check_mod_info(mod)))
+    results.append(report("README", check_readme(mod)))
     project = project_dir(mod)
     if project not in tested:
         tested.add(project)
