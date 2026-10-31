@@ -2,7 +2,7 @@ name = "Overflow"
 version = 35
 copyright = "2026 ExtraMassBlocker"
 description = "Shows how much energy you receive from allies through overflow (resource sharing) and how much you give away. Using the 'UI mod tools' mod, you can configure the panel to include additional info, such as mass overflow. Created with AI and may contain errors."
-author = "ExtraMassBlocker"
+author = "ExtraMassBlocker, Puffskein"
 url = ""
 -- uid идентифицирует КОНКРЕТНУЮ ВЕРСИЮ мода, а не сам мод, поэтому на каждую
 -- новую версию нужен новый uid, а имя остаётся прежним - по имени клиент FAF
