@@ -550,7 +550,6 @@ function Start()
     if started then return end
     started = true
 
-    import('/lua/UserSync.lua')
     if type(AddOnSyncHashedCallback) ~= 'function' then
         LOG(PFX .. ': START FAILED - AddOnSyncHashedCallback missing')
         return

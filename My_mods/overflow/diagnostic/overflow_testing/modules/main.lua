@@ -422,11 +422,6 @@ local function Start()
     end
     started = true
 
-    -- UserSync.lua объявляет функции через ---@declare-global и ничего не
-    -- возвращает, поэтому берём побочный эффект импорта: нужны сами
-    -- глобалы AddOnSyncHashedCallback / RemoveOnSyncHashedCallback.
-    import('/lua/UserSync.lua')
-
     if type(AddOnSyncHashedCallback) ~= 'function' then
         error('AddOnSyncHashedCallback is not a function - cannot watch Sync.Score')
     end
