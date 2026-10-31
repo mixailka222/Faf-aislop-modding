@@ -64,8 +64,25 @@ function import(p)
   if p == '/lua/user/prefs.lua' then return Prefs end
   if p == '/lua/ui/game/gamemain.lua' then return GameMain end
   if p == '/lua/ui/game/commandmode.lua' then return CommandMode end
+  if p == '/lua/keymap/keymapper.lua' then return KEYMAPPER end
   return {}
 end
+
+-- /lua/keymap/keymapper.lua with the given key map of the player.
+KEY_ACTIONS = {
+  reclaimpause_toggle = { action = 'toggle' },
+  reclaimpause_check = { action = 'check' },
+  reclaimpause_defaults = { action = 'defaults' },
+}
+function MakeKeyMapper(playerMap)
+  local k = {}
+  function k.GetCurrentKeyMap() return playerMap end
+  function k.GetKeyActions() return KEY_ACTIONS end
+  return k
+end
+
+IN_ADDED = nil
+function IN_AddKeyMapTable(keys) IN_ADDED = keys end
 
 function LOG(m) msgs[#msgs + 1] = tostring(m) end
 
@@ -784,6 +801,25 @@ local jD = table.concat(msgs, ' | ')
 check(string.find(jD, 'why=skip:') ~= nil, 'в логе есть разбор причин why=')
 check(string.find(jD, 'player:') ~= nil, 'отдельно считаются те, кто уже на паузе игрока')
 check(string.find(jD, 'other:') ~= nil, 'отдельно считаются те, у кого приказ не наш')
+
+print('')
+print('=== 41a: клавиши мода ставит только игрок ===')
+Reset(0.5, 1.0)
+WATCH.ReclaimPauseStop()
+KEYMAPPER = MakeKeyMapper({ ['Ctrl-A'] = 'select_all', ['F5'] = 'reclaimpause_toggle' })
+IN_ADDED = nil
+WATCH.ReclaimPauseOnCreateUI()
+check(IN_ADDED ~= nil and IN_ADDED['F5'] == KEY_ACTIONS.reclaimpause_toggle,
+      'клавиша, назначенная игроком, доходит до партии')
+check(IN_ADDED ~= nil and IN_ADDED['Ctrl-A'] == nil, 'чужие клавиши мод заново не ставит')
+check(string.find(table.concat(msgs, ' | '), 'hotkeys FAILED', 1, true) == nil,
+      'установка клавиш прошла без ошибки')
+
+WATCH.ReclaimPauseStop()
+KEYMAPPER = MakeKeyMapper({ ['Ctrl-A'] = 'select_all' })
+IN_ADDED = nil
+WATCH.ReclaimPauseOnCreateUI()
+check(IN_ADDED == nil, 'без назначенных клавиш мод ничего не ставит')
 
 print('')
 print('=== 42: ГЛАВНОЕ - падение в цикле должно быть замечено ===')

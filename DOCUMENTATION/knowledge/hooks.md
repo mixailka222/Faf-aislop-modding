@@ -132,6 +132,16 @@ end
 Источник: fa:lua/keymap/keymapper.lua#return GetUserKeyMap() or GetDefaultKeyMap()
 Источник: fa:lua/keymap/keymapper.lua#return Prefs.GetFromCurrentProfile("UserKeyMapName") or "/lua/keymap/defaultkeymap.lua"
 
+### Клавиша действия из мода может не дойти до партии
+
+Лобби строит карту клавиш партии до старта сессии, а UI-моды попадают в `__active_mods` только в `SessionInit.lua`. Действия из хука `keyactions.lua` лобби поэтому не знает, и привязанная к ним клавиша в партию не попадает. Мод ставит такую клавишу сам при создании интерфейса через `IN_AddKeyMapTable`. ReUI.Actions решает это иначе: записывает действия в `UserKeyActions`.
+
+Источник: fa:lua/ui/lobby/lobby.lua#IN_AddKeyMapTable(import("/lua/keymap/keymapper.lua").GetKeyMappings(
+Источник: fa:lua/SessionInit.lua#table.insert(__active_mods, m)
+Источник: ui-libs:mods/ReUI/Actions/Actions.lua#SetUserKeyAction(
+
+Не подтверждено: что хуки UI-модов не действуют в лобби. Вывод сделан по коду, нужен лог партии со строкой `Keybindings cannot find action`.
+
 ### Клавиша `pause_unit` зависит от раскладки
 
 `Z` в `defaultKeyMap.lua`, `Tab` в `alternativeKeyMap.lua` и `hotbuildKeyMap.lua`.

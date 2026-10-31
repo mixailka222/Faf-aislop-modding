@@ -586,7 +586,7 @@ end
 -- ОСНОВНОЙ ШАГ
 --------------------------------------------------------------------------------
 
--- РУЧНАЯ ПРОВЕРКА по горячей клавише.
+-- РУЧНАЯ ПРОВЕРКА по клавише, которую назначил игрок.
 --
 -- Главный инструмент отладки: показывает, что мод видит ПРЯМО СЕЙЧАС, и
 -- называет причину, по которой он не сработал. Без неё приходится ждать,
@@ -849,8 +849,8 @@ local function TickOnce()
                         -- точки и теряли приказ - после чего мод уже не
                         -- понимал, что они его.
                         --
-                        -- Если игрок хочет, чтобы мод не вмешивался, есть
-                        -- горячая клавиша вкл/выкл.
+                        -- Если игрок хочет, чтобы мод не вмешивался, он
+                        -- выключает его в окне настроек или своей клавишей.
                         topause[pauseN + 1] = unit
                         pauseN = pauseN + 1
                         held[id] = unit
@@ -1072,6 +1072,30 @@ function ReclaimPauseToggle()
     LOG(PFX .. 'toggled, ' .. Settings.ReclaimPauseSettingsLine())
 end
 
+-- The lobby builds the key map of a match, but UI mods join the game only inside
+-- the session, so the lobby does not know the actions of this mod and drops the
+-- keys the player assigned to them. They are installed here instead.
+local function InstallKeys()
+    local KeyMapper = import('/lua/keymap/keymapper.lua')
+    local actions = KeyMapper.GetKeyActions()
+    local keys = {}
+    local n = 0
+    for key, action in pairs(KeyMapper.GetCurrentKeyMap()) do
+        if string.sub(action, 1, 13) == 'reclaimpause_' then
+            keys[key] = actions[action]
+            n = n + 1
+        end
+    end
+    if n > 0 then
+        IN_AddKeyMapTable(keys)
+    end
+    LOG(PFX .. 'hotkeys installed: ' .. tostring(n))
+end
+
 function ReclaimPauseOnCreateUI()
     ReclaimPauseStart()
+    local ok, err = pcall(InstallKeys)
+    if not ok then
+        LOG(PFX .. 'hotkeys FAILED: ' .. tostring(err))
+    end
 end
