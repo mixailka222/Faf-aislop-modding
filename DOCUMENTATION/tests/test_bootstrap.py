@@ -47,7 +47,6 @@ class ExpectedVersionsTests(unittest.TestCase):
         "lua-lang": {"repo": "o/lua", "ref": "v1"},
         "lua-language-server": "3.0",
         "ziglang": "0.1",
-        "lupa": "2.0",
     }
 
     def test_repository_is_expected_at_its_ref(self):
@@ -282,7 +281,6 @@ class LatestVersionsTests(unittest.TestCase):
         "lua-lang": {"repo": "o/lua", "ref": "v1"},
         "lua-language-server": "3.0",
         "ziglang": "0.1",
-        "lupa": "2.0",
     }
 
     def fetch(self, folder_commits=None, lua_tag="v1", luals_tag="3.0"):

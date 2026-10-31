@@ -246,26 +246,27 @@ class ModInfoTests(RepoCase):
 class RunTestsTests(RepoCase):
     def setUp(self):
         super().setUp()
-        patcher = mock.patch.object(bootstrap, "venv_python", lambda: Path(sys.executable))
+        patcher = mock.patch.object(bootstrap, "lua_path", lambda: Path(sys.executable))
         patcher.start()
         self.addCleanup(patcher.stop)
         self.project = self.root / "My_mods/one"
 
     def test_only_test_scripts_are_run(self):
         marker = self.root / "negative_ran"
-        write(self.project / "tests/test_ok.py", "print('ok')\n")
-        write(self.project / "tests/negative_breaks_mod.py",
+        # The stand-in interpreter is Python, so these scripts are Python too.
+        write(self.project / "tests/test_ok.lua", "print('ok')\n")
+        write(self.project / "tests/negative_breaks_mod.lua",
               f"open({str(marker)!r}, 'w').close()\n")
         self.assertEqual(check.run_tests(self.project), [])
         self.assertFalse(marker.exists())
 
     def test_failing_exit_code_is_reported(self):
-        write(self.project / "tests/test_bad.py", "raise SystemExit(1)\n")
-        self.assertIn("test_bad.py", " ".join(check.run_tests(self.project)))
+        write(self.project / "tests/test_bad.lua", "raise SystemExit(1)\n")
+        self.assertIn("test_bad.lua", " ".join(check.run_tests(self.project)))
 
     def test_fail_marker_in_output_is_reported(self):
-        write(self.project / "tests/test_bad.py", "print('[FAIL] something')\n")
-        self.assertIn("test_bad.py", " ".join(check.run_tests(self.project)))
+        write(self.project / "tests/test_bad.lua", "print('[FAIL] something')\n")
+        self.assertIn("test_bad.lua", " ".join(check.run_tests(self.project)))
 
     def test_project_without_tests_is_fine(self):
         self.project.mkdir(parents=True)
@@ -290,7 +291,7 @@ class ChangedModsTests(RepoCase):
         self.assertEqual(check.changed_mods(self.root, self.base), [self.hotkeys])
 
     def test_changed_test_script_selects_its_mod(self):
-        write(self.root / "My_mods/two/tests/test_x.py", "")
+        write(self.root / "My_mods/two/tests/test_x.lua", "")
         self.commit()
         self.assertIn(self.two, check.changed_mods(self.root, self.base))
 
@@ -414,7 +415,7 @@ class VersionsTests(RepoCase):
 
     def test_deleted_source_folder_is_reported(self):
         self.install(bootstrap.expected_versions(bootstrap.load_versions()),
-                     bootstrap.luals_path(), bootstrap.luac_path(), bootstrap.venv_python())
+                     bootstrap.luals_path(), bootstrap.luac_path(), bootstrap.lua_path())
         (self.root / "references" / "fa").rmdir()
         self.assertIn("bootstrap.py", " ".join(check.check_versions()))
 
@@ -423,18 +424,18 @@ class VersionsTests(RepoCase):
 
     def test_installed_tools_pass(self):
         self.install(bootstrap.expected_versions(bootstrap.load_versions()),
-                     bootstrap.luals_path(), bootstrap.luac_path(), bootstrap.venv_python())
+                     bootstrap.luals_path(), bootstrap.luac_path(), bootstrap.lua_path())
         self.assertEqual(check.check_versions(), [])
 
     def test_deleted_tool_is_reported(self):
         self.install(bootstrap.expected_versions(bootstrap.load_versions()),
-                     bootstrap.luals_path(), bootstrap.venv_python())
+                     bootstrap.luals_path(), bootstrap.luac_path())
         self.assertIn("bootstrap.py", " ".join(check.check_versions()))
 
     def test_ci_does_not_need_the_built_compiler(self):
         versions = bootstrap.expected_versions(bootstrap.load_versions())
         del versions["faf-lua"]
-        self.install(versions, bootstrap.luals_path(), bootstrap.venv_python())
+        self.install(versions, bootstrap.luals_path())
         self.assertEqual(check.check_versions(no_luac=True), [])
 
 

@@ -7,7 +7,7 @@
 Мод и тест копируются во временную папку, поломки делаются только в копии.
 Настоящие исходники скрипт не меняет, поэтому прерывание ничего не портит.
 
-Запуск через Python из .tools/venv: тесту нужен lupa.
+Тест выполняет Lua игры из .tools/faf-lua, его собирает bootstrap.py.
 """
 import atexit
 import io
@@ -18,6 +18,9 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, "..", "..", "..", "DOCUMENTATION", "tools"))
+sys.dont_write_bytecode = True
+import bootstrap
 
 # The test looks for the mod next to its own folder, so the copy keeps that layout.
 WORK = tempfile.mkdtemp(prefix="reclaim_mutants_")
@@ -25,11 +28,11 @@ atexit.register(shutil.rmtree, WORK, ignore_errors=True)
 shutil.copytree(os.path.join(os.path.dirname(HERE), "ReclaimPause"),
                 os.path.join(WORK, "ReclaimPause"))
 os.makedirs(os.path.join(WORK, "tests"))
-TEST = os.path.join(WORK, "tests", "test_options_unit.py")
-shutil.copyfile(os.path.join(HERE, "test_options_unit.py"), TEST)
+TEST = "test_options_unit.lua"
+shutil.copyfile(os.path.join(HERE, TEST), os.path.join(WORK, "tests", TEST))
 OPT = os.path.join(WORK, "ReclaimPause", "modules", "options.lua")
 
-ENV = dict(os.environ, PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1")
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 ORIG = io.open(OPT, encoding="utf-8").read()
 
@@ -103,7 +106,8 @@ for title, old, new in BROKEN:
         results.append((title, False))
         continue
     io.open(OPT, "w", encoding="utf-8", newline="").write(ORIG.replace(old, new))
-    p = subprocess.run([sys.executable, TEST], env=ENV, capture_output=True)
+    p = subprocess.run([str(bootstrap.lua_path()), TEST], cwd=os.path.join(WORK, "tests"),
+                       capture_output=True)
     out = p.stdout.decode("utf-8", "replace") + p.stderr.decode("utf-8", "replace")
     fails = out.count("[FAIL]")
     name = [l for l in out.split("\n") if "[FAIL]" in l][:2]

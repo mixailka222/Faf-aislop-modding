@@ -76,18 +76,6 @@
 
 Наблюдение: `zipfile.ZipFile` и `testzip()` на файлах из `C:\ProgramData\faforever\gamedata`.
 
-### В тестах через `lupa` не работает `for k in t do`
-
-В игре такой цикл штатный, а Lua внутри `lupa` его не знает: `attempt to call a table value`. Для прогона копии файла цикл заменяют на `for k in next, t do`. Код мода менять не нужно.
-
-Источник: fa:lua/UserSync.lua#for k, data in Sync do
-
-### `lupa.table_from` не преобразует вложенные словари
-
-Верхний уровень становится таблицей Lua, вложенный словарь остаётся `userdata`. Вложенные данные собирают литералом Lua через `lua.execute`.
-
-Наблюдение: `lupa` 2.8, `luajit21`, `type(t.a)` вернул `userdata`.
-
 ### `table.getn` считает только ключи подряд от 1
 
 На таблице с ключами EntityId он вернёт 0, даже если записи есть. Такие таблицы считают обходом `pairs` или через `table.getsize`.

@@ -1,75 +1,72 @@
-# -*- coding: utf-8 -*-
-u"""Тесты Overflow: темы оформления и мигание тревожной строки.
+-- Тесты Overflow: темы оформления и мигание тревожной строки.
+--
+-- МОД: My_mods\overflow\Overflow.
+-- Лежит рядом: папка tests\ в одной директории с папкой Overflow\.
+--
+-- ЧТО ПРОВЕРЯЕМ
+--
+-- 1) themes.lua - рамки и пресеты: их названия и правило значения по умолчанию.
+--    Сами значения по умолчанию решает мод, тесты их не закрепляют.
+--
+-- 2) Чтение из скина игры. Фракционные темы обязаны брать значения из
+--    skins.lua, а не из своих чисел: опечатка в шестнадцатеричном значении
+--    иначе просто съела бы тему, и заметить это можно было бы только в игре.
+--
+-- 3) Настройка faction_font_color. Она ВЫКЛЮЧЕНА по умолчанию
+--    (options.lua:1217-1221, default = false), и когда выключена, игра рисует
+--    серым вместо цвета фракции (uiutil.lua:301-305). Проверяем обе стороны.
+--
+-- 4) Устойчивость. Неизвестное значение в профиле, отсутствующий скин,
+--    пропавший ключ скина - ни один случай не имеет права оставить тему без
+--    цвета: панель с nil-цветом не рисуется вообще.
+--
+-- 5) ui.lua - тема доезжает до панели, и смена темы в профиле приводит к
+--    пересборке. Главный риск был не в данных, а в порядке вызовов: цвет
+--    задаётся в конструкторе, и тема, применённая после создания элементов,
+--    оставила бы панель со старым цветом навсегда.
+--
+-- 6) Мигание - выключено по умолчанию, при включении строка мигает
+--    приглушённым цветом, после предела перестаёт (economy.lua:254,271-272).
+--
+-- ЗАПУСК из папки tests:  lua test_overflow_theme.lua
 
-МОД: My_mods\\overflow\\Overflow.
-Лежит рядом: папка tests\\ в одной директории с папкой Overflow\\.
+-- Run from the tests folder: the paths below are relative to it. check.py does
+-- that with the Lua of the game, so this code follows its dialect.
+local function ReadFile(path)
+    local file = assert(io.open(path, 'rb'))
+    local text = file:read('*a')
+    file:close()
+    return text
+end
 
-ЧТО ПРОВЕРЯЕМ
+-- Every file of a mod runs in its own environment, as in the game.
+local function MakeEnv()
+    return setmetatable({}, { __index = _G })
+end
 
-1) themes.lua - рамки и пресеты: их названия и правило значения по умолчанию.
-   Сами значения по умолчанию решает мод, тесты их не закрепляют.
+local function LoadInto(path, env)
+    local chunk = assert(loadstring(ReadFile(path), path))
+    setfenv(chunk, env)
+    return chunk()
+end
 
-2) Чтение из скина игры. Фракционные темы обязаны брать значения из
-   skins.lua, а не из своих чисел: опечатка в шестнадцатеричном значении
-   иначе просто съела бы тему, и заметить это можно было бы только в игре.
+local function Run(label, block)
+    print(label)
+    local ok, res = pcall(block)
+    if not ok then
+        print('  [FAIL] проверка упала: ' .. tostring(res))
+        return 1
+    end
+    return res or 0
+end
 
-3) Настройка faction_font_color. Она ВЫКЛЮЧЕНА по умолчанию
-   (options.lua:1217-1221, default = false), и когда выключена, игра рисует
-   серым вместо цвета фракции (uiutil.lua:301-305). Проверяем обе стороны.
+local MOD = '../Overflow/modules/'
 
-4) Устойчивость. Неизвестное значение в профиле, отсутствующий скин,
-   пропавший ключ скина - ни один случай не имеет права оставить тему без
-   цвета: панель с nil-цветом не рисуется вообще.
-
-5) ui.lua - тема доезжает до панели, и смена темы в профиле приводит к
-   пересборке. Главный риск был не в данных, а в порядке вызовов: цвет
-   задаётся в конструкторе, и тема, применённая после создания элементов,
-   оставила бы панель со старым цветом навсегда.
-
-6) Мигание - выключено по умолчанию, при включении строка мигает
-   приглушённым цветом, после предела перестаёт (economy.lua:254,271-272).
-
-ЗАПУСК:  python test_overflow_theme.py
-"""
-import io
-import os
-import sys
-
-from lupa import luajit21 as lupa
-
-HERE = os.path.dirname(os.path.abspath(__file__))
-MOD = os.path.join(os.path.dirname(HERE), "Overflow")
-MOD = os.path.abspath(MOD)
-
-if not os.path.exists(os.path.join(MOD, "modules", "themes.lua")):
-    print("FAIL: mod ne nayden po puti: " + MOD)
-    sys.exit(1)
-print("Mod: " + MOD)
-
-
-def rd(p):
-    return io.open(p, encoding="utf-8").read()
-
-
-themes_src = rd(os.path.join(MOD, "modules", "themes.lua"))
-ui_src = rd(os.path.join(MOD, "modules", "ui.lua"))
-rows_src = rd(os.path.join(MOD, "modules", "rows.lua"))
-
-lua = lupa.LuaRuntime(unpack_returned_tuples=True)
-make_env = lua.eval(
-    "function() local t = {} setmetatable(t, {__index = _G}) return t end")
-loader = lua.eval("""function(src, env)
-  local f, err = loadstring(src)
-  if not f then error(err) end
-  setfenv(f, env)
-  return f()
-end""")
-
-STUBS = r'''
+do
 PROFILE = {}
 msgs = {}
 
-function LOG(m) msgs[#msgs + 1] = tostring(m) end
+function LOG(m) msgs[table.getn(msgs) + 1] = tostring(m) end
 
 Prefs = {}
 function Prefs.GetFromCurrentProfile(k) return PROFILE[k] end
@@ -202,12 +199,12 @@ local function NewCtrl(kind, parent)
                         function(v) c._depth = v end)
     function c:SetSolidColor(v)
         self._color = v
-        NEWCOLORS[#NEWCOLORS + 1] = v
-        NEWSOLID[#NEWSOLID + 1] = v
+        NEWCOLORS[table.getn(NEWCOLORS) + 1] = v
+        NEWSOLID[table.getn(NEWSOLID) + 1] = v
     end
     function c:SetTexture(v)
         self._texture = v
-        NEWTEX[#NEWTEX + 1] = v
+        NEWTEX[table.getn(NEWTEX) + 1] = v
     end
     -- SetUV есть у Bitmap (maui/bitmap.lua:4; так же режет игрушка в
     -- ui/game/statusbar.lua:46-83). Заглушка обязана его иметь: без него
@@ -215,12 +212,12 @@ local function NewCtrl(kind, parent)
     -- SetTexture.
     function c:SetUV(u0, v0, u1, v1)
         self._uv = { u0, v0, u1, v1 }
-        NEWUV[#NEWUV + 1] = { u0, v0, u1, v1 }
+        NEWUV[table.getn(NEWUV) + 1] = { u0, v0, u1, v1 }
     end
     function c:SetAlpha(v) self._alpha = v end
     function c:SetColor(v)
         self._color = v
-        NEWCOLORS[#NEWCOLORS + 1] = v
+        NEWCOLORS[table.getn(NEWCOLORS) + 1] = v
     end
     function c:SetDropShadow(v) end
     function c:SetFont(f, s) end
@@ -240,7 +237,7 @@ local function NewCtrl(kind, parent)
     -- настоящая, поэтому подмена короткой подписи на длинную видна.
     function c:GetStringAdvance(s)
         s = s or ''
-        return #s * 6
+        return string.len(s) * 6
     end
     function c:Left() return self._x end
     function c:Top() return self._y end
@@ -260,7 +257,7 @@ local function NewCtrl(kind, parent)
                        function(v) c._x = v end)
     c.Top = valueProp(function() return c._y end,
                       function(v) c._y = v end)
-    MADE[#MADE + 1] = c
+    MADE[table.getn(MADE) + 1] = c
     return c
 end
 
@@ -276,7 +273,7 @@ function UIUtil.CreateText(parent, text, size, font)
     -- подписей есть только _text, а он у каждой свой.
     c.SetText = function(self, v)
         self._text = v
-        NEWTEXT[#NEWTEXT + 1] = v
+        NEWTEXT[table.getn(NEWTEXT) + 1] = v
     end
     return c
 end
@@ -538,57 +535,36 @@ function InList(list, value)
     end
     return false
 end
-'''
+end
 
-lua.execute(STUBS)
-G = lua.globals()
-G['MODULES'] = lua.eval('{}')
+MODULES = {}
 
-# --------------------------------------------------------------- themes.lua
-env_theme = make_env()
-loader(themes_src, env_theme)
-G['MODULES']['themes'] = env_theme
-# Отдельным глобалом: блоки проверок исполняются в глобальном окружении
-# LuaJIT и видят модуль только через него.
-G['T'] = env_theme
+local env_theme = MakeEnv()
+LoadInto(MOD .. 'themes.lua', env_theme)
+MODULES.themes = env_theme
+-- Отдельным глобалом: блоки проверок видят модуль только через него.
+T = env_theme
 
-# ------------------------------------------------------------------- rows.lua
-env_rows = make_env()
-loader(rows_src, env_rows)
-G['MODULES']['rows'] = env_rows
-G['ROWS'] = env_rows
+local env_rows = MakeEnv()
+LoadInto(MOD .. 'rows.lua', env_rows)
+MODULES.rows = env_rows
+ROWS = env_rows
 
-# ui.lua грузится последним: он тянет themes.lua и rows.lua через import, и без
-# них в логе будет FATAL. Объявляем его под именем U - блоки проверок
-# исполняются в глобальном окружении и видят модуль только через него.
-env_ui = make_env()
-loader(ui_src, env_ui)
-G['MODULES']['ui'] = env_ui
-G['U'] = env_ui
+-- ui.lua грузится последним: он тянет themes.lua и rows.lua через import, и без
+-- них в логе будет FATAL.
+local env_ui = MakeEnv()
+LoadInto(MOD .. 'ui.lua', env_ui)
+MODULES.ui = env_ui
+U = env_ui
 
-
-def run(label, code):
-    print(label)
-    try:
-        return lua.execute(code) or 0
-    except Exception as e:
-        print("  [FAIL] проверка упала: " + str(e))
-        return 1
-
-
-# Общий кусок: счётчик провалов. Одинаков во всех блоках, чтобы каждый
-# читался сам по себе.
-PRELUDE = r'''
+local f1 = Run("=== 1. СОСТАВ: ДВА ВЫБОРА ===", function()
 local fails = 0
 local function check(cond, text)
     if cond then return end
     fails = fails + 1
     print('  [FAIL] ' .. text)
 end
-'''
 
-# ==================================================== 1. состав и порядок тем
-f1 = run("=== 1. СОСТАВ: ДВА ВЫБОРА ===", PRELUDE + r'''
 -- Player profiles store these names, so they must not change. The default is
 -- up to the mod, so the rule is checked instead of a name: the default is the
 -- first item, otherwise UMT silently replaces it with items[1].
@@ -621,9 +597,16 @@ for _, gone in ipairs({ 'AEON', 'UEF', 'Cybran', 'Seraphim', 'SSB', 'Тихая'
           'фракционная тема ' .. gone .. ' убрана из списков')
 end
 return fails
-''')
+end)
 
-f2 = run("=== 2. ПАЛИТРА ПОЛНА У ЛЮБОГО ПРЕСЕТА ===", PRELUDE + r'''
+local f2 = Run("=== 2. ПАЛИТРА ПОЛНА У ЛЮБОГО ПРЕСЕТА ===", function()
+local fails = 0
+local function check(cond, text)
+    if cond then return end
+    fails = fails + 1
+    print('  [FAIL] ' .. text)
+end
+
 -- Панель с nil-цветом не рисуется вообще, поэтому набор полей обязан быть
 -- полным при любом выборе.
 local styleList = { 'Vanilla', 'Minimal' }
@@ -649,9 +632,16 @@ check(minPal.BG == 'AA4A5D6B',
 check(minPal.FONT == 11, 'у пресета Minimal кегль 11, а не nil (' ..
       tostring(minPal.FONT) .. ')')
 return fails
-''')
+end)
 
-f3 = run("=== 3. СМЫСЛ ЦВЕТОВ ОДИНАКОВ У ОБОИХ ПРЕСЕТОВ ===", PRELUDE + r'''
+local f3 = Run("=== 3. СМЫСЛ ЦВЕТОВ ОДИНАКОВ У ОБОИХ ПРЕСЕТОВ ===", function()
+local fails = 0
+local function check(cond, text)
+    if cond then return end
+    fails = fails + 1
+    print('  [FAIL] ' .. text)
+end
+
 -- Задача игрока: зелёный - перелива нет, жёлтый - союзники переливают тебе,
 -- красный - ты зависишь от перелива. СПИСОК СОСТОЯНИЙ поэтому обязан быть
 -- один и тот же, и различаться может только оттенок.
@@ -687,9 +677,16 @@ check(van.BAD == 'red',
       'Vanilla BAD - игровое имя цвета red (economy.lua:264), а не ' ..
       tostring(van.BAD))
 return fails
-''')
+end)
 
-f4 = run("=== 4. ПРЕСЕТ VANILLA ЧИТАЕТ СКИНА ИГРЫ ===", PRELUDE + r'''
+local f4 = Run("=== 4. ПРЕСЕТ VANILLA ЧИТАЕТ СКИНА ИГРЫ ===", function()
+local fails = 0
+local function check(cond, text)
+    if cond then return end
+    fails = fails + 1
+    print('  [FAIL] ' .. text)
+end
+
 -- Опечатка в числе невозможна: значения берутся из скина, а если FAF поменяет
 -- скин, мод пойдёт за ним.
 ClearProfile()
@@ -717,9 +714,16 @@ check(m.NEUTRAL == 'FF8A96A3',
 
 FACTION_FONT_COLOR = nil
 return fails
-''')
+end)
 
-f5 = run("=== 5. НАСТРОЙКА faction_font_color ===", PRELUDE + r'''
+local f5 = Run("=== 5. НАСТРОЙКА faction_font_color ===", function()
+local fails = 0
+local function check(cond, text)
+    if cond then return end
+    fails = fails + 1
+    print('  [FAIL] ' .. text)
+end
+
 -- Она выключена по умолчанию (options.lua:1217-1221), и тогда игра рисует
 -- серым skins.default.fontColor (uiutil.lua:301-305). Мод повторяет это.
 ClearProfile()
@@ -745,9 +749,16 @@ check(colour.NEUTRAL == grey.NEUTRAL,
 
 FACTION_FONT_COLOR = nil
 return fails
-''')
+end)
 
-f6 = run("=== 6. МАСШТАБ ШРИФТА ===", PRELUDE + r'''
+local f6 = Run("=== 6. МАСШТАБ ШРИФТА ===", function()
+local fails = 0
+local function check(cond, text)
+    if cond then return end
+    fails = fails + 1
+    print('  [FAIL] ' .. text)
+end
+
 -- Ползунок UMT целочисленный, поэтому масштаб в процентах.
 ClearProfile()
 check(T.FontScale() == T.FontScaleDefault(),
@@ -791,9 +802,16 @@ PickFontScale('не число')
 check(T.FontScale() == T.FontScaleDefault(),
       'нечисловой масштаб трактуется как значение по умолчанию')
 return fails
-''')
+end)
 
-f7 = run("=== 7. РАМКА И РЕЖИМ «ТОЛЬКО ЧИСЛА» ===", PRELUDE + r'''
+local f7 = Run("=== 7. РАМКА И РЕЖИМ «ТОЛЬКО ЧИСЛА» ===", function()
+local fails = 0
+local function check(cond, text)
+    if cond then return end
+    fails = fails + 1
+    print('  [FAIL] ' .. text)
+end
+
 ClearProfile()
 PickFrame('Minimal')
 check(T.FrameCurrent() == 'Minimal', 'рамка Minimal выбирается')
@@ -813,9 +831,16 @@ ClearProfile()
 PickNumbers(true)
 check(T.NumbersOnly() == true, 'режим «только числа» читается из профиля')
 return fails
-''')
+end)
 
-f8 = run("=== 8. ПОДПИСЬ И МИГАНИЕ ===", PRELUDE + r'''
+local f8 = Run("=== 8. ПОДПИСЬ И МИГАНИЕ ===", function()
+local fails = 0
+local function check(cond, text)
+    if cond then return end
+    fails = fails + 1
+    print('  [FAIL] ' .. text)
+end
+
 -- Подпись решает, перестраивать ли панель. Всё, что меняет вид при сборке,
 -- обязано в неё входить, иначе смена настройки не подхватится.
 --
@@ -856,9 +881,16 @@ check(string.find(tell, 'Minimal', 1, true) ~= nil,
 check(string.find(tell, T.ThemeSignature(), 1, true) == nil,
       'описание не выдаёт сырую подпись: ' .. tell)
 return fails
-''')
+end)
 
-f9 = run("=== 9. УСТОЙЧИВОСТЬ К ПРОФИЛЮ И СКИНАМ ===", PRELUDE + r'''
+local f9 = Run("=== 9. УСТОЙЧИВОСТЬ К ПРОФИЛЮ И СКИНАМ ===", function()
+local fails = 0
+local function check(cond, text)
+    if cond then return end
+    fails = fails + 1
+    print('  [FAIL] ' .. text)
+end
+
 -- Пустой профиль: всё должно взять значения по умолчанию, а не упасть.
 ClearProfile()
 check(T.StyleCurrent() == T.StyleNames()[1],
@@ -890,9 +922,16 @@ check(Complete(vanillaNoSkin),
 check(vanillaNoSkin.NEUTRAL ~= nil and vanillaNoSkin.NEUTRAL ~= '',
       'без скина обычный текст не прозрачный')
 return fails
-''')
+end)
 
-f10 = run("=== 10. ui.lua: ОФОРМЛЕНИЕ ДОЕЗЖАЕТ ДО ПАНЕЛИ ===", PRELUDE + r'''
+local f10 = Run("=== 10. ui.lua: ОФОРМЛЕНИЕ ДОЕЗЖАЕТ ДО ПАНЕЛИ ===", function()
+local fails = 0
+local function check(cond, text)
+    if cond then return end
+    fails = fails + 1
+    print('  [FAIL] ' .. text)
+end
+
 -- Панель читает палитру при сборке, и цвета обязаны дойти до подписей.
 --
 -- Цвет берём ИГРОВОЙ, а не из палитры Minimal. Встроенные цвета ui.lua
@@ -905,7 +944,7 @@ resetlog()
 NEWCOLORS = {}
 U.OnCreateUI()
 local seen = {}
-for i = 1, #NEWCOLORS do seen[NEWCOLORS[i]] = true end
+for i = 1, table.getn(NEWCOLORS) do seen[NEWCOLORS[i]] = true end
 check(seen['FF18d006'] == true,
       'цвет подписи пресета Minimal должен уйти в панель')
 check(string.find(alltext(), 'window created', 1, true) ~= nil,
@@ -921,7 +960,7 @@ NEWTEXT = {}
 U.OnCreateUI()
 BEAT()
 local joined = ''
-for i = 1, #NEWTEXT do joined = joined .. '|' .. tostring(NEWTEXT[i]) end
+for i = 1, table.getn(NEWTEXT) do joined = joined .. '|' .. tostring(NEWTEXT[i]) end
 check(string.find(joined, 'ally overflow', 1, true) == nil,
       'в режиме чисел подписи строк убраны: ' .. joined)
 check(string.find(joined, '|0.0', 1, true) ~= nil,
@@ -944,7 +983,7 @@ NEWTEX = {}
 NEWUV = {}
 -- Метка в общем списке контролов: искать подложку надо только среди тех, что
 -- созданы ЭТИМ проходом, иначе в счёт попадут куски от прошлых сборок окна.
-local mark = #MADE
+local mark = table.getn(MADE)
 U.OnCreateUI()
 check(TableGetn(NEWSOLID) >= 9,
       'рамка Minimal: погашены девять кусков окна (заливок ' ..
@@ -969,22 +1008,22 @@ check(cleared >= 9,
 -- ПРОПУСКАЕТСЯ через SetUV: верхний кусок берёт строки 0..34 текстуры,
 -- нижний 36..71. Проверяем именно это, а не «подложка вообще есть».
 local pieces = {}
-for i = mark + 1, #MADE do
+for i = mark + 1, table.getn(MADE) do
     local c = MADE[i]
     if c._texture ~= nil
         and string.find(tostring(c._texture),
                         'filter-ping-panel02_bmp.dds', 1, true) ~= nil then
-        pieces[#pieces + 1] = c
+        pieces[table.getn(pieces) + 1] = c
     end
 end
-check(#pieces == 2,
+check(table.getn(pieces) == 2,
       'подложка рамки Minimal собрана из двух кусков, а не из одного (' ..
-      tostring(#pieces) .. ')')
+      tostring(table.getn(pieces)) .. ')')
 
 local LINE_TOP = 35 / 72
 local LINE_BOTTOM = 36 / 72
 local topPiece, botPiece = nil, nil
-for i = 1, #pieces do
+for i = 1, table.getn(pieces) do
     local uv = pieces[i]._uv
     if uv ~= nil and uv[4] <= LINE_TOP + 0.001 then topPiece = pieces[i] end
     if uv ~= nil and uv[2] >= LINE_BOTTOM - 0.001 then botPiece = pieces[i] end
@@ -1006,7 +1045,7 @@ check(topPiece ~= nil and botPiece ~= nil
 -- трогает. Иначе крестик убирает только значения, а пустая рамка
 -- оставалась висеть на экране - ровно то, о чём сообщил игрок.
 local panel = nil
-for i = mark + 1, #MADE do
+for i = mark + 1, table.getn(MADE) do
     if MADE[i]._kind == 'Window' then panel = MADE[i] end
 end
 check(panel ~= nil and panel.OnClose ~= nil,
@@ -1014,12 +1053,12 @@ check(panel ~= nil and panel.OnClose ~= nil,
 if panel ~= nil and panel.OnClose ~= nil then
     panel.OnClose(panel)
     local gone = 0
-    for i = 1, #pieces do
+    for i = 1, table.getn(pieces) do
         if pieces[i]._hidden then gone = gone + 1 end
     end
-    check(gone == #pieces and #pieces > 0,
+    check(gone == table.getn(pieces) and table.getn(pieces) > 0,
           'при сворачивании подложка гаснет вместе с окном (погашено ' ..
-          tostring(gone) .. ' из ' .. tostring(#pieces) .. ')')
+          tostring(gone) .. ' из ' .. tostring(table.getn(pieces)) .. ')')
 end
 
 ClearProfile()
@@ -1044,46 +1083,46 @@ NEWTEXT = {}
 U.OnCreateUI()
 BEAT()
 joined = ''
-for i = 1, #NEWTEXT do joined = joined .. '|' .. tostring(NEWTEXT[i]) end
+for i = 1, table.getn(NEWTEXT) do joined = joined .. '|' .. tostring(NEWTEXT[i]) end
 check(string.find(joined, 'ally overflow', 1, true) ~= nil,
       'без режима чисел подписи вернулись')
 return fails
-''')
+end)
 
-f10 = f10 + 0
-try:
-    # Скин убирается ДО загрузки модуля. Именно так выглядит настоящая поломка:
-    # themes.lua берёт таблицу скинов один раз, при импорте.
-    lua.execute("SKINS = nil")
-    lua.execute("resetlog()")
-    env_noskin = make_env()
-    loader(themes_src, env_noskin)
-    G['T'] = env_noskin
-    told = lua.eval("alltext()")
-    if "skins.lua did not load" not in told:
-        print("  [FAIL] о пропаже скинов не сказано в лог")
+print('')
+local noSkinOk, noSkinErr = pcall(function()
+    -- Скин убирается ДО загрузки модуля. Именно так выглядит настоящая поломка:
+    -- themes.lua берёт таблицу скинов один раз, при импорте.
+    SKINS = nil
+    resetlog()
+    local env_noskin = MakeEnv()
+    LoadInto(MOD .. 'themes.lua', env_noskin)
+    T = env_noskin
+    if string.find(alltext(), 'skins.lua did not load', 1, true) == nil then
+        print('  [FAIL] о пропаже скинов не сказано в лог')
         f10 = f10 + 1
-    else:
-        print("  пропажа скинов замечена и сказана в лог")
-    lua.execute("""
-        PROFILE['Overflow'] = { theme = 'AEON' }
-        NEWCOLORS = {}
-    """)
-    okfull = lua.eval("Complete(T.StylePalette()) and 1 or 0")
-    if not okfull:
-        print("  [FAIL] без skins.lua палитра должна остаться полной")
+    else
+        print('  пропажа скинов замечена и сказана в лог')
+    end
+    PROFILE['Overflow'] = { theme = 'AEON' }
+    NEWCOLORS = {}
+    if not Complete(T.StylePalette()) then
+        print('  [FAIL] без skins.lua палитра должна остаться полной')
         f10 = f10 + 1
-    else:
-        print("  без skins.lua палитра осталась полной")
-except Exception as e:
-    print("  [FAIL] модуль не пережил пропажу скинов: " + str(e))
+    else
+        print('  без skins.lua палитра осталась полной')
+    end
+end)
+if not noSkinOk then
+    print('  [FAIL] модуль не пережил пропажу скинов: ' .. tostring(noSkinErr))
     f10 = 1
+end
 
-# ------------------------------------------------------------------- ИТОГ
-print("")
-print("=== ИТОГ ===")
-total = f1 + f2 + f3 + f4 + f5 + f6 + f7 + f8 + f9 + f10
-if total:
-    print("провалено проверок: %d" % total)
-    sys.exit(1)
-print("все проверки пройдены")
+print('')
+print('=== ИТОГ ===')
+local total = f1 + f2 + f3 + f4 + f5 + f6 + f7 + f8 + f9 + f10
+if total > 0 then
+    print('провалено проверок: ' .. tostring(total))
+    os.exit(1)
+end
+print('все проверки пройдены')

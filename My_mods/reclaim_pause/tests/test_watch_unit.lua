@@ -1,31 +1,52 @@
-# -*- coding: utf-8 -*-
-# Юнит-тест мода ReclaimPause (settings.lua + watch.lua).
-#
-# ВАЖНО про окружение. У каждого файла мода в FAF своё окружение: присваивание
-# "глобального" имени попадает в таблицу модуля, а НЕ в общий _G. Тест обязан
-# это воспроизводить, иначе пропустит ошибку, из-за которой мод однажды не
-# стартовал в игре: settings.lua грузился, а watch.lua не видел его функций.
-# Поэтому каждый файл выполняется в отдельной таблице с __index = _G,
-# а import() возвращает именно её.
-#
-# Проверяем: гистерезис, правило энергии в обе стороны, минимальный интервал,
-# освобождение при смене приказа, уважение к ручному снятию паузы, отказ
-# трогать строителей/командиров/чужих/мёртвых, распознавание всех форм
-# приказа, применение настроек на ходу, и два требования безопасности:
-#   - выделение возвращается;
-#   - обход НЕ имеет права снимать паузу с живого инженера.
+-- Юнит-тест мода ReclaimPause (settings.lua + watch.lua).
+--
+-- ВАЖНО про окружение. У каждого файла мода в FAF своё окружение: присваивание
+-- "глобального" имени попадает в таблицу модуля, а НЕ в общий _G. Тест обязан
+-- это воспроизводить, иначе пропустит ошибку, из-за которой мод однажды не
+-- стартовал в игре: settings.lua грузился, а watch.lua не видел его функций.
+-- Поэтому каждый файл выполняется в отдельной таблице с __index = _G,
+-- а import() возвращает именно её.
+--
+-- Проверяем: гистерезис, правило энергии в обе стороны, минимальный интервал,
+-- освобождение при смене приказа, уважение к ручному снятию паузы, отказ
+-- трогать строителей/командиров/чужих/мёртвых, распознавание всех форм
+-- приказа, применение настроек на ходу, и два требования безопасности:
+-- - выделение возвращается;
+-- - обход НЕ имеет права снимать паузу с живого инженера.
 
-import io, os, sys
-from lupa import luajit21 as lupa
+-- Run from the tests folder: the paths below are relative to it. check.py does
+-- that with the Lua of the game, so this code follows its dialect.
+local function ReadFile(path)
+    local file = assert(io.open(path, 'rb'))
+    local text = file:read('*a')
+    file:close()
+    return text
+end
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-BASE = os.path.join(os.path.dirname(HERE), "ReclaimPause", "modules")
-settings_src = io.open(BASE + r"\settings.lua", encoding="utf-8").read()
-watch_src = io.open(BASE + r"\watch.lua", encoding="utf-8").read()
+-- Every file of a mod runs in its own environment, as in the game.
+local function MakeEnv()
+    return setmetatable({}, { __index = _G })
+end
 
-lua = lupa.LuaRuntime(unpack_returned_tuples=True)
+local function LoadInto(path, env)
+    local chunk = assert(loadstring(ReadFile(path), path))
+    setfenv(chunk, env)
+    return chunk()
+end
 
-STUBS = r'''
+local function Run(label, block)
+    print(label)
+    local ok, res = pcall(block)
+    if not ok then
+        print('  [FAIL] проверка упала: ' .. tostring(res))
+        return 1
+    end
+    return res or 0
+end
+
+local MOD = '../ReclaimPause/modules/'
+
+do
 msgs = {}
 STORE = {}
 WORLD = {}
@@ -84,7 +105,7 @@ end
 IN_ADDED = nil
 function IN_AddKeyMapTable(keys) IN_ADDED = keys end
 
-function LOG(m) msgs[#msgs + 1] = tostring(m) end
+function LOG(m) msgs[table.getn(msgs) + 1] = tostring(m) end
 
 function GetFocusArmy() return 1 end
 
@@ -100,7 +121,7 @@ function UISelectionByCategory(cat, addToSel, onScreen, toggle, isReset)
   local out = {}
   local n = 0
   if cat == 'ENGINEER' then
-    for i = 1, #WORLD do
+    for i = 1, table.getn(WORLD) do
       local u = WORLD[i]
       if u.cats['ENGINEER'] then
         n = n + 1
@@ -115,12 +136,12 @@ ABORTED = {}
 function SimCallback(cb, applyToSelection)
   if cb and cb.Func == 'AbortNavigation' and applyToSelection then
     local list = GetSelectedUnits() or {}
-    for i = 1, #list do ABORTED[#ABORTED + 1] = list[i].id end
+    for i = 1, table.getn(list) do ABORTED[table.getn(ABORTED) + 1] = list[i].id end
   end
 end
 
 function SetPaused(list, paused)
-  for i = 1, #list do
+  for i = 1, table.getn(list) do
     PAUSED[list[i].id] = paused
   end
 end
@@ -198,7 +219,7 @@ function RunOnce()
   if THREAD == nil then return false end
   local ok, err = pcall(THREAD)
   if not ok and not string.find(tostring(err), '__LOOPSTOP__', 1, true) then
-    msgs[#msgs + 1] = 'UNEXPECTED: ' .. tostring(err)
+    msgs[table.getn(msgs) + 1] = 'UNEXPECTED: ' .. tostring(err)
     CRASHES = CRASHES + 1
     return false
   end
@@ -239,13 +260,25 @@ end
 function SetHideQueue(v) HIDE_QUEUE_WHEN_PAUSED = v end
 
 function Forget(u)
-  for i = 1, #WORLD do
+  for i = 1, table.getn(WORLD) do
     if WORLD[i] == u then table.remove(WORLD, i) return end
   end
 end
-'''
+end
 
-SCENARIOS = r'''
+MODULES = {}
+
+-- порядок как в игре: settings грузится раньше watch
+local env_settings = MakeEnv()
+LoadInto(MOD .. 'settings.lua', env_settings)
+MODULES.settings = env_settings
+SET = env_settings
+
+local env_watch = MakeEnv()
+LoadInto(MOD .. 'watch.lua', env_watch)
+WATCH = env_watch
+
+local fails = Run("=== сценарии ===", function()
 local ENGINEER  = { ENGINEER = true }
 local CMD       = { ENGINEER = true, COMMAND = true }
 local AM        = { { CommandType = 'AggressiveMove' } }
@@ -279,7 +312,7 @@ local function eng(id, queue, extra)
   if extra then for k, v in pairs(extra) do o[k] = v end end
   return MakeUnit(id, o)
 end
-local function add(u) WORLD[#WORLD + 1] = u return u end
+local function add(u) WORLD[table.getn(WORLD) + 1] = u return u end
 
 print('')
 print('=== 0: ОКРУЖЕНИЕ МОДУЛЯ (именно тут ломалась версия 3) ===')
@@ -830,37 +863,13 @@ check(string.find(joined5, 'CRASH') == nil,
       'в логе теста нет ни одной строки CRASH')
 
 return fails + CRASHES
-'''
+end)
 
-# --- создаём отдельное окружение на каждый файл мода, как это делает движок
-make_env = lua.eval("function() local t = {} setmetatable(t, {__index = _G}) return t end")
-loader = lua.eval("""function(src, env)
-  local f, err = loadstring(src)
-  if not f then error(err) end
-  setfenv(f, env)
-  return f()
-end""")
-
-lua.execute(STUBS)
-lua.globals()['MODULES'] = lua.eval("{}")
-lua.globals()['SET'] = lua.eval("{}")
-lua.globals()['WATCH'] = lua.eval("{}")
-
-# порядок как в игре: settings грузится раньше watch
-env_settings = make_env()
-loader(settings_src, env_settings)
-lua.globals().MODULES['settings'] = env_settings
-lua.globals().SET = env_settings
-
-env_watch = make_env()
-loader(watch_src, env_watch)
-lua.globals().WATCH = env_watch
-
-fails = lua.execute(SCENARIOS) or 0
-
-print("")
-print("=== ИТОГ ===")
-if fails:
-    print("провалено проверок: %d" % fails)
-    sys.exit(1)
-print("все проверки пройдены")
+print('')
+print('=== ИТОГ ===')
+local total = fails
+if total > 0 then
+    print('провалено проверок: ' .. tostring(total))
+    os.exit(1)
+end
+print('все проверки пройдены')

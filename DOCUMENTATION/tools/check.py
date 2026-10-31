@@ -3,7 +3,7 @@
     python DOCUMENTATION/tools/check.py                         all tracked mods
     python DOCUMENTATION/tools/check.py "My_mods/project/Mod"   one mod
     python DOCUMENTATION/tools/check.py --changed-since main    changed mods
-    --no-luac    CI only: the compiler runs there as a separate job
+    --no-luac    CI only: the compiler and the tests run there as a separate job
 """
 import argparse
 import functools
@@ -104,7 +104,7 @@ def touches_code(root: Path, mod: Path, files: list[str]) -> bool:
 
 def touches_tests(root: Path, mod: Path, files: list[str]) -> bool:
     prefix = relative(root, project_dir(mod)) + "/tests/"
-    return any(name.startswith(prefix) and name.endswith(".py") for name in files)
+    return any(name.startswith(prefix) and name.endswith((".lua", ".py")) for name in files)
 
 
 def changed_mods(root: Path, base: str) -> list[Path]:
@@ -130,11 +130,11 @@ def readme_warnings(root: Path, base: str) -> list[str]:
 
 def check_versions(no_luac: bool = False) -> list[str]:
     expected = bootstrap.expected_versions(bootstrap.load_versions())
-    tools = [bootstrap.luals_path(), bootstrap.venv_python()]
+    tools = [bootstrap.luals_path()]
     if no_luac:
         del expected["faf-lua"]
     else:
-        tools.append(bootstrap.luac_path())
+        tools += [bootstrap.luac_path(), bootstrap.lua_path()]
     stale = bootstrap.outdated(expected, bootstrap.load_installed())
     stale += [tool.name for tool in tools if not tool.exists()]
     stale += [f"references/{name}" for name in bootstrap.SPARSE
@@ -260,14 +260,16 @@ def check_readme(mod: Path) -> list[str]:
 
 
 def run_tests(project: Path) -> list[str]:
-    """Only test_*.py: other scripts in tests/ are slow mutation checks, run by hand."""
+    """Only test_*.lua, run from tests/ by the Lua of the game.
+
+    Other scripts in tests/ are slow mutation checks, run by hand.
+    """
     folder = project / "tests"
     if not folder.is_dir():
         return []
-    env = dict(os.environ, PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1")
     problems = []
-    for script in sorted(folder.glob("test_*.py")):
-        done = subprocess.run([str(bootstrap.venv_python()), script.name], cwd=folder, env=env,
+    for script in sorted(folder.glob("test_*.lua")):
+        done = subprocess.run([str(bootstrap.lua_path()), script.name], cwd=folder,
                               capture_output=True, encoding="utf-8", errors="replace")
         output = done.stdout + done.stderr
         failed = [line.strip() for line in output.splitlines() if "[FAIL]" in line]
@@ -331,7 +333,9 @@ def check_mod(mod: Path, luals: dict, no_luac: bool) -> bool:
     results.append(report("mod_info", check_mod_info(mod)))
     results.append(report("README", check_readme(mod)))
     project = tests_project(mod)
-    if project:
+    if project and no_luac:
+        print(f"[SKIP] тесты {mod.name}: в CI их выполняет отдельное задание")
+    elif project:
         results.append(report(f"тесты {mod.name}", run_tests(project)))
     return all(results)
 

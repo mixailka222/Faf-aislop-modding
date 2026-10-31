@@ -1,61 +1,63 @@
-# -*- coding: utf-8 -*-
-"""Тест страницы настроек UMT.
+-- Тест страницы настроек UMT.
+--
+-- ПОЧЕМУ ТЕСТ НУЖЕН. Мод однажды упал в игре чёрным экраном: options.lua
+-- вызвал метод Bind у объекта, у которого такого метода нет. Код страницы
+-- не исполнялся НИ ОДНИМ тестом - про ошибку узнали только в игре.
+--
+-- Этот тест воспроизводит настоящий API UMT по исходникам
+-- mods/umt/modules/Options.lua и mods/umt/modules/OptionVar.lua, без
+-- выдумок:
+--
+--   Opt(value)                        Options.lua:400-402, ОДИН аргумент
+--   OptValueMetaTable.IsInstance()    Options.lua:335-337
+--   LoadOptions()                     Options.lua:339-358
+--   Mods.__newindex / __index         Options.lua:378-396
+--   LoadOptionsFile()                 Options.lua:361-376
+--   OptionVar:Bind(fn)                OptionVar.lua:73-76, вызывает СРАЗУ
+--   OptionVar:Save()                  OptionVar.lua:41-47
+--   AddOptions(option, title, t)      Options.lua:317-319
+--
+-- Заодно проверяется вещь, которую легко сломать молча: диапазоны ползунков
+-- не должны выходить за границы SaneInt в settings.lua, иначе окно и мод
+-- станут считать разные значения.
 
-ПОЧЕМУ ТЕСТ НУЖЕН. Мод однажды упал в игре чёрным экраном: options.lua
-вызвал метод Bind у объекта, у которого такого метода нет. Код страницы
-не исполнялся НИ ОДНИМ тестом - про ошибку узнали только в игре.
+-- Run from the tests folder: the paths below are relative to it. check.py does
+-- that with the Lua of the game, so this code follows its dialect.
+local function ReadFile(path)
+    local file = assert(io.open(path, 'rb'))
+    local text = file:read('*a')
+    file:close()
+    return text
+end
 
-Этот тест воспроизводит настоящий API UMT по исходникам
-mods/umt/modules/Options.lua и mods/umt/modules/OptionVar.lua, без
-выдумок:
+-- Every file of a mod runs in its own environment, as in the game.
+local function MakeEnv()
+    return setmetatable({}, { __index = _G })
+end
 
-  Opt(value)                        Options.lua:400-402, ОДИН аргумент
-  OptValueMetaTable.IsInstance()    Options.lua:335-337
-  LoadOptions()                     Options.lua:339-358
-  Mods.__newindex / __index         Options.lua:378-396
-  LoadOptionsFile()                 Options.lua:361-376
-  OptionVar:Bind(fn)                OptionVar.lua:73-76, вызывает СРАЗУ
-  OptionVar:Save()                  OptionVar.lua:41-47
-  AddOptions(option, title, t)      Options.lua:317-319
+local function LoadInto(path, env)
+    local chunk = assert(loadstring(ReadFile(path), path))
+    setfenv(chunk, env)
+    return chunk()
+end
 
-Заодно проверяется вещь, которую легко сломать молча: диапазоны ползунков
-не должны выходить за границы SaneInt в settings.lua, иначе окно и мод
-станут считать разные значения.
-"""
-import io
-import os
-import sys
+local function Run(label, block)
+    print(label)
+    local ok, res = pcall(block)
+    if not ok then
+        print('  [FAIL] проверка упала: ' .. tostring(res))
+        return 1
+    end
+    return res or 0
+end
 
-from lupa import luajit21 as lupa
+local MOD = '../ReclaimPause/modules/'
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-MOD = os.path.join(os.path.dirname(HERE), "ReclaimPause")
-
-
-def rd(p):
-    return io.open(p, encoding="utf-8").read()
-
-
-settings_src = rd(MOD + r"\modules\settings.lua")
-watch_src = rd(MOD + r"\modules\watch.lua")
-main_src = rd(MOD + r"\modules\main.lua")
-options_src = rd(MOD + r"\modules\options.lua")
-
-lua = lupa.LuaRuntime(unpack_returned_tuples=True)
-make_env = lua.eval("function() local t = {} setmetatable(t, {__index = _G}) return t end")
-loader = lua.eval("""function(src, env)
-  local f, err = loadstring(src)
-  if not f then error(err) end
-  setfenv(f, env)
-  return f()
-end""")
-
-# --------------------------------------------------------------- окружение
-STUBS = r'''
+do
 PROFILE = {}
 msgs = {}
 
-function LOG(m) msgs[#msgs + 1] = tostring(m) end
+function LOG(m) msgs[table.getn(msgs) + 1] = tostring(m) end
 
 -- Мод запускается через ForkThread. Здесь достаточно заглушки: цикл нам
 -- не нужен, нужен только факт, что мод считает себя запущенным.
@@ -186,46 +188,45 @@ function import(p)
   if p == '/lua/user/prefs.lua' then return Prefs end
   return {}
 end
-'''
+end
 
-lua.execute(STUBS)
-G = lua.globals()
-G['MODULES'] = lua.eval('{}')
+MODULES = {}
 
-env_s = make_env()
-loader(settings_src, env_s)
-G['MODULES']['settings'] = env_s
-env_w = make_env()
-loader(watch_src, env_w)
-G['MODULES']['watch'] = env_w
-G['WATCH'] = env_w
-G['SET'] = env_s
+local env_s = MakeEnv()
+LoadInto(MOD .. 'settings.lua', env_s)
+MODULES.settings = env_s
+local env_w = MakeEnv()
+LoadInto(MOD .. 'watch.lua', env_w)
+MODULES.watch = env_w
+WATCH = env_w
+SET = env_s
 
-# страница настроек грузится в собственное окружение, как это делает движок
-env_o = make_env()
-loader(options_src, env_o)
-G['OPTIONS_MAIN'] = env_o['Main']
+-- страница настроек грузится в собственное окружение, как это делает движок
+local env_o = MakeEnv()
+LoadInto(MOD .. 'options.lua', env_o)
+OPTIONS_MAIN = env_o.Main
 
-env_m = make_env()
-loader(main_src, env_m)
-G['SHIM'] = env_m['Main']
+local env_m = MakeEnv()
+LoadInto(MOD .. 'main.lua', env_m)
+SHIM = env_m.Main
 
-# Мод запущен. В игре к моменту загрузки страницы настроек CreateUI уже
-# отработал, поэтому Bind вызывает Refresh на живом моде - это и проверяем.
-G['WATCH']['ReclaimPauseStart']()
+-- Мод запущен. В игре к моменту загрузки страницы настроек CreateUI уже
+-- отработал, поэтому Bind вызывает Refresh на живом моде - это и проверяем.
+WATCH.ReclaimPauseStart()
 
-# Настоящий порядок в игре: сначала UMT зовёт Main каждого мода с флагом
-# __umt, потом строит интерфейс. Main шима ЧИТАЕТ наше поле - это и есть
-# причина, по которой options.lua вообще выполняется.
-print("=== 1: страница настроек UMT ===")
-try:
-    env_m['Main'](False)
-    print("  [OK  ] modules/main.lua отработал без исключения")
-except Exception as e:
-    print("  [FAIL] modules/main.lua упал: " + str(e))
-    sys.exit(1)
+-- Настоящий порядок в игре: сначала UMT зовёт Main каждого мода с флагом
+-- __umt, потом строит интерфейс. Main шима ЧИТАЕТ наше поле - это и есть
+-- причина, по которой options.lua вообще выполняется.
+print('=== 1: страница настроек UMT ===')
+local okMain, errMain = pcall(env_m.Main, false)
+if okMain then
+    print('  [OK  ] modules/main.lua отработал без исключения')
+else
+    print('  [FAIL] modules/main.lua упал: ' .. tostring(errMain))
+    os.exit(1)
+end
 
-CHECK = r'''
+local fails = Run("=== 2: поля и окно ===", function()
 local fails = 0
 local function check(cond, label)
   if cond then
@@ -248,7 +249,7 @@ local expected = {
   'abortMove', 'abortSec', 'skipSec', 'resetFlag',
 }
 local opts = UMT.Options.Mods['ReclaimPause']
-for i = 1, #expected do
+for i = 1, table.getn(expected) do
   local k = expected[i]
   local okv, v = pcall(function() return opts[k] end)
   check(okv and v ~= nil and type(v.Bind) == 'function',
@@ -266,7 +267,7 @@ if build == nil then
   return fails
 end
 local uses = 0
-for i = 1, #build do
+for i = 1, table.getn(build) do
   local r = build[i].optionVar
   if r ~= nil and type(r.Bind) == 'function' then uses = uses + 1 end
 end
@@ -281,7 +282,7 @@ local sane = {
   skipSec = { 0, 600 },
 }
 local badRange = ''
-for i = 1, #build do
+for i = 1, table.getn(build) do
   local line = build[i]
   if line.type == 'slider' and line.optionVar ~= nil then
     local nm = line.optionVar:Option()
@@ -300,7 +301,7 @@ check(badRange == '', 'диапазоны ползунков в пределах
 -- would be displayed as another number.
 local defaults = SET.ReclaimPauseDefaults()
 local offStep = ''
-for i = 1, #build do
+for i = 1, table.getn(build) do
   local line = build[i]
   if line.type == 'slider' and line.optionVar ~= nil then
     local nm = line.optionVar:Option()
@@ -433,7 +434,7 @@ print('')
 print('=== CANCEL В ОКНЕ НЕ ОТМЕНЯЕТ ГОРЯЧИЕ КЛАВИШИ ===')
 -- OK in the UMT window calls Save on every OptionVar, Cancel calls Reset.
 local function Window(method)
-  for i = 1, #expected do
+  for i = 1, table.getn(expected) do
     local var = opts[expected[i]]
     var[method](var)
   end
@@ -453,17 +454,13 @@ check(SET.ReclaimPauseCfg.enabled == false,
 WATCH.ReclaimPauseToggle()
 
 return fails
-'''
+end)
 
-try:
-    fails = lua.execute(CHECK) or 0
-except Exception as e:
-    print("  [FAIL] проверка упала: " + str(e))
-    fails = 1
-
-print("")
-print("=== ИТОГ ===")
-if fails:
-    print("провалено проверок: %d" % fails)
-    sys.exit(1)
-print("все проверки пройдены")
+print('')
+print('=== ИТОГ ===')
+local total = fails
+if total > 0 then
+    print('провалено проверок: ' .. tostring(total))
+    os.exit(1)
+end
+print('все проверки пройдены')

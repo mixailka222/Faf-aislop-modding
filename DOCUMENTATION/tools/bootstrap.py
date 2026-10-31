@@ -1,4 +1,4 @@
-"""Prepare everything the mod checks need: sources, LuaLS, FAF Lua, Python packages.
+"""Prepare everything the mod checks need: sources, LuaLS, FAF Lua.
 
 Pinned versions live in tool_versions.json. Run again after they change: only
 what differs is updated.
@@ -56,11 +56,6 @@ def tools_dir() -> Path:
 
 def installed_file() -> Path:
     return tools_dir() / "installed.json"
-
-
-def venv_python() -> Path:
-    folder = "Scripts" if os.name == "nt" else "bin"
-    return tools_dir() / "venv" / folder / f"python{EXE}"
 
 
 def luac_path() -> Path:
@@ -232,13 +227,6 @@ def install_luals(version: str) -> None:
     partial.rename(target)
 
 
-def install_venv(lupa_version: str) -> None:
-    remove_tree(tools_dir() / "venv")
-    run([sys.executable, "-m", "venv", str(tools_dir() / "venv")])
-    run([str(venv_python()), "-m", "pip", "install", "-q", "--disable-pip-version-check",
-         f"lupa=={lupa_version}"])
-
-
 def build_faf_lua(zig_version: str) -> None:
     source = ROOT / "references" / "lua-lang"
     output = lua_path().parent
@@ -254,17 +242,19 @@ def build_faf_lua(zig_version: str) -> None:
     }
     includes = [f"-I{source / 'include'}", f"-I{source / 'src'}"]
     libraries = [] if os.name == "nt" else ["-lm"]
-    python = str(venv_python())
-
     # The compiler takes 381 MB unpacked and is only needed for this build.
-    run([python, "-m", "pip", "install", "-q", "--disable-pip-version-check",
-         f"ziglang=={zig_version}"])
+    venv = tools_dir() / "zig-venv"
+    remove_tree(venv)
+    run([sys.executable, "-m", "venv", str(venv)])
+    python = str(venv / ("Scripts" if os.name == "nt" else "bin") / f"python{EXE}")
     try:
+        run([python, "-m", "pip", "install", "-q", "--disable-pip-version-check",
+             f"ziglang=={zig_version}"])
         for program, sources in programs.items():
             run([python, "-m", "ziglang", "cc", *CC_FLAGS, *includes, *map(str, common),
                  *map(str, sources), *libraries, "-o", str(program)], env=env)
     finally:
-        run([python, "-m", "pip", "uninstall", "-q", "-y", "ziglang"])
+        remove_tree(venv)
         remove_tree(cache)
         for leftover in output.glob("*.pdb"):
             leftover.unlink()
@@ -278,7 +268,6 @@ def install(versions: dict, build_luac: bool) -> None:
                      ROOT / "references" / name)
     install_step("lua-language-server", expected["lua-language-server"],
                  lambda: install_luals(expected["lua-language-server"]), luals_path())
-    install_step("lupa", expected["lupa"], lambda: install_venv(expected["lupa"]), venv_python())
     if build_luac:
         install_step("faf-lua", expected["faf-lua"], lambda: build_faf_lua(versions["ziglang"]),
                      luac_path(), lua_path())
@@ -300,8 +289,8 @@ def fetch_json(url: str) -> dict | list:
 def latest_versions(versions: dict) -> dict:
     """Returns name -> newer value for tracked components that changed upstream.
 
-    A repository counts as changed only in its downloaded folders. ziglang and lupa
-    are skipped: a newer build tool does not change what the checks see.
+    A repository counts as changed only in its downloaded folders. ziglang is
+    skipped: a newer build tool does not change what the checks see.
     """
     updates = {}
     for name, spec in versions.items():

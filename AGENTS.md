@@ -14,7 +14,7 @@
 AGENTS.md                     правила
 My_mods/<проект>/             проект мода
     <Мод>/                    папка мода, в ней mod_info.lua
-    tests/                    тесты, файлы test_*.py
+    tests/                    тесты, файлы test_*.lua
     README.md                 описание мода
 DOCUMENTATION/
     code_style.md             стиль кода
@@ -23,7 +23,7 @@ DOCUMENTATION/
     tests/                    тесты инструментов
 .claude/skills/               процедуры для агентов
 references/                   исходники FAF и библиотек, только для чтения, в git нет
-.tools/                       LuaLS и компилятор, в git нет
+.tools/                       LuaLS, компилятор и Lua игры, в git нет
 research/                     черновики, в git нет, источником правды не считаются
 ```
 

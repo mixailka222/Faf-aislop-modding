@@ -1,84 +1,73 @@
-# -*- coding: utf-8 -*-
-"""Тесты Overflow: выбор строк, страница UMT и раскладка панели.
+-- Тесты Overflow: выбор строк, страница UMT и раскладка панели.
+--
+-- МОД: My_mods\overflow\Overflow.
+-- Лежит рядом: папка tests\ в одной директории с папкой Overflow\.
+--
+-- ЧТО ПРОВЕРЯЕМ
+--
+-- 1) rows.lua - какие строки показывать, что куда записывать, как готовые
+--    наборы разворачиваются и сворачиваются.
+--
+-- 2) Options.lua - страница UMT. Главная проверка такая же, как была в
+--    ReclaimPause: OptionVar:Set держит значение В ПАМЯТИ и в профиль не пишет
+--    (mods/umt/modules/OptionVar.lua:24-30), а пишет только Save() при закрытии
+--    окна. Если страница читает профиль, игрок снимет галочку - мод её не
+--    увидит, - и страница доложит об успехе. На игре 2026-10-04 это стоило целого
+--    матча мод ReclaimPause. Проверка идёт через Set.
+--
+-- 3) ui.lua - раскладка. Здесь она впервые СЧИТАЕТСЯ вместо того, чтобы
+--    браться из девяти констант, и ошибка выглядит как «панель с одной строкой
+--    наезжает сама на себя». Проверяем высоту панели и положение строк.
+--
+-- 4) Отдельно - старый баг: список BODY_KEYS не
+--    содержал eGo и mGo, поэтому строки "to allies" не прятались при
+--    сворачивании. Регрессия проверяется явно.
+--
+-- ГЛАВНОЕ ПРАВИЛО ЗАГЛУШЕК. Они гоняются по исходникам, а не по памяти, и
+-- ошибки в них стоили отдельного цикла проверки. В частности:
+-- Left - объект значения, его И вызывают, И ставят через :Set; PostDragger -
+-- игровая глобальная функция; заглушка gamemain объявляется ДО загрузки ui.lua,
+-- потому что import выполняется в момент загрузки модуля.
+--
+-- Запуск из папки tests:  lua test_overflow_rows.lua
 
-МОД: My_mods\overflow\Overflow.
-Лежит рядом: папка tests\ в одной директории с папкой Overflow\.
+-- Run from the tests folder: the paths below are relative to it. check.py does
+-- that with the Lua of the game, so this code follows its dialect.
+local function ReadFile(path)
+    local file = assert(io.open(path, 'rb'))
+    local text = file:read('*a')
+    file:close()
+    return text
+end
 
-ЧТО ПРОВЕРЯЕМ
+-- Every file of a mod runs in its own environment, as in the game.
+local function MakeEnv()
+    return setmetatable({}, { __index = _G })
+end
 
-1) rows.lua - какие строки показывать, что куда записывать, как готовые
-   наборы разворачиваются и сворачиваются.
+local function LoadInto(path, env)
+    local chunk = assert(loadstring(ReadFile(path), path))
+    setfenv(chunk, env)
+    return chunk()
+end
 
-2) Options.lua - страница UMT. Главная проверка такая же, как была в
-   ReclaimPause: OptionVar:Set держит значение В ПАМЯТИ и в профиль не пишет
-   (mods/umt/modules/OptionVar.lua:24-30), а пишет только Save() при закрытии
-   окна. Если страница читает профиль, игрок снимет галочку - мод её не
-   увидит, - и страница доложит об успехе. На игре 2026-10-04 это стоило целого
-   матча мод ReclaimPause. Проверка идёт через Set.
+local function Run(label, block)
+    print(label)
+    local ok, res = pcall(block)
+    if not ok then
+        print('  [FAIL] проверка упала: ' .. tostring(res))
+        return 1
+    end
+    return res or 0
+end
 
-3) ui.lua - раскладка. Здесь она впервые СЧИТАЕТСЯ вместо того, чтобы
-   браться из девяти констант, и ошибка выглядит как «панель с одной строкой
-   наезжает сама на себя». Проверяем высоту панели и положение строк.
+local MOD = '../Overflow/modules/'
 
-4) Отдельно - старый баг: список BODY_KEYS не
-   содержал eGo и mGo, поэтому строки "to allies" не прятались при
-   сворачивании. Регрессия проверяется явно.
-
-ГЛАВНОЕ ПРАВИЛО ЗАГЛУШЕК. Они гоняются по исходникам, а не по памяти, и
-ошибки в них стоили отдельного цикла проверки. В частности:
-Left - объект значения, его И вызывают, И ставят через :Set; PostDragger -
-игровая глобальная функция; заглушка gamemain объявляется ДО загрузки ui.lua,
-потому что import выполняется в момент загрузки модуля.
-
-Запуск:  python test_overflow_rows.py
-"""
-import io
-import os
-import sys
-
-from lupa import luajit21 as lupa
-
-HERE = os.path.dirname(os.path.abspath(__file__))
-MOD = os.path.join(os.path.dirname(HERE), "Overflow")
-MOD = os.path.abspath(MOD)
-
-# Проверяем, что читаем ИМЕННО тот мод. Один раз путь потерял уровень, тест
-# продолжал работать и выглядел исправным - показывать путь дешевле, чем
-# потом гадать, откуда взялись чужие числа.
-if not os.path.exists(os.path.join(MOD, "modules", "ui.lua")):
-    print("FAIL: mod ne nayden po puti: " + MOD)
-    sys.exit(1)
-print("Mod: " + MOD)
-
-
-def rd(p):
-    return io.open(p, encoding="utf-8").read()
-
-
-rows_src = rd(os.path.join(MOD, "modules", "rows.lua"))
-options_src = rd(os.path.join(MOD, "modules", "Options.lua"))
-ui_src = rd(os.path.join(MOD, "modules", "ui.lua"))
-# themes.lua нужен странице настроек: она читает из него названия тем. Без
-# модуля Options.lua выходит из Main() досрочно (та же логика, что и для
-# rows.lua), и страница не регистрируется вовсе.
-themes_src = rd(os.path.join(MOD, "modules", "themes.lua"))
-
-lua = lupa.LuaRuntime(unpack_returned_tuples=True)
-make_env = lua.eval(
-    "function() local t = {} setmetatable(t, {__index = _G}) return t end")
-loader = lua.eval("""function(src, env)
-  local f, err = loadstring(src)
-  if not f then error(err) end
-  setfenv(f, env)
-  return f()
-end""")
-
-# ================================================================ окружение
-STUBS = r'''
+do
 PROFILE = {}
 msgs = {}
 
-function LOG(m) msgs[#msgs + 1] = tostring(m) end
+function LOG(m) msgs[table.getn(msgs) + 1] = tostring(m) end
 
 Prefs = {}
 function Prefs.GetFromCurrentProfile(k) return PROFILE[k] end
@@ -181,7 +170,7 @@ local function NewCtrl(kind, parent)
     -- настоящая, поэтому подмена короткой подписи на длинную видна.
     function c:GetStringAdvance(s)
         s = s or ''
-        return #s * 6
+        return string.len(s) * 6
     end
     function c:Left() return self._x end
     function c:Top() return self._y end
@@ -201,7 +190,7 @@ local function NewCtrl(kind, parent)
                        function(v) c._x = v end)
     c.Top = valueProp(function() return c._y end,
                       function(v) c._y = v end)
-    MADE[#MADE + 1] = c
+    MADE[table.getn(MADE) + 1] = c
     return c
 end
 
@@ -558,7 +547,7 @@ SYNCSTUB = {
 }
 
 function import(p)
-    IMPORTED[#IMPORTED + 1] = p
+    IMPORTED[table.getn(IMPORTED) + 1] = p
     if p == '/lua/user/prefs.lua' then return Prefs end
     if p == '/lua/ui/uiutil.lua' then return UIUtil end
     if p == '/lua/maui/bitmap.lua' then return { Bitmap = Bitmap } end
@@ -580,17 +569,14 @@ end
 
 -- Факт сбора результата после последнего изменения набора строк.
 ROWS_APPLIED = 0
-'''
+end
 
-lua.execute(STUBS)
-G = lua.globals()
-G['MODULES'] = lua.eval('{}')
+MODULES = {}
 
-# ВАЖНО: заглушка gamemain обязана существовать ДО загрузки ui.lua.
-# ui.lua делает `local GameMain = import('/lua/ui/game/gamemain.lua')` при
-# загрузке. Объявленная позже, она дала бы nil, и OnCreateUI упал бы в pcall:
-# панель создалась бы, но бит игры не подписался бы.
-lua.execute(r"""
+-- ВАЖНО: заглушка gamemain обязана существовать ДО загрузки ui.lua.
+-- ui.lua делает `local GameMain = import('/lua/ui/game/gamemain.lua')` при
+-- загрузке. Объявленная позже, она дала бы nil, и OnCreateUI упал бы в pcall:
+-- панель создалась бы, но бит игры не подписался бы.
 GameMainStub = {
     AddBeatFunction = function(f, throttle, id) BEAT = f end,
     RemoveBeatFunction = function(f, id)
@@ -600,65 +586,46 @@ GameMainStub = {
 }
 BEAT = nil
 BEAT_REMOVED = false
-""")
 
-# ------------------------------------------------------------------ rows.lua
-env_rows = make_env()
-loader(rows_src, env_rows)
-G['MODULES']['rows'] = env_rows
-G['ROWS'] = env_rows
+local env_rows = MakeEnv()
+LoadInto(MOD .. 'rows.lua', env_rows)
+MODULES.rows = env_rows
+ROWS = env_rows
 
-# --------------------------------------------------------------- themes.lua
-# Загружаем ДО ui.lua и Options.lua: оба импортируют themes.lua, а при
-# загрузке модуля import выполняется сразу. Если темы не loaded, ui.lua
-# останется со встроенными цветами, а Options.lua выйдет из Main() досрочно.
-env_themes = make_env()
-loader(themes_src, env_themes)
-G['MODULES']['themes'] = env_themes
-G['THEMES'] = env_themes
+-- Загружаем ДО ui.lua и Options.lua: оба импортируют themes.lua, а при
+-- загрузке модуля import выполняется сразу. Если темы не загружены, ui.lua
+-- останется со встроенными цветами, а Options.lua выйдет из Main() досрочно.
+local env_themes = MakeEnv()
+LoadInto(MOD .. 'themes.lua', env_themes)
+MODULES.themes = env_themes
+THEMES = env_themes
 
-# ------------------------------------------------------------------- ui.lua
-env_ui = make_env()
-loader(ui_src, env_ui)
-G['MODULES']['ui'] = env_ui
-G['U'] = env_ui
+local env_ui = MakeEnv()
+LoadInto(MOD .. 'ui.lua', env_ui)
+MODULES.ui = env_ui
+U = env_ui
 
-# --------------------------------------------------------------- Options.lua
-env_opt = make_env()
-loader(options_src, env_opt)
-G['MODULES']['options'] = env_opt
-G['OPTIONS_MAIN'] = env_opt['Main']
+local env_opt = MakeEnv()
+LoadInto(MOD .. 'Options.lua', env_opt)
+MODULES.options = env_opt
+OPTIONS_MAIN = env_opt.Main
 
-# ------------------------------------------- настоящий sync.lua (для теста)
-sync_src = rd(os.path.join(MOD, "modules", "sync.lua"))
-env_sync_real = make_env()
-loader(sync_src, env_sync_real)
-G['SYNC'] = env_sync_real
+-- настоящий sync.lua для теста
+local env_sync_real = MakeEnv()
+LoadInto(MOD .. 'sync.lua', env_sync_real)
+SYNC = env_sync_real
 
-# ------------------------------------------------------- modules/main.lua (шим)
-#
-# Файл может отсутствовать - тогда это и есть провал, и тест обязан
-# покраснеть с внятным текстом, а не упасть с FileNotFoundError.
-shim_path = os.path.join(MOD, "modules", "main.lua")
-shim_src = rd(shim_path) if os.path.exists(shim_path) else None
+-- Шим может отсутствовать - тогда это и есть провал, и тест обязан покраснеть
+-- с внятным текстом, а не упасть на открытии файла.
+local env_main = MakeEnv()
+local shim = io.open(MOD .. 'main.lua', 'rb')
+if shim then
+    shim:close()
+    LoadInto(MOD .. 'main.lua', env_main)
+end
+MODULES.main = env_main
 
-env_main = make_env()
-if shim_src is not None:
-    loader(shim_src, env_main)
-G['MODULES']['main'] = env_main
-
-
-def run(label, code):
-    print(label)
-    try:
-        return lua.execute(code) or 0
-    except Exception as e:
-        print("  [FAIL] проверка упала: " + str(e))
-        return 1
-
-
-# ==================================================== 1. логика строк (rows.lua)
-f1 = run("=== 1: rows.lua, выбор строк ===", r'''
+local f1 = Run("=== 1: rows.lua, выбор строк ===", function()
 local fails = 0
 local function check(cond, label)
     if cond then
@@ -676,7 +643,7 @@ check(ROWS.HowManyRows() == 7, 'строк ровно семь (получено
       tostring(ROWS.HowManyRows()) .. ')')
 
 local orderOk = true
-for i = 1, #BOXES do
+for i = 1, table.getn(BOXES) do
     if ROWS.RowKeyAt(i) ~= BOXES[i] then orderOk = false end
 end
 check(orderOk, 'порядок строк совпадает с порядком на панели')
@@ -689,7 +656,7 @@ local def = ROWS.RowDefaults()
 local vis = ROWS.VisibleRows()
 local asDefault = true
 local anyOn = false
-for i = 1, #BOXES do
+for i = 1, table.getn(BOXES) do
     if vis[BOXES[i]] ~= def[BOXES[i]] then asDefault = false end
     if def[BOXES[i]] then anyOn = true end
 end
@@ -706,7 +673,7 @@ check(vis.eGo == def.eGo and vis.mGo == def.mGo and vis.total == def.total,
 -- Запись не должна затирать чужие поля того же профиля: им пользуется UMT.
 PROFILE['Overflow'] = { preset = 'Все строки', eOverflow = true }
 vis = {}
-for i = 1, #BOXES do vis[BOXES[i]] = (BOXES[i] == 'eGo') end
+for i = 1, table.getn(BOXES) do vis[BOXES[i]] = (BOXES[i] == 'eGo') end
 check(ROWS.SaveRows(vis) == true, 'SaveRows сообщил об успехе')
 check(PROFILE['Overflow'].preset == 'Все строки',
       'SaveRows не затёр поле preset, принадлежащее UMT')
@@ -727,12 +694,12 @@ check(ROWS.RowsSignature({ eOverflow = true, eGo = true, eOwn = true,
 -- Все готовые наборы обязаны разворачиваться и сворачиваться без потерь.
 local names = ROWS.PresetNames()
 local hasAllRows = false
-for i = 1, #names do
+for i = 1, table.getn(names) do
     if names[i] == 'Все строки' then hasAllRows = true end
 end
 check(hasAllRows, 'в списке есть набор «Все строки»')
 local bad = ''
-for i = 1, #names do
+for i = 1, table.getn(names) do
     local label = names[i]
     if label ~= ROWS.PresetOther() then
         local flags = ROWS.PresetByName(label)
@@ -753,7 +720,7 @@ check(ROWS.PresetByName(ROWS.PresetOther()) == nil,
 
 -- Пустой набор обязан совпасть с «Ничего не показывать», а не со служебным.
 local empty = {}
-for i = 1, #BOXES do empty[BOXES[i]] = false end
+for i = 1, table.getn(BOXES) do empty[BOXES[i]] = false end
 check(ROWS.PresetFor(empty) == 'Ничего не показывать',
       'пустой набор опознан как «Ничего не показывать», а не как служебный')
 
@@ -768,7 +735,7 @@ check(ROWS.PresetFor(odd) == nil,
 local first = ROWS.PresetNames()[1]
 local firstFlags = ROWS.PresetByName(first)
 local defMatch = true
-for i = 1, #BOXES do
+for i = 1, table.getn(BOXES) do
     if (def[BOXES[i]] and true or false) ~= (firstFlags[BOXES[i]] and true or false) then
         defMatch = false
     end
@@ -778,7 +745,7 @@ check(defMatch, 'первый набор списка совпадает со з
 -- Названия строк для окна настроек: у каждой строки должно быть своё,
 -- иначе галочки окажутся безымянными или с чужой подписью.
 local noTitle = ''
-for i = 1, #BOXES do
+for i = 1, table.getn(BOXES) do
     local t = ROWS.RowTitleOf(BOXES[i])
     if type(t) ~= 'string' or t == '' then noTitle = noTitle .. BOXES[i] .. ' ' end
 end
@@ -786,11 +753,10 @@ check(noTitle == '', 'у каждой строки есть название д�
       (noTitle == '' and '' or (' НЕТ: ' .. noTitle)))
 
 return fails
-''')
+end)
 
-# ================================================== 2. страница настроек UMT
-print("")
-f2 = run("=== 2: Options.lua, страница настроек ===", r'''
+print('')
+local f2 = Run("=== 2: Options.lua, страница настроек ===", function()
 local fails = 0
 local function check(cond, label)
     if cond then
@@ -819,7 +785,7 @@ if not okPage then return fails end
 -- UMT ли загрузится раньше интерфейса игры или позже, и импорт поймал бы
 -- ещё не до конца выполненный модуль.
 local touchedUi = false
-for i = 1, #IMPORTED do
+for i = 1, table.getn(IMPORTED) do
     if IMPORTED[i] == '/mods/Overflow/modules/ui.lua' then touchedUi = true end
 end
 check(not touchedUi, 'страница НЕ импортирует ui.lua (порядок загрузки)')
@@ -832,7 +798,7 @@ local build = BUILDS['Overflow']
 if build == nil then return fails + 1 end
 
 local boxesOk = true
-for i = 1, #BOXES do
+for i = 1, table.getn(BOXES) do
     local v = opts[BOXES[i]]
     if v == nil or type(v.Bind) ~= 'function' then boxesOk = false end
 end
@@ -846,7 +812,7 @@ local mismatched = ''
 local filters = 0
 local stringsLine = nil
 local themeLine = nil
-for i = 1, #build do
+for i = 1, table.getn(build) do
     local line = build[i]
     if line.type == 'filter' then
         filters = filters + 1
@@ -901,7 +867,7 @@ check(prof.eGo == false and prof.eOwn == false and prof.mOverflow == false
 -- Мод читает профиль, а страница обязана записать туда же, что показала
 -- галочкам. Любое расхождение значит, что мод видит не то, что игрок.
 local liveMismatch = ''
-for i = 1, #BOXES do
+for i = 1, table.getn(BOXES) do
     if (opts[BOXES[i]]() and true or false) ~= (prof[BOXES[i]] and true or false) then
         liveMismatch = liveMismatch .. BOXES[i] .. ' '
     end
@@ -919,7 +885,7 @@ check(PROFILE['Overflow'].mGo == true, 'ручная галочка дошла �
 -- Возврат к готовому набору.
 opts.preset:Set('Все строки')
 local raised = true
-for i = 1, #BOXES do
+for i = 1, table.getn(BOXES) do
     if opts[BOXES[i]]() ~= true then raised = false end
 end
 check(raised, 'набор «Все строки» поднял обратно все семь галочек')
@@ -931,11 +897,10 @@ check(string.find(joined, 'UMT options page registered') ~= nil,
 check(string.find(joined, 'FAILED') == nil, 'в логе нет ни одной строки FAILED')
 
 return fails
-''')
+end)
 
-# ============================================ 3. раскладка панели (ui.lua)
-print("")
-f3 = run("=== 3: ui.lua, раскладка под выбранные строки ===", r'''
+print('')
+local f3 = Run("=== 3: ui.lua, раскладка под выбранные строки ===", function()
 local fails = 0
 local function check(cond, label)
     if cond then
@@ -962,7 +927,7 @@ local CHROME = { ['Overflow'] = 1, ['x'] = 1, ['-'] = 1, ['+'] = 1,
 
 local function shownCaptions()
     local out = {}
-    for i = 1, #MADE do
+    for i = 1, table.getn(MADE) do
         local c = MADE[i]
         if c._kind == 'Text' and not c._hidden and c._text ~= '' then
             out[c._text] = c
@@ -982,7 +947,7 @@ end
 
 local function shownDividers()
     local n = 0
-    for i = 1, #MADE do
+    for i = 1, table.getn(MADE) do
         local c = MADE[i]
         if c._kind == 'Bitmap' and not c._hidden and c._h == 1 then
             n = n + 1
@@ -1013,7 +978,7 @@ check(SYNCSTUB.started, 'sync.lua получил команду Start')
 -- Ищем ОКНО, а не группу: после перехода на класс Window панель строится
 -- контейнером 'Window', а обычных групп в modе больше нет.
 local panel = nil
-for i = 1, #MADE do
+for i = 1, table.getn(MADE) do
     if MADE[i]._kind == 'Window' then panel = MADE[i] end
 end
 check(panel ~= nil, 'окно создано')
@@ -1176,7 +1141,7 @@ check(panel.TitleGroup ~= nil
 -- ВЕРХНИЕ строки: пустой полосы, которая раньше их разводила, больше нет.
 -- Поэтому строка под ним отступает вправо сильнее, чем нижние.
 local function ctrlFor(text)
-    for i = 1, #MADE do
+    for i = 1, table.getn(MADE) do
         local c = MADE[i]
         if c._kind == 'Text' and c._text == text then return c end
     end
@@ -1251,7 +1216,7 @@ local rowN = ctrlFor(CAPTIONS.total)
 -- Разделитель ищем по РОДИТЕЛЮ, а не по высоте: куски рамки окна - тоже
 -- Bitmap, и по одному лишь Height их от разделителя не отличить.
 local div1 = nil
-for i = 1, #MADE do
+for i = 1, table.getn(MADE) do
     local c = MADE[i]
     if c._kind == 'Bitmap' and c._parent == panel.ClientGroup then
         if div1 == nil or c.Top() < div1.Top() then div1 = c end
@@ -1355,7 +1320,7 @@ if panel ~= nil and panel.OnClose then
 
     -- Возврат: как у миникарты, панель открывает кнопка «Overflow».
     local reopen = nil
-    for i = 1, #MADE do
+    for i = 1, table.getn(MADE) do
         if MADE[i]._kind == 'Bitmap' and MADE[i]._parent ~= panel
             and MADE[i]._parent ~= panel.ClientGroup then
             reopen = MADE[i]
@@ -1377,11 +1342,10 @@ local joined = table.concat(msgs, ' | ')
 check(string.find(joined, 'FAILED') == nil, 'в логе нет ни одной строки FAILED')
 
 return fails
-''')
+end)
 
-# ============================================ 4. рассогласование имён модулей
-print("")
-f4 = run("=== 4: модули отдают всё, что мод вызывает ===", r'''
+print('')
+local f4 = Run("=== 4: модули отдают всё, что мод вызывает ===", function()
 local fails = 0
 local function check(cond, label)
     if cond then
@@ -1405,7 +1369,7 @@ local NEEDS = {
 local absent = ''
 for modName, fns in pairs(NEEDS) do
     local mod = modName == 'ROWS' and ROWS or SYNCSTUB
-    for i = 1, #fns do
+    for i = 1, table.getn(fns) do
         if type(mod[fns[i]]) ~= 'function' then
             absent = absent .. modName .. '.' .. fns[i] .. ' '
         end
@@ -1420,11 +1384,10 @@ check(U.ReapplyRows == nil,
       'ui.lua никуда не экспортирует ReapplyRows: применение делает сам Update')
 
 return fails
-''')
+end)
 
-# ================================== 5. полная цепочка UMT: Add -> Main -> страница
-print("")
-f5 = run("=== 5: цепочка UMT, от Add до появления страницы ===", r'''
+print('')
+local f5 = Run("=== 5: цепочка UMT, от Add до появления страницы ===", function()
 local fails = 0
 local function check(cond, label)
     if cond then
@@ -1440,10 +1403,10 @@ end
 -- шаге всё и падало: без Main.lua до наших опций очередь не доходила.
 UMT.Add('overflow')
 
-local nBefore = #msgs
+local nBefore = table.getn(msgs)
 UMT.Load(nil)
 local loaded = table.concat(msgs, ' | ')
-local nAfter = #msgs
+local nAfter = table.getn(msgs)
 
 check(string.find(loaded, 'UMT: Loading file /mods/overflow/modules/main.lua') ~= nil,
       'UMT нашёл наш Main.lua в папке мода')
@@ -1493,11 +1456,10 @@ check(string.find(loaded, 'FAILED') == nil,
       'в логе загрузки цепочки нет ни одной строки FAILED')
 
 return fails
-''')
+end)
 
-# ==================== 6. физический запрет: полное хранилище => входящий = 0
-print("")
-f6 = run("=== 6: запрет на входящий при полном хранилище ===", r'''
+print('')
+local f6 = Run("=== 6: запрет на входящий при полном хранилище ===", function()
 local fails = 0
 local function check(cond, label)
     if cond then
@@ -1543,7 +1505,7 @@ IMPORTED = {}
 SYNC.Start()
 check(SCORE_CB ~= nil, 'Start() зарегистрировал колбэк Sync.Score')
 local reimported = false
-for i = 1, #IMPORTED do
+for i = 1, table.getn(IMPORTED) do
     if IMPORTED[i] == '/lua/UserSync.lua' then reimported = true end
 end
 check(not reimported, 'UserSync.lua не выполняется второй раз')
@@ -1677,11 +1639,10 @@ check(string.find(table.concat(msgs, ' | '), 'ERROR') == nil,
       'sync.lua не сыпал ошибок ни в одном сценарии')
 
 return fails
-''')
+end)
 
-# =========================== 7. ошибка в функции бита не уходит в цикл игры
-print("")
-f7 = run("=== 7: ошибка в Update не уходит в цикл игры ===", r'''
+print('')
+local f7 = Run("=== 7: ошибка в Update не уходит в цикл игры ===", function()
 local fails = 0
 local function check(cond, label)
     if cond then
@@ -1705,23 +1666,21 @@ for _ = 1, 10 do pcall(BEAT) end
 SYNC_BROKEN = false
 
 local told = 0
-for _ in string.gmatch(table.concat(msgs, ' | '), 'Update FAILED') do
+for _ in string.gfind(table.concat(msgs, ' | '), 'Update FAILED') do
     told = told + 1
 end
 check(told == 4, 'в лог попали только ошибки до предела (' .. tostring(told) .. ')')
 check(BEAT_REMOVED, 'после трёх ошибок подряд функция бита снята')
 return fails
-''')
+end)
 
-# ========================================= 8. масштаб интерфейса ui_scale
-#
-# A fresh ui.lua: the first one remembers the height the checks above set by hand.
-env_ui_scaled = make_env()
-loader(ui_src, env_ui_scaled)
-G['U_SCALED'] = env_ui_scaled
+-- A fresh ui.lua: the first one remembers the height the checks above set by hand.
+local env_ui_scaled = MakeEnv()
+LoadInto(MOD .. 'ui.lua', env_ui_scaled)
+U_SCALED = env_ui_scaled
 
-print("")
-f8 = run("=== 8: масштаб интерфейса ===", r'''
+print('')
+local f8 = Run("=== 8: масштаб интерфейса ===", function()
 local fails = 0
 local function check(cond, label)
     if cond then
@@ -1740,16 +1699,16 @@ local function Build(scale)
     local allRows = {}
     for i = 1, ROWS.HowManyRows() do allRows[ROWS.RowKeyAt(i)] = true end
     ROWS.SaveRows(allRows)
-    mark = #MADE
+    mark = table.getn(MADE)
     U_SCALED.OnCreateUI()
     BEAT()
-    for i = mark + 1, #MADE do
+    for i = mark + 1, table.getn(MADE) do
         if MADE[i]._kind == 'Window' then return MADE[i] end
     end
 end
 
 local function Row(text)
-    for i = mark + 1, #MADE do
+    for i = mark + 1, table.getn(MADE) do
         if MADE[i]._kind == 'Text' and MADE[i]._text == text then return MADE[i] end
     end
 end
@@ -1791,7 +1750,7 @@ check(third ~= nil and third.Right() == right - 40,
 
 win.OnClose(win)
 local reopen = nil
-for i = mark + 1, #MADE do
+for i = mark + 1, table.getn(MADE) do
     if MADE[i].HandleEvent ~= nil then reopen = MADE[i] end
 end
 check(reopen ~= nil and math.abs(reopen.Left() - win.Left()) <= 1
@@ -1803,7 +1762,7 @@ check(reopen ~= nil and math.abs(reopen.Left() - win.Left()) <= 1
 -- The smallest scale of the game: one pixel scaled by 0.8 floors to zero.
 local small = Build(0.8)
 local thinnest = nil
-for i = mark + 1, #MADE do
+for i = mark + 1, table.getn(MADE) do
     local c = MADE[i]
     if c._kind == 'Bitmap' and c._parent == small.ClientGroup then
         if thinnest == nil or c.Height() < thinnest then thinnest = c.Height() end
@@ -1814,12 +1773,15 @@ check(thinnest ~= nil and thinnest >= 1,
 
 pixelScaleFactor = 1.0
 return fails
-''')
+end)
 
-print("")
-print("=== ИТОГ ===")
-fails = f1 + f2 + f3 + f4 + f5 + f6 + f7 + f8
-if fails:
-    print("провалено проверок: %d" % fails)
-    sys.exit(1)
-print("все проверки пройдены")
+print('')
+
+print('')
+print('=== ИТОГ ===')
+local total = f1 + f2 + f3 + f4 + f5 + f6 + f7 + f8
+if total > 0 then
+    print('провалено проверок: ' .. tostring(total))
+    os.exit(1)
+end
+print('все проверки пройдены')

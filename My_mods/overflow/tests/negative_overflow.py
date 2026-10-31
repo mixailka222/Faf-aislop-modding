@@ -7,7 +7,7 @@
 Мод и тесты копируются во временную папку, все поломки делаются только в копии.
 Настоящие исходники скрипт не меняет, поэтому прерывание ничего не портит.
 
-Запуск через Python из .tools/venv: тестам нужен lupa.
+Тесты выполняет Lua игры из .tools/faf-lua, его собирает bootstrap.py.
 
 1) rows.lua: отсутствующее поле читается как «скрыть» вместо значения по
    умолчанию. Должен упасть тест совместимости - тот случай, когда после
@@ -47,10 +47,13 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SOURCE_MOD = os.path.abspath(os.path.join(os.path.dirname(HERE), "Overflow"))
+sys.path.insert(0, os.path.join(HERE, "..", "..", "..", "DOCUMENTATION", "tools"))
+sys.dont_write_bytecode = True
+import bootstrap
 # Гоняются ОБА теста: часть поломок видна только одному из них. Например,
 # тема не приехала в панель - rows-тест этого не замечает, а тест тем
 # замечает сразу.
-TESTS = ["test_overflow_rows.py", "test_overflow_theme.py"]
+TESTS = ["test_overflow_rows.lua", "test_overflow_theme.lua"]
 
 FILES = ["rows.lua", "ui.lua", "Options.lua", "sync.lua", "themes.lua"]
 
@@ -68,7 +71,7 @@ ORIGINAL = {}
 for f in FILES:
     ORIGINAL[f] = open(os.path.join(MOD, "modules", f), "rb").read()
 
-ENV = dict(os.environ, PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1")
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 
 def rd(p):
@@ -83,9 +86,8 @@ def run_test():
     worst = 0
     chunks = []
     for t in TESTS:
-        r = subprocess.run([sys.executable, os.path.join(TESTS_DIR, t)],
-                           cwd=TESTS_DIR, env=ENV, capture_output=True,
-                           encoding="utf-8", errors="replace")
+        r = subprocess.run([str(bootstrap.lua_path()), t], cwd=TESTS_DIR,
+                           capture_output=True, encoding="utf-8", errors="replace")
         if r.returncode != 0:
             worst = r.returncode
         chunks.append((r.stdout or "") + (r.stderr or ""))
@@ -233,7 +235,7 @@ CASES = [
      "themes.lua",
      "local MathFloor    = math.floor",
      "local MathFloor    = MathFloor",
-     "attempt to call upvalue 'MathFloor'"),
+     "attempt to call a nil value"),
 
     # Подложка рамки Minimal взята не с той текстуры. Сломается ровно так же,
     # как в игре: панель останется рабочей, но рамка будет чужой - от панели
