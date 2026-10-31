@@ -30,9 +30,6 @@ local DEFAULTS = {
                          -- около 3 процентных пунктов в секунду ожидание
                          -- в 10 секунд давало перелёт почти в 30 пунктов,
                          -- и мод отпускал инженеров сильно ниже порога.
-    probeSec = 0,       -- как часто мерить координаты удерживаемых
-                         -- юнитов. 0 = выключить. Нужно только для разбора
-                         -- лога: порог игры уже измерен. См. watch.lua
     rescanSec = 3,      -- как часто пересобирать список инженеров
     startGrace = 15,    -- в первые N секунд матча обход не делается
     abortMove = true,   -- обрывать маршрут, чтобы инженер стоял на месте
@@ -53,7 +50,6 @@ ReclaimPauseCfg = {
     energyMin = DEFAULTS.energyMin,
     minSec    = DEFAULTS.minSec,
     releaseHoldSec = DEFAULTS.releaseHoldSec,
-    probeSec = DEFAULTS.probeSec,
     rescanSec = DEFAULTS.rescanSec,
     startGrace = DEFAULTS.startGrace,
     abortMove = DEFAULTS.abortMove,
@@ -101,8 +97,6 @@ function ReclaimPauseLoadSettings()
         ReclaimPauseCfg.minSec    = SaneInt(saved.minSec, DEFAULTS.minSec, 0, 120)
         ReclaimPauseCfg.releaseHoldSec =
             SaneInt(saved.releaseHoldSec, DEFAULTS.releaseHoldSec, 0, 300)
-        ReclaimPauseCfg.probeSec =
-            SaneInt(saved.probeSec, DEFAULTS.probeSec, 0, 60)
         ReclaimPauseCfg.rescanSec = SaneInt(saved.rescanSec, DEFAULTS.rescanSec, 1, 60)
         ReclaimPauseCfg.startGrace = SaneInt(saved.startGrace, DEFAULTS.startGrace, 0, 300)
         ReclaimPauseCfg.abortMove = SaneBool(saved.abortMove, DEFAULTS.abortMove)
@@ -115,7 +109,6 @@ function ReclaimPauseLoadSettings()
         ReclaimPauseCfg.energyMin = DEFAULTS.energyMin
         ReclaimPauseCfg.minSec    = DEFAULTS.minSec
         ReclaimPauseCfg.releaseHoldSec = DEFAULTS.releaseHoldSec
-        ReclaimPauseCfg.probeSec = DEFAULTS.probeSec
         ReclaimPauseCfg.rescanSec = DEFAULTS.rescanSec
         ReclaimPauseCfg.startGrace = DEFAULTS.startGrace
         ReclaimPauseCfg.abortMove = DEFAULTS.abortMove
@@ -146,7 +139,6 @@ function ReclaimPauseResetDefaults()
     ReclaimPauseCfg.energyMin = DEFAULTS.energyMin
     ReclaimPauseCfg.minSec    = DEFAULTS.minSec
     ReclaimPauseCfg.releaseHoldSec = DEFAULTS.releaseHoldSec
-    ReclaimPauseCfg.probeSec  = DEFAULTS.probeSec
     ReclaimPauseCfg.rescanSec = DEFAULTS.rescanSec
     ReclaimPauseCfg.startGrace = DEFAULTS.startGrace
     ReclaimPauseCfg.abortMove = DEFAULTS.abortMove
@@ -187,7 +179,6 @@ function ReclaimPauseSaveSettings()
             energyMin = ReclaimPauseCfg.energyMin,
             minSec    = ReclaimPauseCfg.minSec,
             releaseHoldSec = ReclaimPauseCfg.releaseHoldSec,
-            probeSec = ReclaimPauseCfg.probeSec,
             rescanSec = ReclaimPauseCfg.rescanSec,
             startGrace = ReclaimPauseCfg.startGrace,
             abortMove = ReclaimPauseCfg.abortMove,
@@ -218,7 +209,6 @@ function ReclaimPauseSettingsLine()
         ' energyMin=' .. tostring(ReclaimPauseCfg.energyMin) ..
         ' minSec=' .. tostring(ReclaimPauseCfg.minSec) ..
         ' holdSec=' .. tostring(ReclaimPauseCfg.releaseHoldSec) ..
-        ' probeSec=' .. tostring(ReclaimPauseCfg.probeSec) ..
         ' rescanSec=' .. tostring(ReclaimPauseCfg.rescanSec) ..
         ' startGrace=' .. tostring(ReclaimPauseCfg.startGrace) ..
         ' abortMove=' .. tostring(ReclaimPauseCfg.abortMove)

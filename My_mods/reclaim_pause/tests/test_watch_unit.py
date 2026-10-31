@@ -71,18 +71,10 @@ function LOG(m) msgs[#msgs + 1] = tostring(m) end
 
 function GetFocusArmy() return 1 end
 
--- Счётчик реклейма САМОЙ ИГРЫ. В игре это econData.reclaimed из
--- ui/game/economy.lua:382, из него работает колонка "реклейм" в панели
--- ресурсов. RECLAIMED - накопительное значение, прирост за секунду и
--- есть текущая добыча реклеймом.
-RECLAIMED = 0
 function GetEconomyTotals()
   return { stored = { MASS = MASSPCT * MAXM, ENERGY = ENERGYPCT * MAXM },
-           maxStorage = { MASS = MAXM, ENERGY = MAXM },
-           reclaimed = { MASS = RECLAIMED, ENERGY = RECLAIMED } }
+           maxStorage = { MASS = MAXM, ENERGY = MAXM } }
 end
-function AddReclaimed(d) RECLAIMED = RECLAIMED + (d or 0) end
-
 function GetSelectedUnits() return SEL end
 function SelectUnits(list) SEL = list or {} end
 
@@ -168,10 +160,6 @@ function MakeUnit(id, opts)
   -- UserUnit has no IsUnitState, that method belongs to the sim layer. The stub
   -- must not have it either, otherwise a call that fails in the game passes here.
   function u:GetFocus() return self.focus end
-  -- Шаг в одну сторону: mod меряет пройденное расстояние.
-  function u:Walk(dx, dz)
-    self.pos = { self.pos[1] + (dx or 0), self.pos[2], self.pos[3] + (dz or 0) }
-  end
   function u:GetCommandQueue()
     -- Воспроизводим реальное поведение движка: у юнита на паузе очередь
     -- читается пустой, хотя приказ на месте.
@@ -185,9 +173,6 @@ function MakeUnit(id, opts)
     self.cbs[kind] = self.cbs[kind] or {}
     table.insert(self.cbs[kind], fn)
   end
-  u.pos = opts.pos or { 0, 0, 0 }
-  function u:GetPosition() return self.pos end
-  function u:SetPos(x, z) self.pos = { x, 0, z } end
   return u
 end
 
@@ -217,7 +202,6 @@ function Reset(mass, energy)
   CMDMODE_ACTIVE = false
   CMDMODE_CACHE_CALLS = 0
   HIDE_QUEUE_WHEN_PAUSED = false
-  RECLAIMED = 0
   -- Наличие GetIsPausedOfUnit здесь НЕ задаётся: иначе проба успевает
   -- пройти внутри ReclaimPauseStart и закэшировать положительный ответ.
   -- Сценарии, которым это нужно, ставят режим ДО вызова Reset.
@@ -233,7 +217,6 @@ function Reset(mass, energy)
   SET.ReclaimPauseCfg.abortSec = 2
   SET.ReclaimPauseCfg.abortMove = true
   SET.ReclaimPauseCfg.releaseHoldSec = 0
-  SET.ReclaimPauseCfg.probeSec = 0
 end
 
 function SetHideQueue(v) HIDE_QUEUE_WHEN_PAUSED = v end
@@ -490,20 +473,12 @@ check(SCAN_CALLS == 0, 'за 30 секунд при массе 20% обход н
 check(table.getn(SEL) == 1 and SEL[1].id == 998, 'выделение не тронуто')
 
 print('')
-print('=== 15a: БЕЗОПАСНОСТЬ - прибор и выключенный мод выделение не трогают ===')
-check(SET.ReclaimPauseDefaults().probeSec == 0, 'прибор по умолчанию выключен')
-Reset(0.20, 1.0)
-SET.ReclaimPauseCfg.probeSec = 5
-add(eng(100, AM))
-for _ = 1, 30 do RunOnce() end
-check(SCAN_CALLS == 0, 'включённый прибор сам обход не запускает')
-
+print('=== 15a: БЕЗОПАСНОСТЬ - выключенный мод выделение не трогает ===')
 Reset(0.95, 1.0)
-SET.ReclaimPauseCfg.probeSec = 5
 SET.ReclaimPauseCfg.enabled = false
 add(eng(101, AM))
 for _ = 1, 30 do RunOnce() end
-check(SCAN_CALLS == 0, 'выключенный мод обход не запускает, даже с прибором')
+check(SCAN_CALLS == 0, 'выключенный мод обход не запускает')
 
 print('')
 print('=== 16: ЭНЕРГИЯ - масса полна, энергии мало -> паузы нет ===')
@@ -770,42 +745,6 @@ check(fast > 0 and fast <= 6,
       ' - упёрлось только в minSec, а не в releaseHoldSec')
 
 print('')
-print('=== 36: ПРИБОР - координаты удерживаемых юнитов ===')
-Reset(0.95, 1.0)
-SET.ReclaimPauseCfg.probeSec = 5
-SET.ReclaimPauseCfg.releaseHoldSec = 0
-local u36 = add(eng(103, AM))
-u36:SetPos(100, 100)
-RunOnce()
-for _ = 1, 20 do RunOnce() end     -- достаточно, чтобы периодическая строка вышла
-local j36 = table.concat(msgs, ' | ')
-check(string.find(j36, 'posMoved=') ~= nil, 'в логе есть поле posMoved')
-check(string.find(j36, 'posShift=') ~= nil, 'в логе есть поле posShift')
-check(string.find(j36, 'posMoved=0/1') ~= nil,
-      'юнит стоял на месте - сдвигов ноль (posMoved=0/1)')
-
--- теперь он "едет": на каждом интервале замера смещается на 40 единиц
-local movedSeen = ''
-for _ = 1, 20 do
-  u36:SetPos(100 + 40 * (SCAN_N or 0), 100)
-  SCAN_N = (SCAN_N or 0) + 1
-  RunOnce()
-end
-movedSeen = table.concat(msgs, ' | ')
-check(string.find(movedSeen, 'posMoved=1/1') ~= nil,
-      'южет сдвинулся - видно posMoved=1/1 и ненулевой posShift')
-SCAN_N = nil
-
-print('')
-print('=== 37: прибор выключен - позиции не меряются ===')
-Reset(0.95, 1.0)
-SET.ReclaimPauseCfg.posProbeSec = 0
-add(eng(104, AM))
-for _ = 1, 20 do RunOnce() end
-check(string.find(table.concat(msgs, ' | '), 'pos=off') ~= nil,
-      'при probeSec=0 в логе стоит pos=off, а не вводящее в заблуждение 0/0')
-
-print('')
 print('=== 38: GetIsPausedOfUnit, а если его нет в сборке движка ===')
 SetOfUnitMode('yes')
 Reset(0.95, 1.0)
@@ -831,108 +770,8 @@ RunOnce()
 check(isPaused(107), 'функция есть, но бросает - мод не падает, откат сработал')
 SetOfUnitMode('yes')
 
-print('=== 39c: движение инженеров меряется, пока мод их держит ===')
-Reset(0.95, 1.0)
-SET.ReclaimPauseCfg.probeSec = 1
-u125 = eng(125, AM)
-add(u125)
-RunOnce()
-for _ = 1, 20 do RunOnce() end
-local jQ = table.concat(msgs, ' | ')
-check(string.find(jQ, 'mov=0/1') ~= nil,
-      'инженер найден и замерен: mov=0/1 - стоит на месте')
-
-print('')
-print('=== 39d: движущийся инженер считается ===')
--- Строка состояния печатается раз в 15 проходов, поэтому двигаться
--- надо КАЖДЫЙ проход: иначе сдвиг успеет исчезнуть до следующей строки.
-for _ = 1, 20 do u125:Walk(1, 0); RunOnce() end
-local jW = table.concat(msgs, ' | ')
-check(string.find(jW, 'mov=1/1') ~= nil,
-      'инженер идёт - прибор пишет mov=1/1')
-check(string.find(jW, 'far=1') ~= nil,
-      'и far=1 - максимальный пройденный путь виден в логе')
-
-print('')
-print('=== 39d2: стоящий после движущегося = 0 ===')
-for _ = 1, 20 do RunOnce() end
-local jX = table.concat(msgs, ' | ')
-check(string.find(jX, 'mov=0/1') ~= nil,
-      'когда инженер стоит, доля движущихся снова 0: mov=0/1')
-
-print('')
-print('=== 39d3: мелкий сдвиг не считается движением ===')
-Reset(0.95, 1.0)
-SET.ReclaimPauseCfg.probeSec = 1
-u128 = eng(128, AM)
-add(u128)
-RunOnce()
-for _ = 1, 20 do u128:Walk(0.2, 0); RunOnce() end
-local jY = table.concat(msgs, ' | ')
-check(string.find(jY, 'mov=0/1') ~= nil,
-      'сдвиг 0.2 ниже порога 0.5 - движением не считается')
-
-print('')
-print('=== 39e: скорость реклейма из счётчика игры ===')
--- Прямой признак "реклеймят ли сейчас". Источник - счётчик самой игры
--- econ.reclaimed (ui/game/economy.lua:382), а не наш прибор.
-Reset(0.60, 1.0)
-SET.ReclaimPauseCfg.probeSec = 1
-SET.ReclaimPauseCfg.highMass = 100
-SET.ReclaimPauseCfg.lowMass = 99
-u129 = eng(129, AM)
-add(u129)
-RunOnce()
-for _ = 1, 20 do AddReclaimed(10); RunOnce() end   -- идёт реклейм
-local jZ = table.concat(msgs, ' | ')
-check(string.find(jZ, 'rec=10') ~= nil,
-      'счётчик растёт на 10 за проход - прибор пишет rec=10')
-
-for _ = 1, 20 do RunOnce() end                      -- реклейм прекратился
-local jZ2 = table.concat(msgs, ' | ')
-check(string.find(jZ2, 'rec=0') ~= nil,
-      'счётчик замер - прибор пишет rec=0')
-
--- Возобновление: счётчик снова растёт
-for _ = 1, 20 do AddReclaimed(7); RunOnce() end
-local jZ3 = table.concat(msgs, ' | ')
-check(string.find(jZ3, 'rec=7') ~= nil,
-      'после возобновления rec снова ненулевой: rec=7')
-
-print('')
-print('=== 39f: компактная строка замера идёт раз в probeSec ===')
--- Главная строка состояния идёт раз в 15 проходов (logEvery), и при
--- высоком lowMass никогда не учащается. Между такими замерами масса
--- уезжает на треть, и момент остановки реклейма пропадает. Компактная
--- строка REC печатается каждый probeSec секунд.
-Reset(0.95, 1.0)
-SET.ReclaimPauseCfg.probeSec = 1
-u130 = eng(130, AM)
-add(u130)
-RunOnce()
-for _ = 1, 6 do AddReclaimed(12); RunOnce() end
-local jC = table.concat(msgs, ' | ')
-local cnt = 0
-for _ in string.gmatch(jC, 'ReclaimPause: REC ') do cnt = cnt + 1 end
-check(cnt >= 5, 'строк REC за 6 проходов с probeSec=1: ' .. tostring(cnt))
-check(string.find(jC, 'rec=12') ~= nil,
-      'в компактной строке есть скорость реклейма')
-check(string.find(jC, 'mov=0/1') ~= nil,
-      'и доля движущихся инженеров')
-
-print('')
-print('=== 40: прибор выключен - видно pos=off ===')
-Reset(0.95, 1.0)
-SET.ReclaimPauseCfg.probeSec = 0
-add(eng(111, AM))
-for _ = 1, 20 do RunOnce() end
-local jC = table.concat(msgs, ' | ')
-check(string.find(jC, 'pos=off') ~= nil, 'при выключенном приборе стоит pos=off')
-
-print('')
 print('=== 41: РАЗБОР "почему инженера не взяли" ===')
 Reset(0.95, 1.0)
-SET.ReclaimPauseCfg.probeSec = 0
 add(eng(112, AM))                              -- наш приказ, берём
 add(MakeUnit(113, { cats = ENGINEER, queue = AM }))
 PAUSED[113] = true                             -- игрок поставил паузу руками

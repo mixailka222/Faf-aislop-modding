@@ -244,7 +244,7 @@ check(BUILDS['ReclaimPause'] ~= nil, 'окно создано через AddOpti
 
 local expected = {
   'enabled', 'highMass', 'lowMass', 'energyMin', 'minSec',
-  'releaseHoldSec', 'probeSec', 'rescanSec', 'startGrace',
+  'releaseHoldSec', 'rescanSec', 'startGrace',
   'abortMove', 'abortSec', 'skipSec', 'resetFlag',
 }
 local opts = UMT.Options.Mods['ReclaimPause']
@@ -270,13 +270,13 @@ for i = 1, #build do
   local r = build[i].optionVar
   if r ~= nil and type(r.Bind) == 'function' then uses = uses + 1 end
 end
-check(uses >= 13, 'в окне ' .. tostring(uses) .. ' полей, и все на OptionVar')
+check(uses >= 12, 'в окне ' .. tostring(uses) .. ' полей, и все на OptionVar')
 
 -- ДИАПАЗОНЫ. Ползунок шире, чем SaneInt в settings.lua, - окно и мод
 -- будут считать разные значения, и это молча.
 local sane = {
   highMass = { 50, 100 }, lowMass = { 0, 100 }, energyMin = { 0, 100 },
-  minSec = { 0, 120 }, releaseHoldSec = { 0, 300 }, probeSec = { 0, 60 },
+  minSec = { 0, 120 }, releaseHoldSec = { 0, 300 },
   rescanSec = { 1, 60 }, startGrace = { 0, 300 }, abortSec = { 1, 30 },
   skipSec = { 0, 600 },
 }
@@ -344,10 +344,9 @@ opts.lowMass:Set(80)
 -- Bind вызывается СРАЗУ (OptionVar.lua:75). Значит Refresh обязан был
 -- отработать и привести настройки в согласованное состояние.
 local cfg = SET.ReclaimPauseCfg
-check(cfg ~= nil and cfg.releaseHoldSec ~= nil and cfg.probeSec ~= nil,
+check(cfg ~= nil and cfg.releaseHoldSec ~= nil,
       'Refresh из окна применил настройки: releaseHoldSec=' ..
-      tostring(cfg and cfg.releaseHoldSec) .. ' probeSec=' ..
-      tostring(cfg and cfg.probeSec))
+      tostring(cfg and cfg.releaseHoldSec))
 check(string.find(joined, 'UMT options page registered') ~= nil,
       'мод отписался в лог, что страница зарегистрирована')
 check(string.find(joined, 'FAILED') == nil,
@@ -362,7 +361,7 @@ print('=== СБРОС НАСТРОЕК ГАЛОЧКОЙ В ОКНЕ ===')
 -- Ставим значения, которых нет в DEFAULTS: их видно в профиле.
 opts.highMass:Set(100)
 opts.lowMass:Set(99)
-opts.probeSec:Set(9)
+opts.minSec:Set(9)
 
 -- Галочка снята с себя сама: повторное открытие окна не должно
 -- молча сбросить настройки ещё раз.
@@ -388,9 +387,9 @@ check(opts.highMass() == 70,
 check(opts.lowMass() == 65,
       'ползунок снятия показывает 65, а не 99 (получено ' ..
       tostring(opts.lowMass()) .. ')')
-check(opts.probeSec() == SET.ReclaimPauseDefaults().probeSec,
-      'прибор вернулся к значению по умолчанию (получено ' ..
-      tostring(opts.probeSec()) .. ')')
+check(opts.minSec() == SET.ReclaimPauseDefaults().minSec,
+      'ползунок интервала вернулся к значению по умолчанию (получено ' ..
+      tostring(opts.minSec()) .. ')')
 
 -- Флаг writing не должен залипнуть: после сброса ползунок снова
 -- обязан управлять настройкой.

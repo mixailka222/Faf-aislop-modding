@@ -69,7 +69,6 @@ function Main()
         energyMin      = Opt(def.energyMin),
         minSec         = Opt(def.minSec),
         releaseHoldSec = Opt(def.releaseHoldSec),
-        probeSec       = Opt(def.probeSec),
         rescanSec      = Opt(def.rescanSec),
         startGrace     = Opt(def.startGrace),
         abortMove      = Opt(def.abortMove),
@@ -123,7 +122,6 @@ function Main()
         options.energyMin:Raw():Set(cfg.energyMin)
         options.minSec:Raw():Set(cfg.minSec)
         options.releaseHoldSec:Raw():Set(cfg.releaseHoldSec)
-        options.probeSec:Raw():Set(cfg.probeSec)
         options.rescanSec:Raw():Set(cfg.rescanSec)
         options.startGrace:Raw():Set(cfg.startGrace)
         options.abortMove:Raw():Set(cfg.abortMove)
@@ -154,7 +152,6 @@ function Main()
         cfg.energyMin      = options.energyMin()
         cfg.minSec         = options.minSec()
         cfg.releaseHoldSec = options.releaseHoldSec()
-        cfg.probeSec       = options.probeSec()
         cfg.rescanSec      = options.rescanSec()
         cfg.startGrace     = options.startGrace()
         cfg.abortMove      = options.abortMove() and true or false
@@ -176,7 +173,6 @@ function Main()
     options.energyMin:Bind(Refresh)
     options.minSec:Bind(Refresh)
     options.releaseHoldSec:Bind(Refresh)
-    options.probeSec:Bind(Refresh)
     options.rescanSec:Bind(Refresh)
     options.startGrace:Bind(Refresh)
     options.abortMove:Bind(Refresh)
@@ -203,8 +199,6 @@ function Main()
         Options.Slider("Держать условие снятия N секунд (0 = сразу)",
             0, 60, 1, options.releaseHoldSec, 16),
         Options.Slider("Как часто искать инженеров, секунд", 1, 30, 1, options.rescanSec, 16),
-        Options.Slider("Прибор: координаты инженеров на паузе, каждые N секунд (0 = выкл)",
-            0, 30, 1, options.probeSec, 16),
         Options.Slider("Первые N секунд матча не трогать выделение", 0, 60, 5, options.startGrace, 16),
         Options.Filter("Останавливать на месте (обрыв маршрута)", options.abortMove, 16),
         Options.Slider("Повторять обрыв каждые N секунд", 1, 15, 1, options.abortSec, 16),

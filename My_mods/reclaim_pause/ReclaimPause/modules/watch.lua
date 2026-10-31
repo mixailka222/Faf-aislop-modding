@@ -95,28 +95,6 @@ local held = {}            -- id -> unit, кого мод поставил на 
 local heldAt = {}          -- id -> номер прохода, на котором поставили
 local skipUntil = {}       -- id -> номер прохода, до какого юнита не трогаем
 local lowSinceIter = 0     -- с какого прохода условие снятия держится (0 = нет)
-local posLast = {}         -- id -> {x, z} последняя замеренная позиция
-local posIter = 0          -- проход последнего замера позиций
-local posMoved = 0         -- сколько удерживаемых юнитов сдвинулось
-local posTotal = 0         -- сколько всего удерживаемых проверено
-local posShift = 0         -- наибольший сдвиг, в игровых единицах
-local probeDoneIter = 0     -- проход, в котором прибор уже мерил
-
--- ИЗМЕРЕНИЕ ПОРОГА ИГРЫ: при каком заполнении хранилища игра сама
--- перестаёт отдавать реклейм инженерам на атак-муве.
---
--- Одна таблица, а не две переменные: у TickOnce предел 32 upvalue, и
--- лишняя локальная переменная его упирает в стену.
-local gstop = {
-    mass = 0,      -- заполнение хранилища на текущем проходе
-    fresh = nil,   -- последний обход инженеров: id -> unit
-    pos = {},      -- id -> {x, z}, последняя замеренная позиция
-    rec = 0,       -- скорость реклейма в секунду (из счётчика игры)
-    recPrev = nil, -- предыдущее значение econ.reclaimed.MASS
-    recIter = 0,   -- проход, на котором взяли предыдущее значение
-    logRec = 0,    -- счётчик компактной строки замера REC
-}
-
 -- Разбор, почему инженер НЕ попал под паузу. Без него на вопрос
 -- "почему они не встали" приходится отвечать догадками.
 --
@@ -558,71 +536,6 @@ local function IsSkipped(id)
     return true
 end
 
--- ПРИБОР: СТОИТ ЛИ ИНЖЕНЕР НА МЕСТЕ.
---
--- Реклейм прибор не меряет: Sync.Reclaim содержит только пропы, изменившиеся за
--- последнюю синхронизацию, и живой признак из него не собрать. Скорость реклейма
--- даёт счётчик игры econ.reclaimed, см. TickOnce.
---
--- Вопрос, который закрывает лог: останавливает ли флаг SetPaused ДВИЖЕНИЕ.
--- От ответа зависит судьба настройки abortMove:
---   - если флаг движение НЕ останавливает - обрыв обязателен, иначе
---     инженер уедет к точке, а "рывки" это окно между обрывами;
---   - если флаг движение ОСТАНАВЛИВАЕТ - обрыв не нужен вовсе, и рывки
---     уходят вместе с ним.
---
--- Ответ берётся не на глаз, а из координат: раз в posProbeSec секунд
--- меряем положение удерживаемых юнитов и считаем, кто сдвинулся.
---
--- GetPosition() у UserUnit подтверждён игровым кодом:
--- ui/game/selection.lua:494 (units[i]:GetPosition() по выделению),
--- ui/game/unittext.lua:19 и :78 (GetUnitById(...):GetPosition()).
--- Координаты это Vector, где X = [1] и Z = [3] - подтверждено тем, что
--- sim/Prop.lua:36,50 читает CachePosition[1] и CachePosition[3].
--- В пределах одного прохода прибор меряет ОДИН раз.
-local function RunProbe()
-    if probeDoneIter == iterNo then
-        return
-    end
-    probeDoneIter = iterNo
-    local moved = 0
-    local total = 0
-    local far = 0
-    for id, unit in pairs(held) do
-        local okP, p = pcall(function() return unit:GetPosition() end)
-        if okP and type(p) == 'table' and type(p[1]) == 'number'
-            and type(p[3]) == 'number' then
-            total = total + 1
-            local prev = posLast[id]
-            if prev then
-                local dx = p[1] - prev.x
-                local dz = p[3] - prev.z
-                local dist = math.sqrt(dx * dx + dz * dz)
-                if dist > 0.5 then
-                    moved = moved + 1
-                end
-                if dist > far then
-                    far = dist
-                end
-            end
-            -- Именно именованные поля. Конструктор { p[1], p[3] } создал бы
-            -- таблицу с ключами 1 и 2, и prev.z был бы nil: такую ошибку
-            -- поймал только юнит-тест, в игре она выглядела бы как молчащий
-            -- прибор.
-            posLast[id] = { x = p[1], z = p[3] }
-        end
-    end
-    -- забываем о тех, кого уже отпустили
-    for id in pairs(posLast) do
-        if held[id] == nil then
-            posLast[id] = nil
-        end
-    end
-    posMoved = moved
-    posTotal = total
-    posShift = far
-end
-
 local function HeldCount()
     local n = 0
     for _ in pairs(held) do
@@ -699,17 +612,6 @@ local function Explain(cfg, massFill, energyFill)
     return 'THRESHOLDS-OK'
 end
 
--- Строка прибора для лога. Прибор выключен или мод никого не держит - пишем
--- pos=off, потому что posMoved=0/0 читается как "никто не двигался", а на самом
--- деле позиции не мерили вообще. Разница важна при разборе лога.
-local function ProbeLine(probeSec)
-    if probeSec == nil or probeSec <= 0 or posTotal == 0 then
-        return 'pos=off'
-    end
-    return 'posMoved=' .. tostring(posMoved) .. '/' .. tostring(posTotal) ..
-        ' posShift=' .. string.format('%.1f', posShift)
-end
-
 -- ПОЧЕМУ МЫ ВСЁ ЕЩЁ ДЕРЖИМ. Отдельная строка: без неё в логе
 -- не видно, ждём мы положенного срока или условие уже выполнено.
 local function ExplainHold(cfg, massFill, holdSec)
@@ -758,10 +660,9 @@ end
 -- Логика вынесения - обычная: переменные состояния уезжают вместе с кодом,
 -- который их использует.
 --
--- Вердикт и прибор пишем ВСЕГДА: игрок не обязан знать про горячую
--- клавишу, чтобы понять, работает мод или нет.
-local function PeriodicLog(cfg, massFill, energyFill, holdSec, probeSec,
-    movN, movM, movFar, rec)
+-- Вердикт пишем ВСЕГДА: игрок не обязан знать про горячую клавишу, чтобы
+-- понять, работает мод или нет.
+local function PeriodicLog(cfg, massFill, energyFill, holdSec)
     logTick = logTick + 1
     -- У порога пишем чаще. Именно в этом окне решается, кто кого обгонит:
     -- мод или игра. При редком логе момент остановки реклейма просто не
@@ -774,27 +675,12 @@ local function PeriodicLog(cfg, massFill, energyFill, holdSec, probeSec,
         return
     end
     logTick = 0
-    -- Приводим прибор в актуальное состояние ПЕРЕД записью строки.
-    -- Раньше прибор срабатывал раз в probeSec секунд, а строка печаталась
-    -- раз в 15 проходов, и в строке оказывались числа из прошлого замера:
-    -- в логе встречалось held=0 при posMoved=0/12. Для разбора момента,
-    -- когда игра остановила реклейм, отставание недопустимо.
-    if probeSec > 0 then
-        RunProbe()
-    end
     LOG(PFX .. 'mass=' .. string.format('%.1f', massFill * 100) .. '%' ..
         ' energy=' .. string.format('%.1f', energyFill * 100) .. '%' ..
         ' engineers=' .. (engineerCount >= 0 and tostring(engineerCount) or '?') ..
-        -- Скорость реклейма из счётчика самой игры. Это ПРЯМОЙ признак
-        -- "реклеймят ли сейчас", в отличие от mov, который говорит
-        -- только "идут ли".
-        ' rec=' .. string.format('%.0f', rec) ..
-        ' mov=' .. tostring(movN) .. '/' .. tostring(movM) ..
-        ' far=' .. string.format('%.1f', movFar) ..
         ' held=' .. tostring(HeldCount()) ..
         ' verdict=' .. Explain(cfg, massFill, energyFill) ..
         ' hold=' .. ExplainHold(cfg, massFill, holdSec) ..
-        ' ' .. ProbeLine(probeSec) ..
         ' why=skip:' .. tostring(why.skip) ..
         ' player:' .. tostring(why.player) ..
         ' other:' .. tostring(why.other) ..
@@ -812,43 +698,9 @@ local function TickOnce()
     end
     local energyFill = FillOf(econ, 'ENERGY') or 1
 
-    -- Прибор должен знать заполнение хранилища на СВОЕМ проходе, иначе в
-    -- строке GAME-STOP окажется число из прошлой секунды.
-    gstop.mass = massFill
-
-    -- СКОРОСТЬ РЕКЛЕЙМА из счётчика самой игры.
-    --
-    -- econ.reclaimed - накопительный счётчик, из которого работает
-    -- колонка "реклейм" в панели ресурсов игры (ui/game/economy.lua:
-    -- 382-394). Прирост счётчика за секунду и есть текущая добыча
-    -- реклеймом. Когда игра прекращает реклейм, прирост становится
-    -- нулём - это и есть тот сигнал, который мы ищем.
-    --
-    -- Считаем здесь же, где уже взят econ ради процента заполнения,
-    -- поэтому лишней работы почти нет.
-    gstop.rec = 0
-    local okR, recNow = pcall(function() return econ.reclaimed.MASS end)
-    if okR and type(recNow) == 'number' then
-        if gstop.recPrev ~= nil then
-            -- span - сколько проходов прошло между отсчётами. Делим на
-            -- него, чтобы скорость была "в секунду" независимо от того,
-            -- сколько секунд между проходами.
-            local span = iterNo - gstop.recIter
-            if span > 0 then
-                gstop.rec = (recNow - gstop.recPrev) / span
-            end
-        end
-        gstop.recPrev = recNow
-        gstop.recIter = iterNo
-    end
-
     iterNo = iterNo + 1
     local cfg = Settings.ReclaimPauseCfg
     rescanSec = cfg.rescanSec
-    local probeSec = cfg.probeSec
-    if probeSec == nil or probeSec < 0 then
-        probeSec = 0
-    end
 
     -- гистерезис по массе: два порога, иначе мод дергается
     -- ТАЙМЕР УДЕРЖАНИЯ УСЛОВИЯ СНЯТИЯ.
@@ -929,65 +781,19 @@ local function TickOnce()
     local foundN = -1
     local graceLeft = cfg.startGrace - iterNo * SCAN_SEC
     -- Обход трогает выделение (WithAllEngineers), поэтому он идёт только
-    -- при активной паузе. Прибор сам обход не запускает: иначе выделение
-    -- подменялось бы весь матч, даже у выключенного мода.
+    -- при активной паузе.
     if want and graceLeft <= 0 then
         local got, n = EnsureEngineers()
         if got then
             fresh = got
             foundN = n
             engineerCount = n
-            gstop.fresh = got
         end
     else
         -- Обхода не было. -1 означает "не искали", и в логе печатается
         -- как "?", а не как 0. Ноль и отсутствие данных - не одно и то же.
         foundN = -1
         engineerCount = -1
-    end
-
-    -- ДВИЖЕНИЕ ИНЖЕНЕРОВ - признак, по которому ищем порог игры.
-    --
-    -- Пока инженер реклеймит, он стоит. Когда игра прекращает реклейм,
-    -- инженер на атак-муве идёт к точке. Значит резкий рост доли
-    -- движущихся при высоком заполнении хранилища и есть тот порог.
-    --
-    -- Меряем unit:GetPosition() - он в слое интерфейса работает, доказано
-    -- в игре (posMoved=28/32 posShift=5.2).
-    --
-    -- Состояние 'Reclaiming' и событие OnStopReclaim недоступны из
-    -- интерфейса: в игре recl=0/0 при engineers=120 и
-    -- "attempt to call method `AddUnitCallback' (a nil value)". Оба
-    -- метента принадлежат слою симуляции.
-    local movN = 0
-    local movM = 0
-    local movFar = 0
-    if gstop.fresh ~= nil then
-        for id, unit in pairs(gstop.fresh) do
-            local okP, p = pcall(function() return unit:GetPosition() end)
-            if okP and type(p) == 'table' and type(p[1]) == 'number'
-                and type(p[3]) == 'number' then
-                movM = movM + 1
-                local prev = gstop.pos[id]
-                if prev ~= nil then
-                    local dx = p[1] - prev.x
-                    local dz = p[3] - prev.z
-                    local dist = math.sqrt(dx * dx + dz * dz)
-                    if dist > 0.5 then
-                        movN = movN + 1
-                    end
-                    if dist > movFar then
-                        movFar = dist
-                    end
-                end
-                gstop.pos[id] = { x = p[1], z = p[3] }
-            end
-        end
-        for id in pairs(gstop.pos) do
-            if gstop.fresh[id] == nil then
-                gstop.pos[id] = nil
-            end
-        end
     end
 
     local release = {}
@@ -1131,19 +937,6 @@ local function TickOnce()
         end
     end
 
-    -- Прибор меряем ДО применения пауз, чтобы видеть и движение
-    -- уже удерживаемых, и только что поставленных.
-    -- Прибор меряет НЕЗАВИСИМО от того, держит мод кого-то или нет.
-    --
-    -- Раньше здесь стояло "if holding and ...". Для замера порога игры
-    -- это ломало всё: момент, когда игра перестала отдавать реклейм,
-    -- проходит ДО того, как мод возьмёт кого-то на паузу. Прибор
-    -- включался бы слишком поздно и момент пропускал бы.
-    if probeSec > 0 and (iterNo - posIter) * SCAN_SEC >= probeSec then
-        posIter = iterNo
-        RunProbe()
-    end
-
     if releaseN > 0 then
         ResumeUnits(release, releaseN)
     end
@@ -1186,26 +979,7 @@ local function TickOnce()
             ' nowReleased=' .. tostring(releaseN))
     end
 
-    -- Компактная строка замера, раз в probeSec секунд.
-    --
-    -- Главная строка состояния идёт раз в logEvery проходов, а
-    -- logEvery становится 5 только когда масса не ниже lowMass
-    -- (строка PeriodicLog). В замере lowMass стоит высоко, и тогда
-    -- строки идут раз в 15 секунд - за это время хранилище уезжает на
-    -- треть, и момент остановки реклейма между ними не попадает.
-    --
-    -- Именно так и вышло в замере 2026-10-10: rec упал со 156 до 10
-    -- между двумя замерами, и где именно - не видно.
-    gstop.logRec = gstop.logRec + 1
-    if probeSec ~= nil and probeSec > 0 and gstop.logRec >= probeSec then
-        gstop.logRec = 0
-        LOG(PFX .. 'REC mass=' .. string.format('%.1f', massFill * 100) .. '%' ..
-            ' rec=' .. string.format('%.0f', gstop.rec) ..
-            ' mov=' .. tostring(movN) .. '/' .. tostring(movM))
-    end
-
-    PeriodicLog(cfg, massFill, energyFill, holdSec, probeSec, movN, movM, movFar,
-        gstop.rec)
+    PeriodicLog(cfg, massFill, energyFill, holdSec)
 end
 
 --------------------------------------------------------------------------------
@@ -1267,19 +1041,6 @@ function ReclaimPauseStart()
     heldAt = {}
     skipUntil = {}
     lowSinceIter = 0
-    posLast = {}
-    posIter = 0
-    probeDoneIter = 0
-    posMoved = 0
-    posTotal = 0
-    posShift = 0
-    gstop.mass = 0
-    gstop.pos = {}
-    gstop.rec = 0
-    gstop.recPrev = nil
-    gstop.recIter = 0
-    gstop.logRec = 0
-    gstop.fresh = nil
     why.skip = 0
     why.player = 0
     why.other = 0
