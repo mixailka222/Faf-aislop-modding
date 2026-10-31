@@ -771,12 +771,13 @@ local function RowRightInset(top)
         local client = G.win.ClientGroup
         ---@diagnostic disable-next-line: undefined-field
         local btn = G.win._closeBtn
-        local btnTop = btn.Top() - client.Top()
-        local btnBottom = btn.Bottom() - client.Top()
+        -- The window is in screen pixels, the rows in own units: see ApplyMinSize.
+        local btnTop = LayoutHelpers.InvScaleNumber(btn.Top() - client.Top())
+        local btnBottom = LayoutHelpers.InvScaleNumber(btn.Bottom() - client.Top())
         if top >= btnBottom or (top + L.ROW_H) <= btnTop then
             return L.RIGHT_PAD
         end
-        local over = client.Right() - btn.Left() + L.RIGHT_PAD
+        local over = LayoutHelpers.InvScaleNumber(client.Right() - btn.Left()) + L.RIGHT_PAD
         if over > L.RIGHT_PAD then return over end
         return L.RIGHT_PAD
     end)
@@ -943,12 +944,12 @@ local function PlaceRows()
                 -- только Height, Left и Right, круг движка не замкнут, и
                 -- чтение Top() уходит в переполнение стека
                 -- (control.lua:31-42; в логе это предупреждение LazyVar).
-                ctl.Height:Set(L.DIV_H)
+                ctl.Height:Set(LayoutHelpers.ScaleNumber(L.DIV_H))
                 LayoutHelpers.AtLeftIn(ctl, client, 0)
                 LayoutHelpers.AtRightIn(ctl, client, 0)
                 LayoutHelpers.AtTopIn(ctl, client, top)
             else
-                ctl.Height:Set(L.ROW_H)
+                ctl.Height:Set(LayoutHelpers.ScaleNumber(L.ROW_H))
                 LayoutHelpers.AtLeftTopIn(ctl, client, L.PAD, top)
                 -- Отступ справа считаем по РАСТЯНУТОЙ координате: крестик
                 -- закрытия висит на неподвижном верхнем углу, а строка при
@@ -1055,6 +1056,8 @@ local function FitHeight(bodyH)
     if not G.win then return end
     local want = bodyH + L.FRAME_BOTTOM
     if want < L.MIN_H then want = L.MIN_H end
+    -- The height of the window and G.wantH are in screen pixels.
+    want = LayoutHelpers.ScaleNumber(want)
     -- ВЫБОР ИГРОКА ГЛАВНЫЙ. Если он уже тянул окно за край, его высоту мы не
     -- режем: окно может только дорасти, если строк перестало хватать.
     if G.wantH and G.wantH > want then want = G.wantH end
@@ -1145,7 +1148,8 @@ local function SetCollapsed(collapsed)
             -- место, а не упасть вместе со всей перерисовкой.
             pcall(function()
                 LayoutHelpers.AtLeftTopIn(G.reopenButton, GetFrame(0),
-                                          G.win.Left(), G.win.Top())
+                                          LayoutHelpers.InvScaleNumber(G.win.Left()),
+                                          LayoutHelpers.InvScaleNumber(G.win.Top()))
             end)
             G.reopenButton:Show()
         end
@@ -1340,7 +1344,9 @@ CreatePanel = function()
     G.reopenButton:EnableHitTest(true)
     LayoutHelpers.SetDimensions(G.reopenButton, 120, 20)
     pcall(function()
-        LayoutHelpers.AtLeftTopIn(G.reopenButton, frame, win.Left(), win.Top())
+        LayoutHelpers.AtLeftTopIn(G.reopenButton, frame,
+                                  LayoutHelpers.InvScaleNumber(win.Left()),
+                                  LayoutHelpers.InvScaleNumber(win.Top()))
     end)
     G.reopenButton.HandleEvent = function(self, event)
         if event.Type == 'ButtonRelease' then

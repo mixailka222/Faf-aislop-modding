@@ -234,10 +234,10 @@ local function NewWindow(parent)
     -- сверху 30, снизу 8. Заглушка обязана это повторить: без клиентской
     -- области не посчитать ни отступ строки под крестиком, ни проверку, что
     -- строки начинаются от верха окна.
-    w.ClientGroup.Left:Set(function() return w.Left() + 5 end)
-    w.ClientGroup.Right:Set(function() return w.Right() - 5 end)
-    w.ClientGroup.Top:Set(function() return w.Top() + 30 end)
-    w.ClientGroup.Bottom:Set(function() return w.Bottom() - 8 end)
+    w.ClientGroup.Left:Set(function() return w.Left() + 5 * pixelScaleFactor end)
+    w.ClientGroup.Right:Set(function() return w.Right() - 5 * pixelScaleFactor end)
+    w.ClientGroup.Top:Set(function() return w.Top() + 30 * pixelScaleFactor end)
+    w.ClientGroup.Bottom:Set(function() return w.Bottom() - 8 * pixelScaleFactor end)
     -- Предел размера запоминаем: без этого проверка "мод сообщил окну
     -- предел по содержимому" превратилась бы в проверку заглушки.
     function w:SetMinimumResize(a, b)
@@ -284,10 +284,10 @@ local function NewWindow(parent)
     w.TitleGroup = NewCtrl('TitleGroup', w)
     w.TitleGroup._h = 30
     w._closeBtn = NewCtrl('Button', w)
-    w._closeBtn.Width:Set(function() return 20 end)
-    w._closeBtn.Height:Set(function() return 20 end)
-    w._closeBtn.Left:Set(function() return w.Right() - 30 end)
-    w._closeBtn.Top:Set(function() return w.Top() + 5 end)
+    w._closeBtn.Width:Set(function() return 20 * pixelScaleFactor end)
+    w._closeBtn.Height:Set(function() return 20 * pixelScaleFactor end)
+    w._closeBtn.Left:Set(function() return w.Right() - 30 * pixelScaleFactor end)
+    w._closeBtn.Top:Set(function() return w.Top() + 5 * pixelScaleFactor end)
 
     -- ДЕВЯТЬ КУСКОВ РАМКИ. Класс создаёт их в ApplyWindowTextures
     -- (window.lua:176-184), и мод заливает их сплошным цветом в теме Minimal.
@@ -348,7 +348,7 @@ end
 function LayoutHelpers.AtHorizontalCenterIn(c, p) end
 function LayoutHelpers.AtVerticalCenterIn(c, p) end
 function LayoutHelpers.FillParent(c, p) end
-function LayoutHelpers.InvScaleNumber(v) return v end
+function LayoutHelpers.InvScaleNumber(v) return math.ceil(v / pixelScaleFactor) end
 -- ScaleNumber есть в игре (layouthelpers.lua:57-59): им окно доращивается до
 -- предела по содержимому (ui.lua, ApplyMinSize).
 function LayoutHelpers.ScaleNumber(v) return math.floor(v * pixelScaleFactor) end
@@ -362,7 +362,12 @@ LAST_DRAG = nil
 -- PostDragger - ИГРОВАЯ ГЛОБАЛЬНАЯ функция, ui.lua зовёт её без import.
 function PostDragger(frame, key, drag) LAST_DRAG = drag end
 
-FRAME = { Width = function() return 1920 end, Height = function() return 1080 end }
+FRAME = {
+    Left = function() return 0 end,
+    Top = function() return 0 end,
+    Width = function() return 1920 end,
+    Height = function() return 1080 end,
+}
 function GetFrame(i) return FRAME end
 function GetCursor()
     return { SetTexture = function() end, Reset = function() end }
@@ -1708,9 +1713,100 @@ check(BEAT_REMOVED, 'после трёх ошибок подряд функци�
 return fails
 ''')
 
+# ========================================= 8. масштаб интерфейса ui_scale
+#
+# A fresh ui.lua: the first one remembers the height the checks above set by hand.
+env_ui_scaled = make_env()
+loader(ui_src, env_ui_scaled)
+G['U_SCALED'] = env_ui_scaled
+
+print("")
+f8 = run("=== 8: масштаб интерфейса ===", r'''
+local fails = 0
+local function check(cond, label)
+    if cond then
+        print('  [OK  ] ' .. label)
+    else
+        fails = fails + 1
+        print('  [FAIL] ' .. label)
+    end
+end
+
+local mark = 0
+
+local function Build(scale)
+    pixelScaleFactor = scale
+    PROFILE = {}
+    local allRows = {}
+    for i = 1, ROWS.HowManyRows() do allRows[ROWS.RowKeyAt(i)] = true end
+    ROWS.SaveRows(allRows)
+    mark = #MADE
+    U_SCALED.OnCreateUI()
+    BEAT()
+    for i = mark + 1, #MADE do
+        if MADE[i]._kind == 'Window' then return MADE[i] end
+    end
+end
+
+local function Row(text)
+    for i = mark + 1, #MADE do
+        if MADE[i]._kind == 'Text' and MADE[i]._text == text then return MADE[i] end
+    end
+end
+
+local plain = Build(1.0)
+local plainHeight = plain.Bottom() - plain.Top()
+local plainLast = Row('reclaim E 5.0 / M 6.0 /s')
+local plainOffset = plainLast.Top() - plain.Top()
+local plainMargin = plain.ClientGroup.Bottom() - (plainLast.Top() + plainLast.Height())
+
+local win = Build(2.0)
+local height = win.Bottom() - win.Top()
+check(math.abs(height - 2 * plainHeight) <= 1,
+      'высота окна растёт вместе с масштабом (' .. tostring(height) ..
+      ' против ' .. tostring(plainHeight) .. ')')
+
+local first = Row('E ally overflow: 100.0 E/s')
+local third = Row('E own production: 200.0 E/s')
+local last = Row('reclaim E 5.0 / M 6.0 /s')
+check(first ~= nil and first.Height() == 28,
+      'высота строки растёт вместе с масштабом (' ..
+      tostring(first and first.Height()) .. ')')
+check(last ~= nil and math.abs((last.Top() - win.Top()) - 2 * plainOffset) <= 1,
+      'нижняя строка стоит там же относительно окна (' ..
+      tostring(last and last.Top() - win.Top()) .. ' против ' ..
+      tostring(plainOffset) .. ')')
+check(last ~= nil and math.abs((win.ClientGroup.Bottom() - (last.Top() + last.Height()))
+      - 2 * plainMargin) <= 1,
+      'поле под нижней строкой масштабируется вместе с окном')
+
+local right = win.ClientGroup.Right()
+check(first ~= nil and first.Right() == win._closeBtn.Left() - 40,
+      'строка под крестиком отступает от него на RIGHT_PAD в экранных пикселях (' ..
+      tostring(first and first.Right()) .. ' при крестике ' ..
+      tostring(win._closeBtn.Left()) .. ')')
+check(third ~= nil and third.Right() == right - 40,
+      'строка ниже крестика идёт во всю ширину (' ..
+      tostring(third and third.Right()) .. ' при крае ' .. tostring(right) .. ')')
+
+win.OnClose(win)
+local reopen = nil
+for i = mark + 1, #MADE do
+    if MADE[i].HandleEvent ~= nil then reopen = MADE[i] end
+end
+check(reopen ~= nil and math.abs(reopen.Left() - win.Left()) <= 1
+      and math.abs(reopen.Top() - win.Top()) <= 1,
+      'кнопка возврата появляется на месте панели (' ..
+      tostring(reopen and reopen.Left()) .. ', ' .. tostring(reopen and reopen.Top()) ..
+      ' при окне ' .. tostring(win.Left()) .. ', ' .. tostring(win.Top()) .. ')')
+
+pixelScaleFactor = 1.0
+return fails
+''')
+
 print("")
 print("=== ИТОГ ===")
-fails = f1 + f2 + f3 + f4 + f5 + f6 + f7
+fails = f1 + f2 + f3 + f4 + f5 + f6 + f7 + f8
 if fails:
     print("провалено проверок: %d" % fails)
     sys.exit(1)
