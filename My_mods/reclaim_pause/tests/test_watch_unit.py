@@ -142,48 +142,6 @@ function SetOfUnitMode(mode)
   end
 end
 
--- Имитация Sync.Reclaim. Реальную публикацию делает sim/Prop.lua:384-392,
--- а живое падение массы - sim/Prop.lua:181 в OnDamage.
--- mode 'drop' = масса падает у n пропов, 'same' = не падает,
--- 'dead' = запись стала false, как это делает CleanupUILabel (Prop.lua:400).
--- Канал недоступен: таблицы нет. Прибор обязан сказать sync=n/a, а не
--- показать props=0, потому что это разные вещи.
-function SyncBreak()
-  Sync.Reclaim = nil
-end
-
-function PropMode(mode, n)
-  local r = {}
-  if mode == 'dead' then
-    r[1] = false
-    r[2] = { mass = 400, position = { 0, 0, 0 } }
-  else
-    local base = 500
-    if mode == 'fall' then
-      -- Масса падает на каждом вызове: тогда КАЖДЫЙ замер прибора видит
-      -- падение. Иначе падение видно только один раз, и в периодическую
-      -- строку оно может не попасть.
-      PROPBASE = (PROPBASE or base) - 10
-      base = PROPBASE
-    end
-    for i = 1, (n or 3) do
-      r[i] = { mass = base - i, position = { 0, 0, 0 } }
-    end
-  end
-  Sync.Reclaim = r
-end
-
--- Отпустить реклейм так, как это делает движок: вызывает колбэки
--- OnStopReclaim у юнитов. target=nil означает "остов доеден".
-function FireReclaimStop(units, target)
-  for _, u in ipairs(units) do
-    local lst = (u.cbs or {})['OnStopReclaim']
-    if lst then
-      for _, fn in ipairs(lst) do fn(u, target) end
-    end
-  end
-end
-
 function ForkThread(f) THREAD = f end
 function WaitSeconds(x) error('__LOOPSTOP__', 0) end
 
@@ -259,10 +217,6 @@ function Reset(mass, energy)
   CMDMODE_ACTIVE = false
   CMDMODE_CACHE_CALLS = 0
   HIDE_QUEUE_WHEN_PAUSED = false
-  -- Sync.Reclaim публикует {mass=...} из sim/Prop.lua:390. Падение массы
-  -- пропа между замерами означает, что реклейм идёт прямо сейчас.
-  Sync = { Reclaim = {} }
-  PROPBASE = nil
   RECLAIMED = 0
   -- Наличие GetIsPausedOfUnit здесь НЕ задаётся: иначе проба успевает
   -- пройти внутри ReclaimPauseStart и закэшировать положительный ответ.
@@ -861,71 +815,6 @@ RunOnce()
 check(isPaused(107), 'функция есть, но бросает - мод не падает, откат сработал')
 SetOfUnitMode('yes')
 
-print('')
-print('=== 39: ПРИЗНАК АКТИВНОГО РЕКЛЕЙМА по Sync.Reclaim ===')
-Reset(0.95, 1.0)
-SET.ReclaimPauseCfg.probeSec = 1
-SET.ReclaimPauseCfg.releaseHoldSec = 0
-add(eng(110, AM))
-RunOnce()
--- периодическая строка печатается раз в 15 проходов, поэтому проходов
--- заведомо больше
-for _ = 1, 20 do PropMode('same'); RunOnce() end   -- масса не падает
-local jA = table.concat(msgs, ' | ')
-check(string.find(jA, 'recl=0') ~= nil,
-      'масса пропов не падает - recl=0, то есть реклейма нет')
-
-for _ = 1, 20 do PropMode('fall', 3); RunOnce() end -- масса падает у трёх
-local jB = table.concat(msgs, ' | ')
-check(string.find(jB, 'recl=3') ~= nil,
-      'масса падает у трёх пропов - recl=3, реклейм идёт')
-
--- props и left: сколько вообще осталось подобрать. Именно эти два числа
--- отличают "игра остановила реклейм" от "подбирать нечего".
-check(string.find(jB, 'props=3') ~= nil,
-      'в пробе props=3 - три пропа доступны для реклейма')
-check(string.find(jB, 'sync=ok') ~= nil, 'канал Sync.Reclaim доступен (sync=ok)')
-check(string.find(jB, 'raw=3') ~= nil,
-      'raw=3 совпадает с числом записей - канал не пуст и не обрезан')
-local atLeft = string.find(jB, 'left=', 1, true)
-check(atLeft ~= nil, 'в пробе есть left= - сколько массы осталось')
-if atLeft ~= nil then
-  local leftVal = string.match(string.sub(jB, atLeft + 5), '^(%d+)') or '0'
-  check(tonumber(leftVal) > 0,
-        'left= больше нуля: ' .. leftVal .. ' массы ещё на пропах')
-end
-
--- CleanupUILabel ставит запись в false и ОБНУЛЯЕТ mass (Prop.lua:396-403).
--- Прибор обязан это пережить, а не упасть на попытке взять .mass
-for _ = 1, 20 do PropMode('dead'); RunOnce() end
-check(CRASHES == 0, 'запись false от CleanupUILabel не уронила прибор')
-
-print('')
-print('=== 39a: проп доступен, но его не берут (props>0, recl=0) ===')
-Reset(0.95, 1.0)
-SET.ReclaimPauseCfg.probeSec = 1
-add(eng(114, AM))
-RunOnce()
-for _ = 1, 20 do PropMode('same', 7); RunOnce() end
-local jS = table.concat(msgs, ' | ')
-check(string.find(jS, 'props=7') ~= nil, 'доступно 7 пропов')
-check(string.find(jS, 'recl=0') ~= nil,
-      'но никто их не берёт: recl=0 при props=7 - это остановка игры')
-
-print('')
-print('=== 39b: канал Sync.Reclaim недоступен - прибор это признаёт ===')
-Reset(0.95, 1.0)
-SET.ReclaimPauseCfg.probeSec = 1
-add(eng(115, AM))
-RunOnce()
-for _ = 1, 20 do SyncBreak(); RunOnce() end
-local jN = table.concat(msgs, ' | ')
-check(string.find(jN, 'sync=n/a') ~= nil,
-      'при отсутствии таблицы прибор пишет sync=n/a, а не props=0')
-check(string.find(jN, 'props=?') ~= nil,
-      'и все поля прибора помечены вопросом, а не выдуманным нулём')
-
-print('')
 print('=== 39c: движение инженеров меряется и без активной паузы ===')
 -- Пока инженер реклеймит, он стоит. Когда игра прекращает реклейм,
 -- инженер на атак-муве идёт к точке. Значит доля движущихся -
@@ -1026,17 +915,13 @@ check(string.find(jC, 'mov=0/1') ~= nil,
       'и доля движущихся инженеров')
 
 print('')
-print('=== 40: прибор выключен - видно pos=off и recl=? ===')
+print('=== 40: прибор выключен - видно pos=off ===')
 Reset(0.95, 1.0)
 SET.ReclaimPauseCfg.probeSec = 0
 add(eng(111, AM))
 for _ = 1, 20 do RunOnce() end
 local jC = table.concat(msgs, ' | ')
 check(string.find(jC, 'pos=off') ~= nil, 'при выключенном приборе стоит pos=off')
-check(string.find(jC, 'recl=?') ~= nil,
-      'при выключенном приборе recl помечен вопросом, а не нулём')
-check(string.find(jC, 'props=?') ~= nil and string.find(jC, 'left=?') ~= nil,
-      'при выключенном приборе props и left тоже помечены вопросом')
 
 print('')
 print('=== 41: РАЗБОР "почему инженера не взяли" ===')

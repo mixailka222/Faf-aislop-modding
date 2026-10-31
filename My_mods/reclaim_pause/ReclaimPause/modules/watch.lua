@@ -100,13 +100,7 @@ local posIter = 0          -- проход последнего замера п�
 local posMoved = 0         -- сколько удерживаемых юнитов сдвинулось
 local posTotal = 0         -- сколько всего удерживаемых проверено
 local posShift = 0         -- наибольший сдвиг, в игровых единицах
-local propLast = {}         -- id -> масса пропа на прошлом замере
-local reclaiming = 0        -- сколько пропов теряет массу прямо сейчас
-local propAvail = 0         -- сколько пропов вообще доступно для реклейма
-local propMass = 0          -- сколько массы на них осталось суммарно
 local probeDoneIter = 0     -- проход, в котором прибор уже мерил
-local propRaw = 0           -- ключей в Sync.Reclaim, включая помеченные false
-local syncSeen = false       -- доступна ли таблица Sync.Reclaim вообще
 
 -- ИЗМЕРЕНИЕ ПОРОГА ИГРЫ: при каком заполнении хранилища игра сама
 -- перестаёт отдавать реклейм инженерам на атак-муве.
@@ -565,6 +559,10 @@ end
 
 -- ПРИБОР: СТОИТ ЛИ ИНЖЕНЕР НА МЕСТЕ.
 --
+-- Реклейм прибор не меряет: Sync.Reclaim содержит только пропы, изменившиеся за
+-- последнюю синхронизацию, и живой признак из него не собрать. Скорость реклейма
+-- даёт счётчик игры econ.reclaimed, см. TickOnce.
+--
 -- Вопрос, который закрывает лог: останавливает ли флаг SetPaused ДВИЖЕНИЕ.
 -- От ответа зависит судьба настройки abortMove:
 --   - если флаг движение НЕ останавливает - обрыв обязателен, иначе
@@ -580,9 +578,7 @@ end
 -- ui/game/unittext.lua:19 и :78 (GetUnitById(...):GetPosition()).
 -- Координаты это Vector, где X = [1] и Z = [3] - подтверждено тем, что
 -- sim/Prop.lua:36,50 читает CachePosition[1] и CachePosition[3].
--- В пределах одного прохода прибор меряет ОДИН раз. Иначе второй вызов
--- сравнивает массу с только что записанной ею же и дельта теряется:
--- выходило recl=0 при падающем left. Проверено тестом.
+-- В пределах одного прохода прибор меряет ОДИН раз.
 local function RunProbe()
     if probeDoneIter == iterNo then
         return
@@ -624,75 +620,6 @@ local function RunProbe()
     posMoved = moved
     posTotal = total
     posShift = far
-
-    -- ПРИЗНАК АКТИВНОГО РЕКЛЕЙМА.
-    --
-    -- Вопрос, на который нельзя ответить догадкой: игра уже прекратила
-    -- реклейм или ещё нет. Игра сама об этом предупреждает в подсказке
-    -- загрузки (lua/loadingtips.lua:41):
-    --
-    --   "Engineers on an Attack-Move or Patrol order will stop reclaiming
-    --    when your storage is nearly full"
-    --
-    -- Числа игра не называет, и в исходниках порога нет - механика в
-    -- движке. Значит порог надо ИЗМЕРЯТЬ, а не угадывать.
-    --
-    -- Способ: sim -> UI канал Sync.Reclaim. sim/Prop.lua:384-392
-    -- публикует {mass, position} для каждого реклеймимого пропа, и
-    -- sim/Prop.lua:181 (OnDamage) вызывает UpdateReclaimLeft на каждом
-    -- тике реклейма, так что mass падает ВЖИВУЮ, а не по окончании.
-    --
-    -- Значит: если масса пропа между замерами уменьшилась - реклейм идёт
-    -- прямо сейчас. Это ровно тот признак, которого не хватало.
-    --
-    -- Ограничения (честно):
-    --   - таблица общая для всех армий, реклейм чужого ИИ тоже виден;
-    --   - CleanupUILabel ставит Sync.Reclaim[id] = false и ОБНУЛЯЕТ mass
-    --     (sim/Prop.lua:396-403), поэтому запись проверяется на тип;
-    --   - пропы с остатком меньше 10 исчезают из таблицы
-    --     (sim/Prop.lua:411-414), не забываясь от реклейма.
-    local alive = 0
-    local avail = 0
-    local leftMass = 0
-    local seen = {}
-    local tbl = nil
-    local okS, syncReclaim = pcall(function() return Sync.Reclaim end)
-    if okS and type(syncReclaim) == 'table' then
-        tbl = syncReclaim
-        syncSeen = true
-    else
-        syncSeen = false
-    end
-    if tbl then
-        -- Считаем ВСЕ ключи, даже помеченные false: это доказывает, что
-        -- канал работает. Если raw большой, а props=0, значит записи есть,
-        -- но все помечены false - то есть CleanupUILabel снял их все.
-        propRaw = table.getn(tbl)
-        for pid, rec in pairs(tbl) do
-            -- rec может быть false (снято CleanupUILabel)
-            if type(rec) == 'table' and type(rec.mass) == 'number' then
-                seen[pid] = true
-                -- Запись есть - значит проп ещё что-то отдаёт. Это
-                -- отличие от recl: здесь видно и то, что СЕЙЧАС не берут,
-                -- и сколько всего осталось подобрать.
-                avail = avail + 1
-                leftMass = leftMass + rec.mass
-                local prevMass = propLast[pid]
-                if prevMass ~= nil and rec.mass < prevMass - 0.01 then
-                    alive = alive + 1
-                end
-                propLast[pid] = rec.mass
-            end
-        end
-    end
-    for pid in pairs(propLast) do
-        if not seen[pid] then
-            propLast[pid] = nil
-        end
-    end
-    reclaiming = alive
-    propAvail = avail
-    propMass = leftMass
 end
 
 local function HeldCount()
@@ -771,53 +698,15 @@ local function Explain(cfg, massFill, energyFill)
     return 'THRESHOLDS-OK'
 end
 
--- Хвост прибора про реклейм.
---
--- Sync.Reclaim наполняется только пропами категории RECLAIMABLE
--- (sim/Prop.lua:39) и в трёх играх подряд была пуста (raw=0) при
--- реально идущем реклейме. Пустой канал и "реклейма нет" - это
--- РАЗНЫЕ вещи, поэтому при raw=0 печатаем вопрос, а не ноль.
---
--- Определение ОБЯЗАНО идти выше ProbeLine: в Lua локальная функция,
--- объявленная ниже по файлу, видна только ниже. Иначе здесь будет
--- глобальная переменная PropTail = nil и вызов упадёт.
-local function PropTail()
-    -- Прибор по таблице Sync.Reclaim в игре всегда пуст (проверено в
-    -- трёх играх), поэтому при пустом канале печатаем вопрос, а не ноль.
-    -- Настоящий признак живого реклейма берётся из состояния юнита и
-    -- печатается в строке состояния как recl=N/M.
-    if propRaw == 0 then
-        return 'sync=ok raw=0 props=? left=? recl=? (kanal pust)'
-    end
-    return 'sync=ok raw=' .. tostring(propRaw) ..
-        ' props=' .. tostring(propAvail) ..
-        ' left=' .. string.format('%.0f', propMass) ..
-        ' recl=' .. tostring(reclaiming)
-end
-
--- Строка прибора для лога. Прибор выключен - пишем pos=off, потому что
--- posMoved=0/0 читается как "никто не двигался", а на самом деле его не
--- мерили вообще. Разница важна при разборе лога.
+-- Строка прибора для лога. Прибор выключен или мод никого не держит - пишем
+-- pos=off, потому что posMoved=0/0 читается как "никто не двигался", а на самом
+-- деле позиции не мерили вообще. Разница важна при разборе лога.
 local function ProbeLine(probeSec)
-    if probeSec == nil or probeSec <= 0 then
-        return 'pos=off recl=? props=? left=?'
-    end
-    if not syncSeen then
-        -- Канала нет. Говорим прямо, а не показываем props=0: ноль и
-        -- отсутствие данных - не одно и то же.
-        return 'posMoved=' .. tostring(posMoved) .. '/' .. tostring(posTotal) ..
-            ' posShift=' .. string.format('%.1f', posShift) ..
-            ' sync=n/a recl=? raw=? props=? left=?'
-    end
-    if posTotal == 0 then
-        -- Мод никого не держит, позиции мы не мерили. posMoved=0/0 в
-        -- этом случае читается как "никто не двигался", а на самом деле
-        -- прибора позиций не было. Пишем прямо.
-        return 'pos=off ' .. PropTail()
+    if probeSec == nil or probeSec <= 0 or posTotal == 0 then
+        return 'pos=off'
     end
     return 'posMoved=' .. tostring(posMoved) .. '/' .. tostring(posTotal) ..
-        ' posShift=' .. string.format('%.1f', posShift) ..
-        ' ' .. PropTail()
+        ' posShift=' .. string.format('%.1f', posShift)
 end
 
 -- ПОЧЕМУ МЫ ВСЁ ЕЩЁ ДЕРЖИМ. Отдельная строка: без неё в логе
@@ -895,9 +784,6 @@ local function PeriodicLog(cfg, massFill, energyFill, holdSec, probeSec,
     LOG(PFX .. 'mass=' .. string.format('%.1f', massFill * 100) .. '%' ..
         ' energy=' .. string.format('%.1f', energyFill * 100) .. '%' ..
         ' engineers=' .. (engineerCount >= 0 and tostring(engineerCount) or '?') ..
-        -- Движение инженеров. Работает в игре, в отличие от props/recl
-        -- по таблице Sync.Reclaim и состояния Reclaiming: обе вещи из
-        -- слоя симуляции и из интерфейса недоступны.
         -- Скорость реклейма из счётчика самой игры. Это ПРЯМОЙ признак
         -- "реклеймят ли сейчас", в отличие от mov, который говорит
         -- только "идут ли".
@@ -1392,12 +1278,6 @@ function ReclaimPauseStart()
     posMoved = 0
     posTotal = 0
     posShift = 0
-    propLast = {}
-    reclaiming = 0
-    propAvail = 0
-    propMass = 0
-    propRaw = 0
-    syncSeen = false
     gstop.mass = 0
     gstop.pos = {}
     gstop.rec = 0

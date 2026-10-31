@@ -206,7 +206,7 @@ function Main()
         Options.Slider("Держать условие снятия N секунд (0 = сразу)",
             0, 60, 1, options.releaseHoldSec, 16),
         Options.Slider("Как часто искать инженеров, секунд", 1, 30, 1, options.rescanSec, 16),
-        Options.Slider("Прибор: координаты и признак реклейма, каждые N секунд (0 = выкл)",
+        Options.Slider("Прибор: координаты инженеров на паузе, каждые N секунд (0 = выкл)",
             0, 30, 1, options.probeSec, 16),
         Options.Slider("Первые N секунд матча не трогать выделение", 0, 60, 5, options.startGrace, 16),
         Options.Filter("Останавливать на месте (обрыв маршрута)", options.abortMove, 16),
