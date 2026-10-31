@@ -35,10 +35,12 @@ local function CollectMatchingUnits(expression)
         units = GetSelectedUnits()
     end
 
-    local Selection = import("/lua/ui/game/selection.lua")
-    if Selection and Selection.Hidden then
-        Selection.Hidden(collect)
+    -- rawget: a plain read of a missing module field reaches the strict _G and fails.
+    local Hidden = rawget(import("/lua/ui/game/selection.lua"), "Hidden")
+    if Hidden then
+        Hidden(collect)
     else
+        WARN("Custom Hotkeys: selection.lua has no Hidden, ASE may undo the selection")
         collect()
     end
 
@@ -59,7 +61,7 @@ local function IsLocked(unit)
         aseLocksProbed = true
 
         local ok, imported = pcall(import, "/mods/ASE/modules/Lock.lua")
-        if ok and imported and imported.IsLocked then
+        if ok and rawget(imported, "IsLocked") then
             AseLocks = imported
         end
     end
