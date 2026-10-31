@@ -490,6 +490,22 @@ check(SCAN_CALLS == 0, 'за 30 секунд при массе 20% обход н
 check(table.getn(SEL) == 1 and SEL[1].id == 998, 'выделение не тронуто')
 
 print('')
+print('=== 15a: БЕЗОПАСНОСТЬ - прибор и выключенный мод выделение не трогают ===')
+check(SET.ReclaimPauseDefaults().probeSec == 0, 'прибор по умолчанию выключен')
+Reset(0.20, 1.0)
+SET.ReclaimPauseCfg.probeSec = 5
+add(eng(100, AM))
+for _ = 1, 30 do RunOnce() end
+check(SCAN_CALLS == 0, 'включённый прибор сам обход не запускает')
+
+Reset(0.95, 1.0)
+SET.ReclaimPauseCfg.probeSec = 5
+SET.ReclaimPauseCfg.enabled = false
+add(eng(101, AM))
+for _ = 1, 30 do RunOnce() end
+check(SCAN_CALLS == 0, 'выключенный мод обход не запускает, даже с прибором')
+
+print('')
 print('=== 16: ЭНЕРГИЯ - масса полна, энергии мало -> паузы нет ===')
 Reset(0.95, 0.20)
 add(eng(100, AM))
@@ -815,20 +831,14 @@ RunOnce()
 check(isPaused(107), 'функция есть, но бросает - мод не падает, откат сработал')
 SetOfUnitMode('yes')
 
-print('=== 39c: движение инженеров меряется и без активной паузы ===')
--- Пока инженер реклеймит, он стоит. Когда игра прекращает реклейм,
--- инженер на атак-муве идёт к точке. Значит доля движущихся -
--- это признак, по которому ищем порог.
-Reset(0.60, 1.0)
+print('=== 39c: движение инженеров меряется, пока мод их держит ===')
+Reset(0.95, 1.0)
 SET.ReclaimPauseCfg.probeSec = 1
-SET.ReclaimPauseCfg.highMass = 100     -- мод не должен брать никого
-SET.ReclaimPauseCfg.lowMass = 99
 u125 = eng(125, AM)
 add(u125)
 RunOnce()
 for _ = 1, 20 do RunOnce() end
 local jQ = table.concat(msgs, ' | ')
-check(string.find(jQ, 'held=0') ~= nil, 'мод никого не держит: хранилище 60%')
 check(string.find(jQ, 'mov=0/1') ~= nil,
       'инженер найден и замерен: mov=0/1 - стоит на месте')
 
@@ -852,10 +862,8 @@ check(string.find(jX, 'mov=0/1') ~= nil,
 
 print('')
 print('=== 39d3: мелкий сдвиг не считается движением ===')
-Reset(0.60, 1.0)
+Reset(0.95, 1.0)
 SET.ReclaimPauseCfg.probeSec = 1
-SET.ReclaimPauseCfg.highMass = 100
-SET.ReclaimPauseCfg.lowMass = 99
 u128 = eng(128, AM)
 add(u128)
 RunOnce()
@@ -897,10 +905,8 @@ print('=== 39f: компактная строка замера идёт раз �
 -- высоком lowMass никогда не учащается. Между такими замерами масса
 -- уезжает на треть, и момент остановки реклейма пропадает. Компактная
 -- строка REC печатается каждый probeSec секунд.
-Reset(0.60, 1.0)
+Reset(0.95, 1.0)
 SET.ReclaimPauseCfg.probeSec = 1
-SET.ReclaimPauseCfg.highMass = 100
-SET.ReclaimPauseCfg.lowMass = 99
 u130 = eng(130, AM)
 add(u130)
 RunOnce()

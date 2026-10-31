@@ -927,16 +927,10 @@ local function TickOnce()
     local fresh = nil
     local foundN = -1
     local graceLeft = cfg.startGrace - iterNo * SCAN_SEC
-    -- Обход нужен и когда мод никого не держит: колбэк остановки реклейма
-    -- надо повесить ДО того, как реклейм прекратится, а до паузы мод
-    -- доходит позже - на момент, когда хранилище уже полно.
-    --
-    -- Обход трогает выделение (WithAllEngineers), а mod_info обещает,
-    -- что выделение трогается только при активной паузе. Поэтому без
-    -- прибора лишнего обхода не делаем: он идёт, когда держим ИЛИ когда
-    -- включён прибор, то есть в замере.
-    local runScan = want or (probeSec ~= nil and probeSec > 0)
-    if runScan and graceLeft <= 0 then
+    -- Обход трогает выделение (WithAllEngineers), поэтому он идёт только
+    -- при активной паузе. Прибор сам обход не запускает: иначе выделение
+    -- подменялось бы весь матч, даже у выключенного мода.
+    if want and graceLeft <= 0 then
         local got, n = EnsureEngineers()
         if got then
             fresh = got

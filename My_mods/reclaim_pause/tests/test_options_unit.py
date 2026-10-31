@@ -345,7 +345,7 @@ print('=== СБРОС НАСТРОЕК ГАЛОЧКОЙ В ОКНЕ ===')
 -- Ставим значения, которых нет в DEFAULTS: их видно в профиле.
 opts.highMass:Set(100)
 opts.lowMass:Set(99)
-opts.probeSec:Set(0)
+opts.probeSec:Set(9)
 
 -- Галочка снята с себя сама: повторное открытие окна не должно
 -- молча сбросить настройки ещё раз.
@@ -371,8 +371,8 @@ check(opts.highMass() == 70,
 check(opts.lowMass() == 65,
       'ползунок снятия показывает 65, а не 99 (получено ' ..
       tostring(opts.lowMass()) .. ')')
-check(opts.probeSec() == 5,
-      'прибор вернулся к 5 секундам, а не остался выключенным (получено ' ..
+check(opts.probeSec() == SET.ReclaimPauseDefaults().probeSec,
+      'прибор вернулся к значению по умолчанию (получено ' ..
       tostring(opts.probeSec()) .. ')')
 
 -- Флаг writing не должен залипнуть: после сброса ползунок снова
