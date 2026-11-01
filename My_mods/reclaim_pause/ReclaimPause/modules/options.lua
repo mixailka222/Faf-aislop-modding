@@ -151,10 +151,7 @@ function Main()
         cfg.abortMove      = options.abortMove() and true or false
         cfg.abortSec       = options.abortSec()
         cfg.skipSec        = options.skipSec()
-        -- тот же предохранитель, что и в settings.lua: иначе мод залипнет
-        if cfg.lowMass > cfg.highMass then
-            cfg.lowMass = cfg.highMass
-        end
+        Settings.ReclaimPauseApplyValues(cfg)
         -- пишем сразу, чтобы профиль, окно и мод видели одно и то же
         Settings.ReclaimPauseSaveSettings()
         Watch.ReclaimPauseApplySettings()
@@ -193,7 +190,7 @@ function Main()
         Options.Slider("Держать условие снятия N секунд (0 = сразу)",
             0, 60, 1, options.releaseHoldSec, 16),
         Options.Slider("Как часто искать инженеров, секунд", 1, 30, 1, options.rescanSec, 16),
-        Options.Slider("Первые N секунд матча не трогать выделение", 5, 60, 5, options.startGrace, 16),
+        Options.Slider("Первые N секунд матча не трогать выделение", 10, 60, 5, options.startGrace, 16),
         Options.Filter("Останавливать на месте (обрыв маршрута)", options.abortMove, 16),
         Options.Slider("Повторять обрыв каждые N секунд", 1, 15, 1, options.abortSec, 16),
         Options.Slider("Не трогать N секунд после ручного снятия", 0, 60, 1, options.skipSec, 16),

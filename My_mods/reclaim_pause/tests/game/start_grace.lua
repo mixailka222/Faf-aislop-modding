@@ -2,7 +2,7 @@
 -- not meet the game selecting the commander, or the player starts the match with nothing selected.
 local Test = import("/mods/ModTest/modules/test.lua")
 
-local SMALLEST_GRACE = 5
+local SMALLEST_GRACE = 10
 local SCAN_SECONDS = 15
 
 function Run()

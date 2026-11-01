@@ -278,8 +278,8 @@ check(uses >= 12, 'в окне ' .. tostring(uses) .. ' полей, и все н
 local sane = {
   highMass = { 50, 100 }, lowMass = { 0, 100 }, energyMin = { 0, 100 },
   minSec = { 0, 120 }, releaseHoldSec = { 0, 300 },
-  rescanSec = { 1, 60 }, startGrace = { 5, 300 }, abortSec = { 1, 30 },
-  skipSec = { 0, 600 },
+  rescanSec = { 1, 60 }, startGrace = { 10, 300 }, abortSec = { 1, 30 },
+  skipSec = { 0, 60 },
 }
 local badRange = ''
 for i = 1, table.getn(build) do
@@ -341,11 +341,35 @@ check(SET.ReclaimPauseCfg.lowMass <= SET.ReclaimPauseCfg.highMass,
 -- Значение, сохранённое до подъёма минимума, поднимается до него.
 PROFILE['ReclaimPause'].startGrace = 0
 SET.ReclaimPauseLoadSettings()
-check(SET.ReclaimPauseCfg.startGrace == 5,
+check(SET.ReclaimPauseCfg.startGrace == 10,
       'сохранённый startGrace=0 поднят до минимума (было ' ..
       tostring(SET.ReclaimPauseCfg.startGrace) .. ')')
 PROFILE['ReclaimPause'].startGrace = 15
+PROFILE['ReclaimPause'].skipSec = 300
 SET.ReclaimPauseLoadSettings()
+check(SET.ReclaimPauseCfg.skipSec == 60,
+      'сохранённый skipSec=300 опущен до максимума ползунка (было ' ..
+      tostring(SET.ReclaimPauseCfg.skipSec) .. ')')
+PROFILE['ReclaimPause'].skipSec = 3
+SET.ReclaimPauseLoadSettings()
+
+-- The OptionVars read the same old profile, and the page copies them into the mod on every change.
+opts.startGrace:Raw():Set(0)
+opts.skipSec:Raw():Set(300)
+opts.minSec:Set(4)
+check(SET.ReclaimPauseCfg.startGrace == 10,
+      'старый startGrace=0 из окна не обходит минимум (было ' ..
+      tostring(SET.ReclaimPauseCfg.startGrace) .. ')')
+check(SET.ReclaimPauseCfg.skipSec == 60,
+      'старый skipSec=300 из окна не обходит максимум (было ' ..
+      tostring(SET.ReclaimPauseCfg.skipSec) .. ')')
+check(PROFILE['ReclaimPause'].startGrace == 10 and PROFILE['ReclaimPause'].skipSec == 60,
+      'в профиль попали значения в пределах (startGrace=' ..
+      tostring(PROFILE['ReclaimPause'].startGrace) ..
+      ', skipSec=' .. tostring(PROFILE['ReclaimPause'].skipSec) .. ')')
+opts.startGrace:Raw():Set(15)
+opts.skipSec:Raw():Set(3)
+opts.minSec:Set(3)
 
 -- возвращаем как было, чтобы следующие проверки считались от известного
 opts.highMass:Set(90)

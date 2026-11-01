@@ -86,23 +86,34 @@ local function SaneBool(val, def)
     return false
 end
 
+---Copy the values into ReclaimPauseCfg within their limits. The profile and the
+---page both pass here: an old profile can hold a value the sliders no longer reach.
+---@param values table
+function ReclaimPauseApplyValues(values)
+    ReclaimPauseCfg.enabled   = SaneBool(values.enabled, DEFAULTS.enabled)
+    ReclaimPauseCfg.highMass  = SaneInt(values.highMass, DEFAULTS.highMass, 50, 100)
+    ReclaimPauseCfg.lowMass   = SaneInt(values.lowMass, DEFAULTS.lowMass, 0, 100)
+    ReclaimPauseCfg.energyMin = SaneInt(values.energyMin, DEFAULTS.energyMin, 0, 100)
+    ReclaimPauseCfg.minSec    = SaneInt(values.minSec, DEFAULTS.minSec, 0, 120)
+    ReclaimPauseCfg.releaseHoldSec =
+        SaneInt(values.releaseHoldSec, DEFAULTS.releaseHoldSec, 0, 300)
+    ReclaimPauseCfg.rescanSec = SaneInt(values.rescanSec, DEFAULTS.rescanSec, 1, 60)
+    -- At 5 the first pass can still meet the game selecting the commander, and his selection is lost.
+    ReclaimPauseCfg.startGrace = SaneInt(values.startGrace, DEFAULTS.startGrace, 10, 300)
+    ReclaimPauseCfg.abortMove = SaneBool(values.abortMove, DEFAULTS.abortMove)
+    ReclaimPauseCfg.abortSec = SaneInt(values.abortSec, DEFAULTS.abortSec, 1, 30)
+    ReclaimPauseCfg.skipSec = SaneInt(values.skipSec, DEFAULTS.skipSec, 0, 60)
+    -- порог снятия не может быть выше порога паузы, иначе мод залипнет
+    if ReclaimPauseCfg.lowMass > ReclaimPauseCfg.highMass then
+        ReclaimPauseCfg.lowMass = ReclaimPauseCfg.highMass
+    end
+end
+
 ---Перечитать настройки из профиля.
 function ReclaimPauseLoadSettings()
     local ok, saved = pcall(function() return Prefs.GetFromCurrentProfile(PREFS_KEY) end)
     if ok and type(saved) == 'table' then
-        ReclaimPauseCfg.enabled   = SaneBool(saved.enabled, DEFAULTS.enabled)
-        ReclaimPauseCfg.highMass  = SaneInt(saved.highMass, DEFAULTS.highMass, 50, 100)
-        ReclaimPauseCfg.lowMass   = SaneInt(saved.lowMass, DEFAULTS.lowMass, 0, 100)
-        ReclaimPauseCfg.energyMin = SaneInt(saved.energyMin, DEFAULTS.energyMin, 0, 100)
-        ReclaimPauseCfg.minSec    = SaneInt(saved.minSec, DEFAULTS.minSec, 0, 120)
-        ReclaimPauseCfg.releaseHoldSec =
-            SaneInt(saved.releaseHoldSec, DEFAULTS.releaseHoldSec, 0, 300)
-        ReclaimPauseCfg.rescanSec = SaneInt(saved.rescanSec, DEFAULTS.rescanSec, 1, 60)
-        -- Below 5 the first pass meets the game selecting the commander, and his selection is lost.
-        ReclaimPauseCfg.startGrace = SaneInt(saved.startGrace, DEFAULTS.startGrace, 5, 300)
-        ReclaimPauseCfg.abortMove = SaneBool(saved.abortMove, DEFAULTS.abortMove)
-        ReclaimPauseCfg.abortSec = SaneInt(saved.abortSec, DEFAULTS.abortSec, 1, 30)
-        ReclaimPauseCfg.skipSec = SaneInt(saved.skipSec, DEFAULTS.skipSec, 0, 600)
+        ReclaimPauseApplyValues(saved)
     else
         ReclaimPauseCfg.enabled   = DEFAULTS.enabled
         ReclaimPauseCfg.highMass  = DEFAULTS.highMass
@@ -115,10 +126,6 @@ function ReclaimPauseLoadSettings()
         ReclaimPauseCfg.abortMove = DEFAULTS.abortMove
         ReclaimPauseCfg.abortSec = DEFAULTS.abortSec
         ReclaimPauseCfg.skipSec = DEFAULTS.skipSec
-    end
-    -- порог снятия не может быть выше порога паузы, иначе мод залипнет
-    if ReclaimPauseCfg.lowMass > ReclaimPauseCfg.highMass then
-        ReclaimPauseCfg.lowMass = ReclaimPauseCfg.highMass
     end
 end
 
