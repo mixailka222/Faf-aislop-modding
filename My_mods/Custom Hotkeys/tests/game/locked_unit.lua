@@ -3,7 +3,7 @@
 
 -- A unit locked in the real ASE is skipped, with keys and the mouse from game_test.py. ASE takes a locked unit
 -- out of a selection on its own, so this also shows that the hidden selection of the mod does not run into
--- that filter. The scenario gives the state of Shift, see nearest_unit.lua.
+-- that filter. The scenario gives the answer of IsKeyDown, see nearest_unit.lua.
 local Test = import("/mods/ModTest/modules/test.lua")
 local KeyMapper = import("/lua/keymap/keymapper.lua")
 
@@ -83,7 +83,7 @@ function Run()
     Test.Check(SelectedAfterKey({ second }), "the locked unit at the cursor is skipped")
 
     shift = true
-    Test.PressKey(ACTION_KEY)
+    Test.PressKey("Shift-" .. ACTION_KEY)
     WaitSeconds(NOTHING_HAPPENS_SECONDS)
     Test.Check(Same({ second }), "Shift does not add the locked unit")
     shift = false

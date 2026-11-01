@@ -2,8 +2,9 @@
 
 -- The three actions with keys and the mouse from game_test.py, the keys are assigned the way the key window
 -- does it. With nothing that can build a key selects the unit nearest to the cursor, with Shift it adds the
--- next one, with a builder selected it runs Hotbuild. The engine takes Shift from the keyboard of the system
--- and only with the focus, which the stand does not take, so the scenario gives the state of Shift.
+-- next one, with a builder selected it runs Hotbuild. A press with Shift goes through the binding ReUI adds
+-- for it. IsKeyDown sees such a Shift only with the focus, which the stand does not take, so the scenario
+-- gives the answer of IsKeyDown.
 local Test = import("/mods/ModTest/modules/test.lua")
 local CommandMode = import("/lua/ui/game/commandmode.lua")
 local KeyMapper = import("/lua/keymap/keymapper.lua")
@@ -95,9 +96,9 @@ function Run()
         Test.Check(SelectedAfterKey({ second }), action.name .. ": another cursor selects the other unit")
 
         shift = true
-        Test.PressKey(action.key)
+        Test.PressKey("Shift-" .. action.key)
         Test.Check(SelectedAfterKey(pair), action.name .. ": Shift adds the next unit")
-        Test.PressKey(action.key)
+        Test.PressKey("Shift-" .. action.key)
         WaitSeconds(NOTHING_HAPPENS_SECONDS)
         Test.Check(Same(pair), action.name .. ": with nothing left to add the selection stays")
         shift = false

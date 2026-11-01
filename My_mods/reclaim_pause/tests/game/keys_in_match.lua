@@ -8,6 +8,7 @@ local PATROL_ENGINEER = "uel0105"
 local TOGGLE_KEY = "K"
 local CHECK_KEY = "L"
 local RESET_KEY = "J"
+local COMBINATION = "Ctrl-Alt-R"
 local KEY_SECONDS = 8
 
 function Run()
@@ -70,4 +71,9 @@ function Run()
     Test.Check(Test.Logged(watched, "verdict="), "the line has verdict=")
 
     Press(RESET_KEY, settingsLines, "settings reset to defaults")
+
+    KeyMapper.SetUserKeyMapping(COMBINATION, TOGGLE_KEY, "reclaimpause_toggle")
+    Confirm()
+    Test.ForgetLog(watched)
+    Press(COMBINATION, watched, "toggled, enabled=false")
 end
