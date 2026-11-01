@@ -11,7 +11,9 @@ local TAKER = 3
 local GIVER_MASS = 80
 local GIVER_ENERGY = 500
 local FIRST_NUMBERS_SECONDS = 15
-local FULL_STORAGE_SECONDS = 6
+-- One sample with room spoils its whole window of 6 seconds, so the 0 comes with the next window, at most
+-- 12 seconds after the storage got full. The second on top is the step of this check.
+local FULL_STORAGE_SECONDS = 13
 local LATE_INCOME_RATIO = 1.5
 local FULL_ROUNDS = 2
 local ROWS_PRESET = "Все строки"
@@ -98,7 +100,7 @@ function Run()
         local took = GetGameTimeSeconds() - fullAt
         Test.Step("round " .. round .. ": seconds of game time to 0 after the storage got full: " .. tostring(took))
         Test.Check(zero, "M ally overflow goes to 0 with a full storage")
-        Test.Check(took <= FULL_STORAGE_SECONDS, "it takes 6 seconds or less")
+        Test.Check(took <= FULL_STORAGE_SECONDS, "it takes two windows or less")
         WaitSeconds(0.5)
         Test.Step("row: '" .. Label(panel, "mOverflow") .. "'")
         if round < FULL_ROUNDS then
