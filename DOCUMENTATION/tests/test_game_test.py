@@ -1,3 +1,5 @@
+import contextlib
+import io
 import sys
 import tempfile
 import unittest
@@ -366,6 +368,76 @@ class ScenariosTests(TempCase):
 
     def test_mod_without_scenarios_gets_the_smoke(self):
         self.assertEqual(game_test.scenario_names(self.root / "project" / "Mod"), ["smoke"])
+
+
+class ChoiceTests(TempCase):
+    """What a command line runs: only the launch of the game is replaced."""
+
+    def setUp(self):
+        super().setUp()
+        self.mod = self.root / "project" / "Mod"
+        write(self.mod / "mod_info.lua", 'uid = "target"\nui_only = true\n')
+        write(self.root / "project" / "tests" / "game" / "a.lua", "")
+        write(self.root / "project" / "tests" / "game" / "b.lua", "")
+        write(self.root / "faf" / "bin" / "ForgedAlliance.exe", "")
+
+    def run_stand(self, *args):
+        ran = []
+
+        def run_scenario(_mod, _info, scenario, _faf, without_mod):
+            ran.append(scenario)
+            return (["no mod, no effect"] if without_mod else []), False
+
+        stream = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+        argv = ["game_test.py", str(self.mod), "--faf", str(self.root / "faf"), *args]
+        with mock.patch.object(sys, "argv", argv), mock.patch.object(game_test, "run_scenario", run_scenario), \
+                contextlib.redirect_stdout(stream):
+            code = game_test.main()
+        stream.flush()
+        return code, ran, stream.buffer.getvalue().decode("utf-8")
+
+    def test_without_a_choice_the_game_does_not_start(self):
+        code, ran, _ = self.run_stand()
+        self.assertEqual(code, 1)
+        self.assertEqual(ran, [])
+
+    def test_without_a_choice_the_scenarios_and_the_cost_are_shown(self):
+        _, _, output = self.run_stand()
+        self.assertIn("smoke, a, b", output)
+        self.assertIn("запусков: 3, около 2 мин", output)
+
+    def test_only_runs_the_named_scenario(self):
+        code, ran, _ = self.run_stand("--only", "b")
+        self.assertEqual((code, ran), (0, ["b"]))
+
+    def test_only_can_be_repeated(self):
+        code, ran, _ = self.run_stand("--only", "b", "--only", "smoke")
+        self.assertEqual((code, ran), (0, ["b", "smoke"]))
+
+    def test_all_runs_the_smoke_and_every_scenario(self):
+        code, ran, _ = self.run_stand("--all")
+        self.assertEqual((code, ran), (0, ["smoke", "a", "b"]))
+
+    def test_unknown_scenario_stops_before_the_game_starts(self):
+        code, ran, output = self.run_stand("--only", "a", "--only", "gone")
+        self.assertEqual((code, ran), (1, []))
+        self.assertIn("gone", output)
+
+    def test_all_and_only_cannot_go_together(self):
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            self.run_stand("--all", "--only", "a")
+
+    def test_control_run_takes_several_scenarios(self):
+        code, ran, _ = self.run_stand("--only", "a", "--only", "b", "--without-mod")
+        self.assertEqual((code, ran), (0, ["a", "b"]))
+
+    def test_control_run_is_refused_for_the_whole_mod(self):
+        code, ran, _ = self.run_stand("--all", "--without-mod")
+        self.assertEqual((code, ran), (1, []))
+
+    def test_control_run_is_refused_for_the_smoke(self):
+        code, ran, _ = self.run_stand("--only", "a", "--only", "smoke", "--without-mod")
+        self.assertEqual((code, ran), (1, []))
 
 
 class ReplayTests(TempCase):

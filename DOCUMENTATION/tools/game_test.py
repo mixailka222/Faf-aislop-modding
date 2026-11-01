@@ -1,8 +1,13 @@
-"""Runs a UI mod in the real game: a smoke run, then the scenarios from tests/game of its project.
+"""Runs a UI mod in the real game: a smoke run and the scenarios from tests/game of its project.
 
     python DOCUMENTATION/tools/game_test.py "My_mods/project/Mod"
-    python DOCUMENTATION/tools/game_test.py "My_mods/project/Mod" --only scenario
+    python DOCUMENTATION/tools/game_test.py "My_mods/project/Mod" --only scenario --only smoke
     python DOCUMENTATION/tools/game_test.py "My_mods/project/Mod" --only scenario --without-mod
+    python DOCUMENTATION/tools/game_test.py "My_mods/project/Mod" --all
+
+Without --only or --all the game does not start: the command shows the scenarios and the cost of a
+full run. One start of the game takes from 15 seconds to 2 minutes, so --all is a run for the end of
+the work and needs the permission of the developer.
 
 --without-mod is the control run of a new scenario: without the mod the scenario has to fail.
 
@@ -28,6 +33,7 @@ Lines at the top of a scenario file change its run:
 """
 import argparse
 import ctypes
+import math
 import ntpath
 import os
 import re
@@ -58,6 +64,7 @@ LAN_HOST = "127.0.0.1"
 LAN_TEAM = "2"
 LAN_OPTIONS = "Victory:sandbox"
 TIMEOUT = 120
+ROUGH_RUN_SECONDS = 30
 
 UID = re.compile(r"""^uid\s*=\s*["']([^"']+)""", re.M)
 UI_ONLY = re.compile(r"^ui_only\s*=\s*true\b", re.M)
@@ -492,13 +499,16 @@ def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("mod", help="папка мода, в ней лежит mod_info.lua")
-    parser.add_argument("--only", metavar="NAME", help="один сценарий из tests/game или smoke")
+    choice = parser.add_mutually_exclusive_group()
+    choice.add_argument("--only", metavar="NAME", action="append",
+                        help="сценарий из tests/game или smoke, ключ можно повторять")
+    choice.add_argument("--all", action="store_true", help="весь мод, только с разрешения разработчика")
     parser.add_argument("--without-mod", action="store_true", help="контрольный запуск сценария без мода")
     parser.add_argument("--faf", type=Path, default=DEFAULT_FAF, help="папка данных FAF, в ней лежит bin")
     options = parser.parse_args()
 
     mod = Path(options.mod).resolve()
-    if options.without_mod and options.only in (None, SMOKE):
+    if options.without_mod and (not options.only or SMOKE in options.only):
         print("[FAIL] --without-mod работает только вместе с --only и сценарием")
         return 1
     if not (options.faf / "bin" / "ForgedAlliance.exe").exists():
@@ -511,9 +521,17 @@ def main() -> int:
         if not info.ui_only:
             raise GameTestError("Стенд проверяет только моды с ui_only = true")
         known = scenario_names(mod)
-        if options.only and options.only not in known:
-            raise GameTestError(f"Нет сценария {options.only}, есть: {', '.join(known)}")
-        for scenario in [options.only] if options.only else known:
+        if not options.only and not options.all:
+            minutes = math.ceil(len(known) * ROUGH_RUN_SECONDS / 60)
+            print(f"[FAIL] Игра не запускалась. Сценарии: {', '.join(known)}")
+            print("    Для текущей работы выбери нужные: --only <сценарий>, ключ можно повторять")
+            print(f"    Весь мод, запусков: {len(known)}, около {minutes} мин: --all, "
+                  "только с разрешения разработчика")
+            return 1
+        unknown = [name for name in options.only or [] if name not in known]
+        if unknown:
+            raise GameTestError(f"Нет сценария {', '.join(unknown)}, есть: {', '.join(known)}")
+        for scenario in options.only or known:
             started = time.monotonic()
             for attempt in range(1, ATTEMPTS + 1):
                 problems, disturbed = run_scenario(mod, info, scenario, options.faf, options.without_mod)
