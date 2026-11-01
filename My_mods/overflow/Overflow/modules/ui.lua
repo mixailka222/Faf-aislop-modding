@@ -740,9 +740,9 @@ local function ComputeBody(vis)
 
     local bodyH = 0
     if howMany > 0 then
-        -- y уже уехал на шаг ПОСЛЕДНЕЙ строки, поэтому её низ - это y
-        -- минус шаг.
-        bodyH = (y - L.ROW_STEP) + L.PAD_BOTTOM
+        -- y has already moved one step past the last row: its top is y minus
+        -- the step, and the window has to hold the whole row below that top.
+        bodyH = (y - L.ROW_STEP) + L.ROW_H + L.PAD_BOTTOM
     end
 
     return items, howMany, bodyH
@@ -916,15 +916,13 @@ local function PlaceRows()
     -- через InvScaleNumber (layouthelpers.lua:64; тот же приём для позиции окна
     -- взят из massfabs.lua:228-238, см. шапку файла).
     --
-    -- Содержимое занимает от PAD_TOP до низа ПОСЛЕДНЕЙ СТРОКИ. Низ последней
-    -- строки - это её верх плюс ROW_H, а верх последней строки в bodyH уже
-    -- учтён вместе с PAD_BOTTOM (ComputeBody). Отсюда span.
+    -- The content runs from PAD_TOP to the bottom of the last row, bodyH holds
+    -- that span together with both margins (ComputeBody).
     local gap = 0
     local n = G.bodyCount
     if n > 1 then
         local room = LayoutHelpers.InvScaleNumber(client.Bottom() - client.Top())
-        local span = (G.bodyH - L.PAD_BOTTOM - L.PAD_TOP) + L.ROW_H
-        local extra = room - L.PAD_TOP - L.PAD_BOTTOM - span
+        local extra = room - G.bodyH
         if extra > 0 then
             gap = extra / (n - 1)
         end
@@ -1073,9 +1071,12 @@ end
 -- это без запуска в игре нельзя. Поэтому после каждого шага переноса мы
 -- перевыставляем высоту сами: это стоит одну строку и не зависит от того,
 -- что именно её сбило.
+--
+-- The rows may have outgrown the height the player chose, so the height comes
+-- from FitHeight and not from G.wantH alone.
 local function KeepHeight()
-    if G.wantH and G.win then
-        SetWindowHeight(G.wantH)
+    if G.wantH then
+        FitHeight(G.bodyH)
     end
 end
 
