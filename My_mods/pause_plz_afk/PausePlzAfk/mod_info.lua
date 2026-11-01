@@ -1,6 +1,6 @@
 name = "Pause Plz AFK (message fix)"
-uid = "c4ed69b6-61b5-4d15-a3ba-dde6b5b79e3a"
-version = 2
+uid = "9c94d21e-c918-4e07-9650-47683bc41c16"
+version = 3
 copyright = "2026 4z0t, extramassblocker"
 description = "If you missed the match start, pauses the game for you and sends an AFK message to everyone. The message can be edited in the 'UI mods options' menu (requires the 'UI mod tools' mod). Based on PPA by 4z0t."
 author = "4z0t, extramassblocker, Puffskein"
