@@ -64,11 +64,11 @@
 Наблюдение: содержимое папки логов на компьютере разработчика.
 Наблюдение: путь взят из команды запуска игры в файле краша, клиент FAF.
 
-### Лог текущей партии может быть неполным до выхода из игры
+### Лог пишется на диск по ходу матча
 
-Пока игра открыта, файл текущей партии может быть неполным, поэтому отсутствие строки в файле не доказывает, что код её не писал. Самый свежий по дате файл может относиться к прошлой сессии.
+Файл отстаёт от игры на секунды, поэтому его можно читать, не закрывая игру. Самый свежий по дате файл может относиться к прошлой сессии.
 
-Не подтверждено: нужно открыть лог во время матча и сравнить его с файлом после выхода из игры.
+Наблюдение: процесс игры завершён извне на 150-й секунде запуска, последней строкой файла осталась `Session time: 00:02:27`.
 
 ### Архивы `.nx2` открываются обычным zip
 
@@ -101,11 +101,11 @@
 Источник: lua-lang:src/lparser.c#luaX_checklimit(fs->ls, f->nups + 1, MAXUPVALUES, "upvalues");
 Источник: lua-lang:src/llex.c#msg = luaO_pushfstring(ls->L, "too many %s (limit=%d)", msg, limit);
 
-### Пишется ли в лог ошибка внутри потока `ForkThread`
+### Ошибка внутри `ForkThread` попадает в лог
 
-В `bin/ForgedAlliance.exe` есть строки `Error running lua script: %s` и `Error running lua script from destroyed thread: %s`, поэтому утверждать, что поток умирает без следа в логе, нельзя. Попадает ли в лог ошибка вне `pcall`, не установлено. Цикл в упавшем потоке после ошибки не работает, поэтому тело долгого цикла всё равно кладут в `pcall` и пишут ошибку в лог, а `WaitSeconds` оставляют снаружи.
+Вне `pcall` поток обрывается, а в логе появляется `warning: Error running lua script: <файл>(<строка>): <текст>` и стек. Цикл в упавшем потоке после ошибки не работает, поэтому тело долгого цикла всё равно кладут в `pcall`, а `WaitSeconds` оставляют снаружи.
 
-Не подтверждено: нужен опыт в игре: вызвать `error()` внутри `ForkThread`, например `ForkThread(function() error('x') end)`, и прочитать лог.
+Наблюдение: `ForkThread(function() error('x') end)` в интерфейсе матча, строка и стек прочитаны в логе.
 
 ### LuaLS: ложное `undefined-global` на вызове сразу после `..`
 
@@ -167,11 +167,12 @@
 
 Источник: lua-lang:src/lparser.c#"`%s' expected", luaX_token2str(ls, token)));
 
-### `attempt to index ... (a nil value)`
+### `attempt to index ... (a nil value)` пишет только локальный Lua
 
-Поле берут у `nil`: объект не создан или функция вернула пусто. Текст называет, что было `nil`: ``local `a'`` или ``field `x'``, а для upvalue имени нет, и сообщение короче. Искать надо, откуда пришло значение, а не править саму строку.
+В игре чтение поля у `nil` ошибки не даёт и возвращает `nil`, см. `dialect.md`. Эту строку выводит `.tools/faf-lua/lua.exe`, и там искать надо, откуда пришло значение. В игре пустое значение проявляется позже и в другом месте: ``attempt to call method `X'``, ``attempt to perform arithmetic`` или ``Attempt to set attribute 'x' on nil``.
 
 Источник: lua-lang:src/ldebug.c#luaG_runerror(L, "attempt to %s a %s value", op, t);
+Наблюдение: поиск по папке логов FAF на компьютере разработчика эту строку не нашёл, замер чтения описан в `dialect.md`.
 
 ### `attempt to call a table value`
 
@@ -208,3 +209,55 @@
 Не сообщение движка: эту строку пишут хуки `gamemain.lua` наших модов, когда `import` не удался или нет точки входа. Рядом стоит `Reason:`, а настоящая причина лежит выше в логе, в `SCR_LuaDoFileConcat` или в `WARN` перед `Error importing`.
 
 Наблюдение: строка есть только в hook/lua/ui/game/gamemain.lua модов из My_mods, поиск по references/fa её не находит.
+
+### Матч запускается из командной строки
+
+`ForgedAlliance.exe /map SCMP_009` сразу начинает матч, без клиента FAF и лобби. Без `/noAi` остальные армии занимает ИИ. Фракцию задаёт `/faction`: `/seed` её не фиксирует. Размер окна задаёт `/windowed 1024 768`. Режим победы по умолчанию `sandbox`.
+
+Источник: fa:lua/SinglePlayerLaunch.lua#Called by the engine using the `/map <mapPath>` launch arg
+Источник: fa:lua/SinglePlayerLaunch.lua#if not HasCommandLineArg("/noAi") then
+Источник: https://wiki.faforever.com/en/Development/Game-Development/Command-Line-Switches
+Наблюдение: запуск с этими ключами; при одном `/seed 1` командиры в разных запусках были разных фракций.
+
+### `/init` принимает файл вне папки `bin`
+
+Подходит абсолютный путь. Движок ставит `InitFileDir` на папку этого файла, а штатный init ищет от неё `fa_path.lua` и `gamedata`. Поэтому свой init сначала возвращает значение, затем выполняет штатный файл и дописывает моды в `path`:
+
+```lua
+InitFileDir = 'C:/ProgramData/FAForever/bin'
+dofile(InitFileDir .. '/init.lua')
+table.insert(path, { dir = '<путь к моду>', mountpoint = '/mods/имя' })
+```
+
+Так мод подключается из своей папки, без копирования в игру или в хранилище модов.
+
+Источник: fa:init_faf.lua#dofile(InitFileDir .. '/../fa_path.lua')
+Наблюдение: запуск с таким init из временной папки, в логе `DISK: AddSearchPath` с папкой мода и `Hooked` с его хуками.
+
+### `/prefs` считает путь от папки настроек игры
+
+Значение приклеивается к `%LOCALAPPDATA%\Gas Powered Games\Supreme Commander Forged Alliance\`. С абсолютным путём игра пишет `Unable to open preference file` и работает на пустых настройках, поэтому моды из файла не включаются. Работает относительный путь вида `..\..\Temp\папка\Game.prefs`. Файл только с таблицей `active_mods` игра считает устаревшим: переименовывает его в `Game.prefs.bad` и создаёт настройки по умолчанию. Достаточно добавить `profile` с одним профилем и `version = { major = 1 }`. Основной `Game.prefs` при этом не меняется.
+
+Источник: https://wiki.faforever.com/en/Development/Game-Development/Command-Line-Switches
+Наблюдение: запуски с абсолютным путём, с файлом из одной `active_mods` и с таким файлом; время изменения основного `Game.prefs` осталось прежним.
+
+### `Blueprints.lua` читает настройки мимо `/prefs`
+
+Он сам открывает `/preferences/Game.prefs`, а штатный init монтирует туда папку настроек игрока. Поэтому при `/prefs` с другим файлом `PreGameData` всё равно берётся из настроек игрока: список иконок модов приходит оттуда, и без этих модов лог получает `Unable to load icons from mod`. Чтобы отделить запуск от настроек игрока, в своём init меняют `dir` у записи `path` с `mountpoint = '/preferences'`.
+
+Источник: fa:lua/system/Blueprints.lua#local file = DiskFindFiles("/preferences", "Game.prefs")[1]
+Наблюдение: запуск с временным `/prefs` дал эти строки в логе, после замены `dir` они исчезли.
+
+### Матч через `/map` сохраняет реплей
+
+Файл `LastGame.SCFAReplay` ложится в `Documents\My Games\Gas Powered Games\Supreme Commander Forged Alliance\replays\<профиль>\`. Папка создаётся, если её не было.
+
+Источник: fa:lua/SinglePlayerLaunch.lua#sessionInfo.createReplay = true
+Наблюдение: строка `Saving replay to` в логе запуска и файл на этом пути.
+
+### `SimLua` отвергается в матче через `/map`
+
+`SessionGetScenarioInfo().Options.CheatsEnabled` там равно `'true'`, но `ConExecute('SimLua ...')` не выполняется, а в логе появляется `<игрок> is trying to cheat!`. Действия в sim в таком матче делают своим обработчиком: мод с `ui_only = false` хукает `/lua/SimCallbacks.lua`, а обработчик вызывают через `SimCallback`.
+
+Источник: fa:lua/SinglePlayerLaunch.lua#CheatsEnabled = 'true',
+Наблюдение: запуск с `SimLua`, затем с таким модом: обработчик создал юнитов и выдал им приказы.
