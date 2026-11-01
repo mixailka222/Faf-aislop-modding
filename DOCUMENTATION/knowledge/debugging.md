@@ -278,6 +278,13 @@
 Источник: fa:lua/ui/game/gamemain.lua#local func = chatFuncs[data.Identifier]
 Наблюдение: второй клиент стенда вышел по такому сообщению хоста, отправленному за 0,5 с до `ExitApplication`.
 
+### Сообщение чата видно в истории чата, в том числе на паузе
+
+`SessionSendChatMessage({ to = "all", Chat = true, text = "..." })` без списка клиентов возвращается отправителю и попадает в `import("/lua/ui/game/chat/ChatModel.lua").GetSingleton().History()`, текст лежит в поле `Text`. Сценарий стенда может проверить по этой истории, что сообщение прошло через чат игры. Пауза доставке не мешает.
+
+Источник: fa:lua/ui/game/chat/ChatController.lua#Text       = msg.text,
+Наблюдение: одиночный матч, второе сообщение ушло через секунду после `SessionRequestPause` и появилось в истории.
+
 ### `bad argument #1 to 'find'` в `construction.lua` после приказа на улучшение
 
 Панель постройки заполняет поля `ID` и `UnitID` улучшения в чертеже, когда игрок открывает её вкладку улучшений, а очередь панели их читает. Приказ `IssueCommand("UNITCOMMAND_Script", { TaskName = "EnhanceTask", Enhancement = "Имя" }, false)` без открытой вкладки сам по себе выполняется, но `IntegrateEnhancements` падает со стеком в логе. Выделение юнита эти поля не заполняет. Такой приказ код без игрока отдаёт, заполнив их сам.
