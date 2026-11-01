@@ -1,0 +1,9 @@
+name = "ModTestSim"
+version = 1
+copyright = ""
+description = "Sim side of the scenarios of game_test.py: a UI mod cannot create units or change resources."
+author = ""
+url = ""
+uid = "modtest-sim-1"
+exclusive = false
+ui_only = false
