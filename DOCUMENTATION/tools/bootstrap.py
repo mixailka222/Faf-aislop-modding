@@ -29,7 +29,7 @@ EXE = ".exe" if os.name == "nt" else ""
 SPARSE = {
     "fa": ["engine", "lua"],
     "fa-addon": ["lua-ls-addon"],
-    "ui-libs": ["mods/ReUI", "mods/UMT"],
+    "ui-libs": ["mods/ReUI", "mods/UMT", "mods/ASE"],
     "lua-lang": [],
 }
 
@@ -176,6 +176,8 @@ def ensure_repo(name: str, spec: dict, sparse: list[str]) -> None:
                 f"Папка references/{name} уже занята чем-то другим. "
                 f"Ожидается клон {url}. Перенесите папку и запустите скрипт снова."
             )
+        if sparse:
+            run(["git", "sparse-checkout", "set", *sparse], target)
         fetch_ref(target, spec["ref"])
         return
 
@@ -263,9 +265,10 @@ def build_faf_lua(zig_version: str) -> None:
 def install(versions: dict, build_luac: bool) -> None:
     expected = expected_versions(versions)
     for name, sparse in SPARSE.items():
+        repository = ROOT / "references" / name
         install_step(name, expected[name],
                      lambda name=name, sparse=sparse: ensure_repo(name, versions[name], sparse),
-                     ROOT / "references" / name)
+                     repository, *(repository / folder for folder in sparse))
     install_step("lua-language-server", expected["lua-language-server"],
                  lambda: install_luals(expected["lua-language-server"]), luals_path())
     if build_luac:
