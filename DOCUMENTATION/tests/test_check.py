@@ -309,14 +309,24 @@ class ChangedModsTests(RepoCase):
         self.two = self.mod("My_mods/two/ModTwo")
         self.base = self.commit("base")
 
-    def test_mod_with_changed_code_is_selected(self):
+    def test_only_the_mod_with_changed_code_is_selected(self):
         write(self.one / "Main.lua", "")
         self.commit()
-        self.assertEqual(check.changed_mods(self.root, self.base), [self.hotkeys, self.one])
+        self.assertEqual(check.changed_mods(self.root, self.base), [self.one])
 
-    def test_hotkeys_are_always_selected(self):
+    def test_change_outside_the_mods_selects_none(self):
+        write(self.root / "notes.txt", "notes")
         self.commit()
-        self.assertEqual(check.changed_mods(self.root, self.base), [self.hotkeys])
+        self.assertEqual(check.changed_mods(self.root, self.base), [])
+
+    def test_changed_rules_of_the_check_select_all_mods(self):
+        for name in ("DOCUMENTATION/tools/check.py", "DOCUMENTATION/tools/validate_mod.py", ".luarc.json"):
+            with self.subTest(name):
+                write(self.root / name, name)
+                base = self.commit()
+                write(self.root / name, "changed")
+                self.commit()
+                self.assertEqual(len(check.changed_mods(self.root, base)), 3)
 
     def test_changed_test_script_selects_its_mod(self):
         write(self.root / "My_mods/two/tests/test_x.lua", "")
@@ -490,6 +500,54 @@ class CommandLineTests(unittest.TestCase):
                               capture_output=True, env=env)
         self.assertEqual(done.returncode, 1)
         self.assertNotIn(b"Traceback", done.stderr)
+
+    def test_check_without_a_target_is_refused(self):
+        done = self.run_outside_ci("check.py")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("--all", done.stdout)
+
+    def test_check_with_two_targets_is_refused(self):
+        done = self.run_outside_ci("check.py", "--all", "--knowledge")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("--all", done.stdout)
+
+
+class TargetTests(unittest.TestCase):
+    """What each form of the command checks: the checks themselves are replaced."""
+
+    def run_check(self, *args):
+        mods = []
+        knowledge = []
+
+        def check_mod(mod, _luals, _no_luac):
+            mods.append(mod.name)
+            return True
+
+        def check_knowledge(_root):
+            knowledge.append(True)
+            return []
+
+        with mock.patch.object(sys, "argv", ["check.py", *args]), \
+                mock.patch.object(check, "check_versions", return_value=[]), \
+                mock.patch.object(check, "find_mods", return_value=[Path("One"), Path("Two")]), \
+                mock.patch.object(check, "run_luals", return_value={}) as luals, \
+                mock.patch.object(check, "check_mod", check_mod), \
+                mock.patch.object(check, "check_knowledge", check_knowledge), \
+                contextlib.redirect_stdout(io.TextIOWrapper(io.BytesIO(), encoding="utf-8")):
+            code = check.main()
+        return code, mods, bool(knowledge), luals.called
+
+    def test_all_checks_every_mod_and_the_knowledge_base(self):
+        self.assertEqual(self.run_check("--all"), (0, ["One", "Two"], True, True))
+
+    def test_knowledge_checks_no_mod(self):
+        self.assertEqual(self.run_check("--knowledge"), (0, [], True, False))
+
+    def test_one_mod_leaves_the_others_and_the_knowledge_base_out(self):
+        with tempfile.TemporaryDirectory() as temp:
+            mod = Path(temp) / "Mod"
+            write(mod / "mod_info.lua", MOD_INFO)
+            self.assertEqual(self.run_check(str(mod)), (0, ["Mod"], False, True))
 
 
 class KnowledgeTests(RepoCase):

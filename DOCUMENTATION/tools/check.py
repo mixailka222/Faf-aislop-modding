@@ -1,9 +1,12 @@
 """Single check for mods: LuaLS, FAF Lua compiler, rules, imports, mod_info, tests.
 
-    python DOCUMENTATION/tools/check.py                         all tracked mods
     python DOCUMENTATION/tools/check.py "My_mods/project/Mod"   one mod
-    python DOCUMENTATION/tools/check.py --changed-since main    changed mods
+    python DOCUMENTATION/tools/check.py --knowledge             the knowledge base
+    python DOCUMENTATION/tools/check.py --changed-since main    changed mods, the knowledge base
+    python DOCUMENTATION/tools/check.py --all                   all tracked mods, the knowledge base
     --no-luac    CI only: the compiler and the tests run there as a separate job
+
+A problem of another mod is out of the task, so one target has to be named.
 """
 import argparse
 import functools
@@ -20,8 +23,8 @@ import validate_mod
 
 ROOT = bootstrap.ROOT
 MOD_INFO = "mod_info.lua"
-ALWAYS_CHECKED = "My_mods/Custom Hotkeys/customhotkeys"
 VERSIONS_PATH = "DOCUMENTATION/tools/tool_versions.json"
+RULE_FILES = {"DOCUMENTATION/tools/check.py", "DOCUMENTATION/tools/validate_mod.py", ".luarc.json"}
 LUALS_REPORT = ".tools/luals_report.json"
 REQUIRED_FIELDS = ("name", "version", "uid", "description", "ui_only")
 LIBRARIES = {"reui": "ReUI", "umt": "UMT"}
@@ -108,14 +111,14 @@ def touches_tests(root: Path, mod: Path, files: list[str]) -> bool:
 
 
 def changed_mods(root: Path, base: str) -> list[Path]:
+    """A new rule or version can turn any mod red. That has to show in the change that made it,
+    not in the next change of that mod.
+    """
     mods = find_mods(root)
     files = changed_files(root, base)
-    if versions_changed(root, base, files):
+    if versions_changed(root, base, files) or RULE_FILES.intersection(files):
         return mods
-    return [mod for mod in mods
-            if relative(root, mod) == ALWAYS_CHECKED
-            or touches_code(root, mod, files)
-            or touches_tests(root, mod, files)]
+    return [mod for mod in mods if touches_code(root, mod, files) or touches_tests(root, mod, files)]
 
 
 def readme_warnings(root: Path, base: str) -> list[str]:
@@ -351,12 +354,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("mod", nargs="?", help="папка мода, в ней лежит mod_info.lua")
+    parser.add_argument("--knowledge", action="store_true", help="только база знаний")
+    parser.add_argument("--all", action="store_true", help="все моды и база знаний")
     parser.add_argument("--no-luac", action="store_true", help="только для CI")
     parser.add_argument("--changed-since", metavar="REF", help="только изменённые моды")
     options = parser.parse_args()
 
     if options.no_luac and not os.environ.get("GITHUB_ACTIONS"):
         print("[FAIL] Ключ --no-luac работает только в CI")
+        return 1
+    if sum(map(bool, [options.mod, options.knowledge, options.all, options.changed_since])) != 1:
+        print("[FAIL] Укажи одну цель: папку мода, --knowledge, --changed-since или --all")
         return 1
     if options.mod and not (Path(options.mod) / MOD_INFO).exists():
         print(f"[FAIL] В папке '{options.mod}' нет {MOD_INFO}")
@@ -369,9 +377,11 @@ def main() -> int:
             mods = [Path(options.mod).resolve()]
         elif options.changed_since:
             mods = changed_mods(ROOT, options.changed_since)
-        else:
+        elif options.all:
             mods = find_mods(ROOT)
-        luals = run_luals(ROOT)
+        else:
+            mods = []
+        luals = run_luals(ROOT) if mods else {}
         results = [check_mod(mod, luals, options.no_luac) for mod in mods]
         if not options.mod:
             results.append(report("база знаний", check_knowledge(ROOT)))

@@ -14,13 +14,27 @@ jobs:
       - name: Install tooling
         run: apk add bash git findutils
       - uses: actions/checkout@v6
-      - name: Compile every mod file
+        with:
+          fetch-depth: 0
+      - name: Pick the projects to check
+        shell: bash
+        run: |
+          # A pull request answers for its own projects. A push to main and a new Lua version check them all.
+          echo My_mods/ > projects.txt
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            git config --global --add safe.directory "$GITHUB_WORKSPACE"
+            git diff --name-only --no-renames "origin/$GITHUB_BASE_REF...HEAD" > changed.txt
+            if ! grep -qx DOCUMENTATION/tools/tool_versions.json changed.txt; then
+              { grep '^My_mods/' changed.txt || true; } | cut -d/ -f1,2 | sort -u | sed 's|$|/|' > projects.txt
+            fi
+          fi
+      - name: Compile the mod files
         shell: bash
         run: |
           status=0
           while IFS= read -r file; do
             luac -p "$file" || status=1
-          done < <(find My_mods -name '*.lua' -not -path '*/tests/*')
+          done < <(find My_mods -name '*.lua' -not -path '*/tests/*' | grep -F -f projects.txt)
           exit "$status"
       - name: Run mod tests
         shell: bash
@@ -28,7 +42,7 @@ jobs:
           status=0
           while IFS= read -r file; do
             (cd "$(dirname "$file")" && lua "$(basename "$file")") || status=1
-          done < <(find My_mods -path '*/tests/test_*.lua')
+          done < <(find My_mods -path '*/tests/test_*.lua' | grep -F -f projects.txt)
           exit "$status"
 
   check:

@@ -64,7 +64,13 @@ research/                     черновики, в git нет, источни�
 python DOCUMENTATION/tools/check.py "My_mods/<проект>/<Мод>"
 ```
 
-Если менялись файлы в `DOCUMENTATION/tools/`, дополнительно запусти `python -m unittest discover -s DOCUMENTATION/tests`. Если менялась база знаний, запусти `python DOCUMENTATION/tools/check.py` без аргументов: только так проверяются её источники.
+Проверяй только мод, который меняется: ошибка в другом моде не относится к задаче и уводит от неё. Поэтому `check.py` требует явную цель. Эта проверка быстрая, запускай её сколько нужно.
+
+| Что ещё менялось | Что запустить дополнительно |
+|---|---|
+| Файлы в `DOCUMENTATION/tools/` | `python -m unittest discover -s DOCUMENTATION/tests` |
+| База знаний | `python DOCUMENTATION/tools/check.py --knowledge`: только так проверяются её источники |
+| Версии в `tool_versions.json` или правила проверки: `check.py`, `validate_mod.py`, `.luarc.json` | `python DOCUMENTATION/tools/check.py --all`: все моды и база знаний |
 
 - Вывод проверки приводится в отчёте.
 - Нельзя отключать проверку, менять тест ради зелёного результата или подавлять замечание без написанной рядом причины.
@@ -102,7 +108,7 @@ ASE (Advanced Selection Extension) стоит у многих игроков, п
 
 1. Измени значение в `tool_versions.json`.
 2. Запусти `python DOCUMENTATION/tools/bootstrap.py`.
-3. Запусти `python DOCUMENTATION/tools/check.py` без аргументов и разбери все новые замечания.
+3. Запусти `python DOCUMENTATION/tools/check.py --all` и разбери все новые замечания.
 4. Если менялась версия `lua-lang`, поставь такой же тег образа `faforever/lua` в `.github/workflows/check.yml`.
 
 ## База знаний и документация
