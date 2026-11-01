@@ -198,6 +198,13 @@
 
 Источник: fa:lua/sim/Projectile.lua#Since `math.huge` does not exist
 
+### Текст ошибки чтения `LazyVar` занимает десятки строк
+
+`pcall` вокруг чтения стороны контрола без заданной геометрии, например `ctl.Left()`, возвращает `circular dependency in lazy evaluation for variable` внутри двух обёрток `error evaluating lazy variable`. В игре каждый уровень несёт свой `stack traceback:`, всего около 45 строк на одну ошибку. Стенд считает подстроку `stack traceback` ошибкой, поэтому `tostring(err)` такого чтения пишут в лог только при настоящем сбое. Для штатного случая, например скрытой строки без позиции, хватает своего короткого текста. Локальный `.tools/faf-lua/lua.exe` стек к тексту ошибки не добавляет, поэтому юнит-тест этого не покажет.
+
+Источник: fa:lua/lazyvar.lua#error evaluating lazy variable
+Наблюдение: `pcall` вокруг `ctl.Left()` скрытой строки панели Overflow в матче, лог стенда: три `stack traceback:`, 44 строки на одну ошибку. `error('boom')` под `pcall` в `.tools/faf-lua/lua.exe` дал одну строку.
+
 ### `Unable to interrupt path finding`
 
 Это не ошибка движка, а `print` из sim-колбэка `AbortNavigation`, и печатается он только у армии, отдавшей приказ. Причин три: в выделении не осталось своих юнитов, в нём нет `ENGINEER` или `COMMAND`, либо прошлый вызов от этого источника был не больше 5 тиков назад. Принятый вызов печатает `Interrupted pathfinding for N unit(s)`.

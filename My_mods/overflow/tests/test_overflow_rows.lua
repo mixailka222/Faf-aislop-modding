@@ -54,6 +54,7 @@ PROFILE = {}
 msgs = {}
 
 function LOG(m) msgs[table.getn(msgs) + 1] = tostring(m) end
+function WARN(m) msgs[table.getn(msgs) + 1] = tostring(m) end
 
 Prefs = {}
 function Prefs.GetFromCurrentProfile(k) return PROFILE[k] end
@@ -1726,11 +1727,115 @@ pixelScaleFactor = 1.0
 return fails
 end)
 
+-- A fresh ui.lua: the line about the growth of the window is written once per load.
+local env_ui_guards = MakeEnv()
+LoadInto(MOD .. 'ui.lua', env_ui_guards)
+U_GUARDS = env_ui_guards
+
+print('')
+local f9 = Run("=== 9: сбой под pcall виден в логе, панель его переживает ===", function()
+local fails = 0
+local function check(cond, label)
+    if cond then
+        print('  [OK  ] ' .. label)
+    else
+        fails = fails + 1
+        print('  [FAIL] ' .. label)
+    end
+end
+
+local function Told(text)
+    local n = 0
+    for i = 1, table.getn(msgs) do
+        if string.find(msgs[i], text, 1, true) then n = n + 1 end
+    end
+    return n
+end
+
+local function NewestWindow()
+    local found = nil
+    for i = 1, table.getn(MADE) do
+        if MADE[i]._kind == 'Window' then found = MADE[i] end
+    end
+    return found
+end
+
+msgs = {}
+PROFILE = {}
+local allRows = {}
+for i = 1, ROWS.HowManyRows() do allRows[ROWS.RowKeyAt(i)] = true end
+ROWS.SaveRows(allRows)
+U_GUARDS.OnCreateUI()
+BEAT()
+check(Told('FAILED') == 0, 'без сбоев строк FAILED нет')
+local win = NewestWindow()
+local reopen = nil
+for i = 1, table.getn(MADE) do
+    if MADE[i].HandleEvent ~= nil then reopen = MADE[i] end
+end
+
+-- ApplyMinSize runs on every beat.
+msgs = {}
+local readRight = win.Right._get
+win.Right._get = function() error('growth boom') end
+for _ = 1, 5 do BEAT() end
+win.Right._get = readRight
+check(Told('window growth FAILED, limit') == 1, 'сбой роста окна в логе один раз за 5 проходов')
+check(Told('growth boom') == 1, 'в строке лога есть текст ошибки')
+check(Told('Update FAILED') == 0, 'сбой роста окна не останавливает обновление панели')
+
+msgs = {}
+local readLeft = win.Left._get
+win.Left._get = function() error('move boom') end
+win.OnClose(win)
+win.Left._get = readLeft
+check(Told('reopen button move FAILED') == 1 and Told('move boom') == 1, 'сбой сдвига кнопки в логе')
+check(reopen._hidden == false, 'кнопка возврата всё равно показана: панель можно вернуть')
+reopen.HandleEvent(reopen, { Type = 'ButtonRelease' })
+
+-- One rebuild of the panel meets every other failure: a change of the look triggers it.
+msgs = {}
+win.Destroy = function() error('window boom') end
+reopen.Destroy = function() error('button boom') end
+local plainReadKey = Prefs.GetFromCurrentProfile
+Prefs.GetFromCurrentProfile = function(k)
+    if k == 'OverflowCollapsed' then error('key boom') end
+    return plainReadKey(k)
+end
+-- The reopen button is the only control placed right in the frame. The new window exists
+-- by then, and only the size dump reads its Width.
+local plainPlace = LayoutHelpers.AtLeftTopIn
+LayoutHelpers.AtLeftTopIn = function(c, p, x, y)
+    if p == FRAME then
+        NewestWindow().Width = function() error('dump boom') end
+        error('place boom')
+    end
+    plainPlace(c, p, x, y)
+end
+PROFILE['Overflow'].blink = true
+BEAT()
+LayoutHelpers.AtLeftTopIn = plainPlace
+Prefs.GetFromCurrentProfile = plainReadKey
+
+check(Told('old window Destroy FAILED') == 1 and Told('window boom') == 1, 'сбой Destroy окна в логе')
+check(Told('old reopen button Destroy FAILED') == 1 and Told('button boom') == 1,
+      'сбой Destroy кнопки в логе')
+check(Told('reopen button placement FAILED') == 1 and Told('place boom') == 1,
+      'сбой размещения кнопки в логе')
+check(Told('collapse state read FAILED, key OverflowCollapsed') == 1 and Told('key boom') == 1,
+      'сбой чтения свёрнутости в логе с ключом')
+check(Told('window geometry dump FAILED') == 1 and Told('dump boom') == 1,
+      'сбой вывода размеров в логе')
+check(Told('theme rebuild FAILED') == 0, 'пересборка панели дошла до конца')
+check(NewestWindow() ~= win, 'панель собрана заново')
+return fails
+end)
+
 print('')
 
 print('')
 print('=== ИТОГ ===')
-local total = f1 + f2 + f3 + f4 + f5 + f6 + f7 + f8
+local total = f1 + f2 + f3 + f4 + f5 + f6 + f7 + f8 + f9
 if total > 0 then
     print('провалено проверок: ' .. tostring(total))
     os.exit(1)

@@ -238,11 +238,7 @@ local function ThemeSignatureNow()
     if not ThemeSign then
         return nil
     end
-    local ok, sig = pcall(ThemeSign)
-    if not ok then
-        return nil
-    end
-    return sig
+    return ThemeSign()
 end
 
 --------------------------------------------------------------------------------
@@ -278,6 +274,7 @@ local G = {
     labels    = {},
     collapsed = false,
     beatErrors = 0,         -- Update errors in a row
+    growFailed = false,     -- a failed growth of the window is already in the log
 
     -- Signature of the row set the panel is built for, see Update().
     rowsSig   = nil,
@@ -588,16 +585,13 @@ local function ApplyMinSize()
     local minH = bodyH + L.FRAME_BOTTOM
     if minH < L.MIN_H then minH = L.MIN_H end
 
-    -- The only call into the class here, it must not break the drawing pass.
-    pcall(function()
-        G.win:SetMinimumResize(minW, minH)
-    end)
+    G.win:SetMinimumResize(minW, minH)
 
     -- SetMinimumResize limits only the drag of the player. An already smaller window (more
     -- rows, a larger font) has to grow by itself, and only up to the limit: otherwise a
     -- window the player stretched would jump back on every pass. The limit is in own units
     -- and the window sides in screen pixels, hence ScaleNumber.
-    pcall(function()
+    local ok, err = pcall(function()
         local wantW = LayoutHelpers.ScaleNumber(minW)
         local wantH = LayoutHelpers.ScaleNumber(minH)
         if G.win.Right() - G.win.Left() < wantW then
@@ -607,6 +601,12 @@ local function ApplyMinSize()
             G.win.Bottom:Set(G.win.Top() + wantH)
         end
     end)
+    -- This runs on every beat, so only the first failure goes to the log.
+    if not ok and not G.growFailed then
+        G.growFailed = true
+        WARN('Overflow: window growth FAILED, limit ' .. tostring(minW) .. 'x' ..
+            tostring(minH) .. ': ' .. tostring(err))
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -769,6 +769,8 @@ local function CollapseKeyRead()
         return Prefs.GetFromCurrentProfile(L.COLLAPSE_KEY)
     end)
     if not ok then
+        WARN('Overflow: collapse state read FAILED, key ' .. L.COLLAPSE_KEY .. ': ' ..
+            tostring(v))
         return false
     end
     return v and true or false
@@ -794,11 +796,14 @@ local function SetCollapsed(collapsed)
         if G.reopenButton then
             -- Under pcall because control geometry is circular: if the read fails, the
             -- button stays where it is and the drawing pass survives.
-            pcall(function()
+            local ok, err = pcall(function()
                 LayoutHelpers.AtLeftTopIn(G.reopenButton, GetFrame(0),
                                           LayoutHelpers.InvScaleNumber(G.win.Left()),
                                           LayoutHelpers.InvScaleNumber(G.win.Top()))
             end)
+            if not ok then
+                WARN('Overflow: reopen button move FAILED: ' .. tostring(err))
+            end
             G.reopenButton:Show()
         end
         CollapseKeyWrite(true)
@@ -820,10 +825,7 @@ local function ReloadNumbersOnly()
     if not ThemeNumbers then
         return
     end
-    local ok, res = pcall(ThemeNumbers)
-    if ok and res then
-        NumbersOnlyOn = true
-    end
+    NumbersOnlyOn = ThemeNumbers()
 end
 
 -- Text of a row: "E ally overflow: 1.2 E/s", or just "1.2" with numbers only.
@@ -840,11 +842,17 @@ end
 
 CreatePanel = function()
     if G.win then
-        pcall(function() G.win:Destroy() end)
+        local ok, err = pcall(function() G.win:Destroy() end)
+        if not ok then
+            WARN('Overflow: old window Destroy FAILED, it may stay on screen: ' .. tostring(err))
+        end
         G.win = nil
     end
     if G.reopenButton then
-        pcall(function() G.reopenButton:Destroy() end)
+        local ok, err = pcall(function() G.reopenButton:Destroy() end)
+        if not ok then
+            WARN('Overflow: old reopen button Destroy FAILED: ' .. tostring(err))
+        end
         G.reopenButton = nil
     end
 
@@ -956,11 +964,14 @@ CreatePanel = function()
     G.reopenButton:SetSolidColor(C.CLOSED)
     G.reopenButton:EnableHitTest(true)
     LayoutHelpers.SetDimensions(G.reopenButton, 120, 20)
-    pcall(function()
+    local okPlace, errPlace = pcall(function()
         LayoutHelpers.AtLeftTopIn(G.reopenButton, frame,
                                   LayoutHelpers.InvScaleNumber(win.Left()),
                                   LayoutHelpers.InvScaleNumber(win.Top()))
     end)
+    if not okPlace then
+        WARN('Overflow: reopen button placement FAILED: ' .. tostring(errPlace))
+    end
     G.reopenButton.HandleEvent = function(self, event)
         if event.Type == 'ButtonRelease' then
             SetCollapsed(false)
@@ -995,13 +1006,14 @@ CreatePanel = function()
     -- Row sizes go to the log once. Under pcall: Left, Top, Right, Bottom, Width and Height
     -- depend on each other by default, and reading an incomplete control overflows the
     -- stack. Diagnostics must not break what they measure.
-    pcall(function()
+    local okDump, errDump = pcall(function()
         local many = TableGetn(BODY_KEYS)
         for i = 1, many do
             local rowId = BODY_KEYS[i]
             local ctl = G.labels[rowId]
             if ctl and not ctl._hidden then
-                -- Each row has its own pcall, so that one bad row does not eat the rest.
+                -- Each row has its own pcall, so that one bad row does not eat the rest. A
+                -- switched-off row has no position, so its read fails and that is normal.
                 local okRead, l, tp, w, h = pcall(function()
                     return ctl.Left(), ctl.Top(), ctl.Width(), ctl.Height()
                 end)
@@ -1019,6 +1031,9 @@ CreatePanel = function()
             ' W=' .. tostring(win.Width()) ..
             ' H=' .. tostring(win.Bottom() - win.Top()))
     end)
+    if not okDump then
+        WARN('Overflow: window geometry dump FAILED: ' .. tostring(errDump))
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -1115,7 +1130,7 @@ local function Update()
     -- pcall, because this runs inside a beat.
     if ThemeSign then
         local sig = ThemeSignatureNow()
-        if sig ~= nil and sig ~= G.themeSig then
+        if sig ~= G.themeSig then
             -- The reason goes to the log: a rebuild loses the height the player chose, and
             -- a rebuild without a change of theme means a bug.
             LOG('Overflow: theme REBUILD ' .. tostring(G.themeSig) ..
@@ -1196,7 +1211,7 @@ local function SafeUpdate()
     LOG('Overflow: Update FAILED (' .. tostring(G.beatErrors) .. '/' ..
         tostring(BEAT_ERROR_LIMIT) .. '): ' .. tostring(err))
     if G.beatErrors >= BEAT_ERROR_LIMIT then
-        pcall(GameMain.RemoveBeatFunction, SafeUpdate, 'Overflow')
+        GameMain.RemoveBeatFunction(SafeUpdate, 'Overflow')
         LOG('Overflow: too many errors, panel stopped updating')
     end
 end

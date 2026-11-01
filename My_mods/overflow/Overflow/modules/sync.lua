@@ -406,7 +406,7 @@ local function OnScore(scoreData)
     LOG(PFX .. ': ERROR (' .. tostring(nErrors) .. '/' .. tostring(NERR_LIMIT) ..
         '): ' .. tostring(err))
     if nErrors >= NERR_LIMIT then
-        pcall(RemoveOnSyncHashedCallback, 'Score', CB_ID)
+        RemoveOnSyncHashedCallback('Score', CB_ID)
         LOG(PFX .. ': too many errors, sync callback removed, panel will stay empty')
     end
 end

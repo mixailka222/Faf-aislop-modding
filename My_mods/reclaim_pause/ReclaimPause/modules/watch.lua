@@ -48,6 +48,7 @@ local abortIter = 0
 local abortCount = 0
 local abortLogTick = 0
 local engineerCount = 0
+local restoreFails = {}    -- restore step -> how many times it failed
 local holding = false      -- the mod holds the engineers paused now
 local held = {}            -- id -> unit paused by the mod
 local heldAt = {}          -- id -> pass on which it was paused
@@ -167,6 +168,21 @@ local function CollectEngineers(picked)
     return found, n
 end
 
+-- One step of giving the selection back. Each step has its own pcall: the next one has to
+-- run even if this one failed. Scans and aborts repeat every few seconds, so a lasting
+-- failure is logged the first time and then every hundredth.
+local function RestoreStep(step, where, fn)
+    local ok, err = pcall(fn)
+    if ok then
+        return
+    end
+    local n = (restoreFails[step] or 0) + 1
+    restoreFails[step] = n
+    if n == 1 or math.mod(n, 100) == 0 then
+        WARN(PFX .. step .. ' FAILED x' .. tostring(n) .. ' (' .. where .. '): ' .. tostring(err))
+    end
+end
+
 -- RestoreCommandMode takes no argument: with true it resets issuedOneCommand, and
 -- StartCommandMode restarts the mode of the player. Callers skip the scan during a command
 -- mode. The restored selection is compared with the saved one, and a mismatch goes to the
@@ -183,10 +199,11 @@ local function WithAllEngineers(callback)
         callback(GetSelectedUnits() or {})
     end)
     if saved then
-        pcall(function() SelectUnits(saved) end)
+        RestoreStep('SelectUnits', 'scan, ' .. tostring(beforeN) .. ' unit(s)',
+                    function() SelectUnits(saved) end)
     end
-    pcall(function() GameMain.SetIgnoreSelection(false) end)
-    pcall(function() CommandMode.RestoreCommandMode() end)
+    RestoreStep('SetIgnoreSelection', 'scan', function() GameMain.SetIgnoreSelection(false) end)
+    RestoreStep('RestoreCommandMode', 'scan', function() CommandMode.RestoreCommandMode() end)
     if not ok then
         LOG(PFX .. 'WithAllEngineers FAILED: ' .. tostring(err))
         return false
@@ -276,10 +293,11 @@ local function AbortMove(list, n)
         SimCallback({ Func = 'AbortNavigation', Args = {} }, true)
     end)
     if saved then
-        pcall(function() SelectUnits(saved) end)
+        RestoreStep('SelectUnits', 'abort, ' .. tostring(beforeN) .. ' unit(s)',
+                    function() SelectUnits(saved) end)
     end
-    pcall(function() GameMain.SetIgnoreSelection(false) end)
-    pcall(function() CommandMode.RestoreCommandMode() end)
+    RestoreStep('SetIgnoreSelection', 'abort', function() GameMain.SetIgnoreSelection(false) end)
+    RestoreStep('RestoreCommandMode', 'abort', function() CommandMode.RestoreCommandMode() end)
     if not ok then
         LOG(PFX .. 'AbortMove FAILED: ' .. tostring(err))
         return

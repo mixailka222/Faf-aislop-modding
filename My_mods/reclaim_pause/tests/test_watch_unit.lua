@@ -105,6 +105,7 @@ IN_ADDED = nil
 function IN_AddKeyMapTable(keys) IN_ADDED = keys end
 
 function LOG(m) msgs[table.getn(msgs) + 1] = tostring(m) end
+function WARN(m) msgs[table.getn(msgs) + 1] = tostring(m) end
 
 function GetFocusArmy() return 1 end
 
@@ -498,6 +499,67 @@ RunOnce()
 check(table.getn(SEL) == 1 and SEL[1].id == 999,
       'после скрытого обхода выделение игрока восстановлено')
 check(IGNORE_SEL == false, 'SetIgnoreSelection вернулся в false')
+
+print('')
+print('=== 14a: БЕЗОПАСНОСТЬ - сбой шага возврата виден в логе и не отменяет следующие ===')
+
+local function told(text)
+  local n = 0
+  for i = 1, table.getn(msgs) do
+    if string.find(msgs[i], text, 1, true) then n = n + 1 end
+  end
+  return n
+end
+
+-- The scan gives the selection back first, the abort second: only the abort fails here.
+Reset(0.95, 1.0)
+add(eng(100, AM))
+local playerSel = { add(MakeUnit(997, { cats = ENGINEER, queue = {} })) }
+SEL = playerSel
+local plainSelect = SelectUnits
+local selectBacks = 0
+SelectUnits = function(list)
+  if list == playerSel then
+    selectBacks = selectBacks + 1
+    if selectBacks == 2 then error('select boom') end
+  end
+  plainSelect(list)
+end
+RunOnce()
+SelectUnits = plainSelect
+check(told('SelectUnits FAILED x1 (abort, 1 unit(s))') == 1, 'сбой SelectUnits в логе с вызывающим и числом юнитов')
+check(told('select boom') == 1, 'в строке лога есть текст ошибки')
+check(IGNORE_SEL == false, 'после сбоя SelectUnits вернулся SetIgnoreSelection')
+check(CMDMODE_CACHED == false, 'после сбоя SelectUnits вернулся режим команды')
+
+Reset(0.95, 1.0)
+add(eng(100, AM))
+local plainIgnore = GameMain.SetIgnoreSelection
+GameMain.SetIgnoreSelection = function(v)
+  if v == false then error('ignore boom') end
+  plainIgnore(v)
+end
+RunOnce()
+GameMain.SetIgnoreSelection = plainIgnore
+check(told('SetIgnoreSelection FAILED x1 (scan)') == 1, 'сбой SetIgnoreSelection в логе')
+check(CMDMODE_CACHED == false, 'после сбоя SetIgnoreSelection вернулся режим команды')
+check(isPaused(100), 'сбой шага возврата не срывает обход')
+
+-- A step that fails on every scan and abort is the case the counted line exists for.
+Reset(0.95, 1.0)
+add(eng(100, AM))
+local plainRestore = CommandMode.RestoreCommandMode
+local restoreTries = 0
+CommandMode.RestoreCommandMode = function()
+  restoreTries = restoreTries + 1
+  error('restore boom')
+end
+for _ = 1, 300 do RunOnce() end
+CommandMode.RestoreCommandMode = plainRestore
+check(told('RestoreCommandMode FAILED x1 (scan)') == 1, 'первый сбой RestoreCommandMode в логе')
+check(restoreTries >= 200, 'шаг падал на каждом обходе и сбросе (' .. tostring(restoreTries) .. ')')
+check(told('restore boom') == 1 + math.floor(restoreTries / 100),
+      'лог не засыпан: первый сбой и каждый сотый (' .. tostring(told('restore boom')) .. ')')
 
 print('')
 print('=== 15: БЕЗОПАСНОСТЬ - при пустом хранилище выделение не трогаем ===')
