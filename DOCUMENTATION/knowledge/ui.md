@@ -87,9 +87,10 @@ commandMode.RestoreCommandMode(true)
 
 ### На старте матча игра сама выделяет командира
 
-Поток `StartupSequence` повторяет `SelectUnits` до успеха или до 50 тика. Подмена выделения в это время с ним сталкивается.
+Поток `StartupSequence` повторяет `SelectUnits` до успеха или до 50 тика. Подмена выделения в это время с ним сталкивается: примерно с 36 по 51 тик `UISelectionByCategory` оставляет выделение пустым, а выделение игрока после возврата теряется. С 60 тика такого не было.
 
 Источник: fa:lua/ui/game/gamemain.lua#until not table.empty(selected) or GameTick() > 50
+Наблюдение: матч через `/map`, опрос `UISelectionByCategory("COMMAND")` раз в 0.7 секунды: на тиках 36, 43, 50 и 51 выделено 0 юнитов, в остальные моменты 1. Подмена из мода на старте матча дала строку `was 1 unit(s), now 0`.
 
 ### В UI `WaitSeconds` считает реальное время, а `WaitTicks` игровые тики
 
@@ -170,6 +171,7 @@ commandMode.RestoreCommandMode(true)
 Пересоздавать `Text` ради смены размера не нужно. Кегль внутри `SetFont` проходит через `ScaleNumber`, поэтому домножать его на масштаб интерфейса нельзя.
 
 Источник: fa:lua/maui/text.lua#self._font._pointsize:Set(ScaleNumber(pointsize))
+Наблюдение: надпись с кеглем 13 при `ui_scale` 0.8, 1 и 1.5 получила размер 10, 13 и 19, одна и та же строка заняла 107, 132 и 191 пиксель.
 
 ### CreateText использует buttonFont, если шрифт не передан
 
