@@ -106,9 +106,8 @@ function Main()
     --
     -- Аргумент нам не нужен и может быть чем угодно, поэтому читаем из
     -- options, которая в замыкании.
-    -- Флаг на время записи в ползунки. Set зовёт OnChange, а это тот
-    -- же Refresh, поэтому без флага сброс дал бы 12 вложенных
-    -- вызовов, 12 лишних сохранений профиля и 12 лишних строк в логе.
+    -- Set on resetFlag calls OnChange, which is this same Refresh. The flag stops
+    -- that nested call while the reset takes the check mark off.
     local writing = false
 
     -- Raw(), not Set: Set would remember the old value for Cancel and call Refresh.
