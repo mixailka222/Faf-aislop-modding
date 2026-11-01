@@ -54,6 +54,11 @@ function Spawn(id, dx, dz, patrol)
     SimCallback({ Func = "ModTestSpawn", Args = { army = GetFocusArmy(), id = id, dx = dx, dz = dz, patrol = patrol } })
 end
 
+--- From the UI a reclaim order takes its target from the cursor, so the sim side gives it.
+function Reclaim(unit, target)
+    SimCallback({ Func = "ModTestReclaim", Args = { unit = unit:GetEntityId(), target = target:GetEntityId() } })
+end
+
 function TakeMass(amount)
     SimCallback({ Func = "ModTestTakeMass", Args = { army = GetFocusArmy(), amount = amount } })
 end

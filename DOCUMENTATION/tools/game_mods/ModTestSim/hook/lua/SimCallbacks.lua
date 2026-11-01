@@ -18,6 +18,10 @@ do
         end
     end
 
+    Callbacks.ModTestReclaim = function(data)
+        IssueReclaim({ GetEntityById(data.unit) }, GetEntityById(data.target))
+    end
+
     Callbacks.ModTestTakeMass = function(data)
         ArmyBrains[data.army]:TakeResource("MASS", data.amount)
     end
