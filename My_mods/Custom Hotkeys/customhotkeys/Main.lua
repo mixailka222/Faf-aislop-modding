@@ -47,12 +47,13 @@ local function CollectMatchingUnits(expression)
     return units
 end
 
---- ASE is optional, so its lock list is asked for once and only if it is
---- installed: importing a missing file or reading a missing field fails, pcall
---- keeps that quiet. The field is read plainly, not with rawget: if ASE imported
---- the file lazily, only a field read loads it.
+--- ASE is optional, so its lock list is asked for once and only if its file
+--- exists: import of a missing file writes an error and a stack to the log even
+--- under pcall. The field is read plainly, not with rawget: if ASE imported the
+--- file lazily, only a field read loads it.
 --- Shared state works because FAF caches imported modules per path, and ASE
 --- itself reaches the same file as "/mods/ASE/modules/Lock.lua".
+local ASE_LOCK_FILE = "/mods/ASE/modules/Lock.lua"
 local AseIsLocked
 local aseLocksProbed = false
 
@@ -62,11 +63,15 @@ local function IsLocked(unit)
     if not aseLocksProbed then
         aseLocksProbed = true
 
-        local ok, isLocked = pcall(function()
-            return import("/mods/ASE/modules/Lock.lua").IsLocked
-        end)
-        if ok then
-            AseIsLocked = isLocked
+        if DiskGetFileInfo(ASE_LOCK_FILE) then
+            local ok, isLocked = pcall(function()
+                return import(ASE_LOCK_FILE).IsLocked
+            end)
+            if ok then
+                AseIsLocked = isLocked
+            else
+                WARN("Custom Hotkeys: ASE locks are not available: " .. tostring(isLocked))
+            end
         end
     end
 
