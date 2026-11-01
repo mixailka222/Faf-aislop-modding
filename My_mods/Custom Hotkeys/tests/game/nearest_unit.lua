@@ -1,9 +1,9 @@
 -- stand: expect by ExtraMassBlocker, Puffskein
 
--- The three actions: with nothing that can build they select the unit nearest to the cursor, with Shift
--- they add the next one, with a builder selected they run Hotbuild. One press is a real key, the others run
--- the text of the action as a key does. The cursor and Shift come from the scenario, a message for a key
--- carries neither of them.
+-- The three actions with keys and the mouse from game_test.py, the keys are assigned the way the key window
+-- does it. With nothing that can build a key selects the unit nearest to the cursor, with Shift it adds the
+-- next one, with a builder selected it runs Hotbuild. The engine takes Shift from the keyboard of the system
+-- and only with the focus, which the stand does not take, so the scenario gives the state of Shift.
 local Test = import("/mods/ModTest/modules/test.lua")
 local CommandMode = import("/lua/ui/game/commandmode.lua")
 local KeyMapper = import("/lua/keymap/keymapper.lua")
@@ -11,15 +11,14 @@ local KeyMapper = import("/lua/keymap/keymapper.lua")
 local TANK = "uel0201"
 local ENGINEER = "uel0208"
 local ACTIONS = {
-    { name = "Select_nearest_fighter_build_shields", unit = "uea0102" },
-    { name = "Select_nearest_bomber_build_TMD", unit = "uea0103" },
-    { name = "Select_nearest_air_scout_build_sensors_Custom_", unit = "uea0101" },
+    { name = "Select_nearest_fighter_build_shields", unit = "uea0102", key = "K", side = 0 },
+    { name = "Select_nearest_bomber_build_TMD", unit = "uea0103", key = "J", side = -7 },
+    { name = "Select_nearest_air_scout_build_sensors_Custom_", unit = "uea0101", key = "Y", side = 7 },
 }
-local NEAR_OFFSET = 8
-local FAR_OFFSET = 30
-local NEAR_SIDE = { 0, 30, -30 }
-local REAL_KEY = "K"
+local LEFT_OFFSET = -7
+local RIGHT_OFFSET = 7
 local KEY_SECONDS = 8
+local NOTHING_HAPPENS_SECONDS = 4
 
 local function Ids(units)
     local ids = {}
@@ -34,14 +33,13 @@ local function Same(units)
     return Ids(GetSelectedUnits()) == Ids(units)
 end
 
+local function SelectedAfterKey(units)
+    return Test.WaitUntil(function() return Same(units) end, KEY_SECONDS)
+end
+
 function Run()
-    local Main = import("/mods/customhotkeys/Main.lua")
-    local cursor = { 0, 0, 0 }
     local shift = false
-    Main.GetMouseWorldPos = function()
-        return cursor
-    end
-    Main.IsKeyDown = function(key)
+    import("/mods/customhotkeys/Main.lua").IsKeyDown = function(key)
         return shift and key == "Shift"
     end
 
@@ -50,18 +48,13 @@ function Run()
         Test.Check(known[action.name] ~= nil, "the action exists: " .. action.name)
     end
 
-    local function Press(action)
-        ConExecute(known[action.name].action)
-        WaitSeconds(0.3)
-    end
-
     WaitSeconds(2)
-    for index, action in ACTIONS do
-        Test.Spawn(action.unit, NEAR_OFFSET, NEAR_SIDE[index])
-        Test.Spawn(action.unit, FAR_OFFSET, NEAR_SIDE[index])
+    for _, action in ACTIONS do
+        Test.Spawn(action.unit, LEFT_OFFSET, action.side)
+        Test.Spawn(action.unit, RIGHT_OFFSET, action.side)
     end
-    Test.Spawn(TANK, -8, 0)
-    Test.Spawn(ENGINEER, -8, 8)
+    Test.Spawn(TANK, 0, 12)
+    Test.Spawn(ENGINEER, 3, 12)
     WaitSeconds(3)
 
     local air = Test.UnitsOfCategory("AIR")
@@ -71,6 +64,11 @@ function Run()
     if table.getn(air) ~= 6 or not tank or not engineer then
         return
     end
+
+    for _, action in ACTIONS do
+        KeyMapper.SetUserKeyMapping(action.key, nil, action.name)
+    end
+    Test.Upvalue(import("/lua/ui/dialogs/keybindings.lua").CreateUI, "ConfirmNewKeyMap")()
 
     local function PairOf(action)
         local pair = {}
@@ -82,42 +80,34 @@ function Run()
         return pair
     end
 
-    -- A key assigned in the match the way the key window does it, and pressed for real.
-    KeyMapper.SetUserKeyMapping(REAL_KEY, nil, ACTIONS[1].name)
-    Test.Upvalue(import("/lua/ui/dialogs/keybindings.lua").CreateUI, "ConfirmNewKeyMap")()
-    local fighter = PairOf(ACTIONS[1])[1]
-    SelectUnits({ tank })
-    cursor = fighter:GetPosition()
-    Test.PressKey(REAL_KEY)
-    Test.Check(Test.WaitUntil(function() return Same({ fighter }) end, KEY_SECONDS),
-        "a real key press selects the unit at the cursor")
-
     for _, action in ACTIONS do
         local pair = PairOf(action)
         local first, second = pair[1], pair[2]
 
         SelectUnits({ tank })
-        cursor = first:GetPosition()
-        Press(action)
-        Test.Check(Same({ first }), action.name .. ": selects the unit at the cursor")
+        Test.MoveMouseTo(first:GetPosition())
+        Test.PressKey(action.key)
+        Test.Check(SelectedAfterKey({ first }), action.name .. ": selects the unit at the cursor")
 
         SelectUnits({ tank })
-        cursor = second:GetPosition()
-        Press(action)
-        Test.Check(Same({ second }), action.name .. ": another cursor selects the other unit")
+        Test.MoveMouseTo(second:GetPosition())
+        Test.PressKey(action.key)
+        Test.Check(SelectedAfterKey({ second }), action.name .. ": another cursor selects the other unit")
 
         shift = true
-        Press(action)
-        Test.Check(Same(pair), action.name .. ": Shift adds the next unit")
-        Press(action)
+        Test.PressKey(action.key)
+        Test.Check(SelectedAfterKey(pair), action.name .. ": Shift adds the next unit")
+        Test.PressKey(action.key)
+        WaitSeconds(NOTHING_HAPPENS_SECONDS)
         Test.Check(Same(pair), action.name .. ": with nothing left to add the selection stays")
         shift = false
 
         SelectUnits({ engineer })
-        Press(action)
-        Test.Step(action.name .. ": command mode " .. tostring(CommandMode.GetCommandMode()[1]) ..
-            ", building " .. tostring(CommandMode.GetCommandMode()[2] and CommandMode.GetCommandMode()[2].name))
-        Test.Check(CommandMode.GetCommandMode()[1] == "build", action.name .. ": with a builder the key runs Hotbuild")
+        Test.PressKey(action.key)
+        local built = Test.WaitUntil(function() return CommandMode.GetCommandMode()[1] == "build" end, KEY_SECONDS)
+        Test.Step(action.name .. ": building " .. tostring(CommandMode.GetCommandMode()[2] and
+            CommandMode.GetCommandMode()[2].name))
+        Test.Check(built, action.name .. ": with a builder the key runs Hotbuild")
         Test.Check(Same({ engineer }), action.name .. ": Hotbuild keeps the builder selected")
         CommandMode.EndCommandMode(true)
     end
