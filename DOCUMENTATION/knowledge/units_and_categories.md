@@ -329,6 +329,17 @@ T1 `xxb1101`, гидро `xxb1102`, T2 `xxb1201`, T3 `xxb1301`. Префиксы
 
 Источник: fa:lua/ui/game/commandmode.lua#-- paused units do not start upgrades
 
+### ASE сам меняет выделение
+
+ASE (Advanced Selection Extension) подменяет `OnSelectionChanged`: фильтрует новое выделение, убирает заблокированные игроком юниты и применяет результат уже после текущего кадра. Обработчик выходит сразу, если выделение скрытое, то есть идёт внутри `Hidden` из `selection.lua` или между `SetIgnoreSelection(true)` и `SetIgnoreSelection(false)` из `gamemain.lua`. Временную подмену выделения делают только так, иначе ASE перепишет результат.
+
+Список блокировки отдаёт `IsLocked` из `/mods/ASE/modules/Lock.lua`. ASE необязателен: наличие файла проверяют через `DiskGetFileInfo`.
+
+Источник: ui-libs:mods/ASE/hook/lua/ui/game/gamemain.lua#if ignoreSelection or import('/lua/ui/game/selection.lua').IsHidden() then
+Источник: ui-libs:mods/ASE/modules/Main.lua#ForkThread(SelectIgnored, newSelection)
+Источник: ui-libs:mods/ASE/modules/Lock.lua#function IsLocked(unit)
+Наблюдение: сценарии стенда `locked_unit` и `with_ase` с настоящим ASE: скрытое выделение Custom Hotkeys и ReclaimPause не сбивается, заблокированный юнит не выбирается.
+
 ### Порог остановки реклейма около 76.5% массы
 
 Скорость реклейма упала со 140 до 10 массы в секунду между заполнением 76.4% и 76.6% и больше не восстановилась, а доля идущих инженеров выросла. Зависимость от скорости наполнения и от запаса энергии не проверялась.
