@@ -123,6 +123,45 @@ class SeveralClientsTests(TempCase):
         clients = self.clients(PASS, "info: only here\n")
         self.assertEqual(len(game_test.problems_of_clients(clients, False, ["only here"])), 1)
 
+
+class ControlRunTests(SeveralClientsTests):
+    START = "info: [MODTEST] start scenario=a\n"
+
+    def control(self, *logs, codes=None, expected=(), disturbed=False):
+        return game_test.control_problems(self.clients(*logs, codes=codes), list(expected), disturbed)
+
+    def test_failed_check_counts(self):
+        self.assertEqual(self.control(self.START + "info: [MODTEST] FAIL x\ninfo: [MODTEST] END\n"), [])
+
+    def test_error_that_left_the_game_until_the_timeout_counts(self):
+        self.assertEqual(self.control(self.START + "warning: attempt to index nil\n", codes=[None]), [])
+
+    def test_missing_expected_line_counts(self):
+        self.assertEqual(self.control(self.START + PASS, expected=["from the mod"]), [])
+
+    def test_scenario_that_passed_is_a_problem(self):
+        self.assertIn("ничего не проверяет", self.control(self.START + PASS)[0])
+
+    def test_error_line_does_not_turn_a_passed_scenario_into_a_failure(self):
+        self.assertIn("ничего не проверяет", self.control(self.START + "info: ERROR: other\n" + PASS)[0])
+
+    def test_crash_is_a_problem(self):
+        self.assertEqual(len(self.control(self.START, codes=[3])), 1)
+
+    def test_game_that_did_not_reach_the_scenario_is_a_problem(self):
+        self.assertEqual(len(self.control("info: loading\n", codes=[None])), 1)
+
+    def test_game_without_a_log_is_a_problem(self):
+        self.assertEqual(len(self.control(None)), 1)
+
+    def test_every_client_has_to_reach_the_scenario(self):
+        problems = self.control(self.START, "info: loading\n")
+        self.assertEqual(len(problems), 1)
+        self.assertTrue(problems[0].startswith("Клиент 2"))
+
+    def test_failure_with_a_person_at_the_pc_is_a_problem(self):
+        self.assertEqual(len(self.control(self.START + "info: [MODTEST] FAIL x\n", disturbed=True)), 1)
+
     def test_first_client_hosts_the_map_of_the_stand(self):
         args = game_test.match_args(0, 15000, self.SETUP)
         self.assertEqual(args[:6], ["/hostgame", "udp", "15000", "Player1", game_test.PROFILE, game_test.MAP_FILE])
@@ -170,6 +209,7 @@ class FocusTests(TempCase):
 
     def test_focus_goes_back_from_every_client(self):
         clients = self.clients(0, 1)
+        write(clients[1].log_path, f"info: {game_test.SCENARIO_START}a\n")
         seen = []
 
         def has_focus(pids):
@@ -182,6 +222,14 @@ class FocusTests(TempCase):
         self.assertTrue(disturbed)
         self.assertEqual(give_back.call_count, 1)
         self.assertIn(clients[1].process.pid, seen[0])
+
+    def test_focus_taken_before_the_scenario_goes_back_and_disturbs_nothing(self):
+        clients = self.clients(1)
+        with mock.patch.object(game_test, "game_has_focus", return_value=True), \
+                mock.patch.object(game_test, "give_focus_back") as give_back:
+            disturbed = game_test.run_game(clients, self.root)
+        self.assertFalse(disturbed)
+        self.assertGreater(give_back.call_count, 0)
 
     def test_run_goes_on_until_the_last_client_exits(self):
         clients = self.clients(0, 1)
@@ -381,12 +429,13 @@ class ChoiceTests(TempCase):
         write(self.root / "project" / "tests" / "game" / "b.lua", "")
         write(self.root / "faf" / "bin" / "ForgedAlliance.exe", "")
 
-    def run_stand(self, *args):
+    def run_stand(self, *args, outcomes=()):
         ran = []
+        outcomes = list(outcomes)
 
-        def run_scenario(_mod, _info, scenario, _faf, without_mod):
+        def run_scenario(_mod, _info, scenario, _faf, _without_mod):
             ran.append(scenario)
-            return (["no mod, no effect"] if without_mod else []), False
+            return outcomes.pop(0) if outcomes else ([], False)
 
         stream = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
         argv = ["game_test.py", str(self.mod), "--faf", str(self.root / "faf"), *args]
@@ -430,6 +479,21 @@ class ChoiceTests(TempCase):
     def test_control_run_takes_several_scenarios(self):
         code, ran, _ = self.run_stand("--only", "a", "--only", "b", "--without-mod")
         self.assertEqual((code, ran), (0, ["a", "b"]))
+
+    def test_control_run_fails_on_its_own_problems(self):
+        code, ran, output = self.run_stand("--only", "a", "--without-mod", outcomes=[(["passed"], False)])
+        self.assertEqual((code, ran), (1, ["a"]))
+        self.assertIn("passed", output)
+
+    def test_control_run_disturbed_by_a_person_is_repeated(self):
+        code, ran, _ = self.run_stand("--only", "a", "--without-mod", outcomes=[(["person"], True)])
+        self.assertEqual((code, ran), (0, ["a", "a"]))
+
+    def test_control_run_always_disturbed_says_so(self):
+        outcomes = [(["person"], True)] * game_test.ATTEMPTS
+        code, ran, output = self.run_stand("--only", "a", "--without-mod", outcomes=outcomes)
+        self.assertEqual((code, len(ran)), (1, game_test.ATTEMPTS))
+        self.assertIn("результат может быть ложным", output)
 
     def test_control_run_is_refused_for_the_whole_mod(self):
         code, ran, _ = self.run_stand("--all", "--without-mod")

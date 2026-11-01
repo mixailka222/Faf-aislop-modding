@@ -9,7 +9,7 @@ Without --only or --all the game does not start: the command shows the scenarios
 full run. One start of the game takes from 15 seconds to 2 minutes, so --all is a run for the end of
 the work and needs the permission of the developer.
 
---without-mod is the control run of a new scenario: without the mod the scenario has to fail.
+--without-mod is the control run of a new scenario: without the mod the scenario has to start and fail.
 
 Needs a PC with FAF: the game has no mode without a window, so this does not work in CI. Nothing
 is written to the game or to the installed mods: the init file and the settings are temporary,
@@ -57,6 +57,8 @@ SIM_HELPER_UID = "modtest-sim-1"
 NO_TARGET = "none"
 PROFILE = "modtest"
 SMOKE = "smoke"
+SCENARIO_START = "[MODTEST] start scenario="
+SCENARIO_PASS = "[MODTEST] PASS"
 MAP = "SCMP_009"
 MAP_FILE = f"/maps/{MAP}/{MAP}_scenario.lua"
 LAN_PROTOCOL = "udp"
@@ -121,6 +123,7 @@ class Client:
     views: list[int] = field(default_factory=list)
     cursor: tuple[int, int] | None = None
     sent: int = 0
+    started: bool = False
 
 
 def read_mod_info(mod: Path) -> ModInfo:
@@ -227,8 +230,8 @@ def errors_in_log(log: str) -> list[str]:
 def problems_in_log(log: str, sim_helper: bool, expected: list[str]) -> list[str]:
     """The verdict comes from the log: a mod that failed to load does not stop the test mod."""
     problems = errors_in_log(log)
-    if "[MODTEST] PASS" not in log:
-        problems.append("В логе нет строки [MODTEST] PASS")
+    if SCENARIO_PASS not in log:
+        problems.append(f"В логе нет строки {SCENARIO_PASS}")
     problems += [f"В логе нет строки: {text}" for text in expected if text not in log]
     if sim_helper:
         found = SIM_MODS.search(log)
@@ -352,7 +355,9 @@ def system_cursor() -> tuple[int, int]:
 def send_input(client: Client) -> None:
     if not client.log_path.exists():
         return
-    commands = INPUT.findall(client.log_path.read_text(encoding="utf-8", errors="replace"))
+    log = client.log_path.read_text(encoding="utf-8", errors="replace")
+    client.started = SCENARIO_START in log
+    commands = INPUT.findall(log)
     for command in commands[client.sent:]:
         client.views = client.views or view_windows(client.process.pid)
         kind, *values = command.split()
@@ -370,7 +375,8 @@ def run_game(clients: list[Client], cwd: Path) -> bool:
     The game soon replaces the position of a mouse message with the cursor of the system, so the message
     is repeated until the next one, and a moving cursor of the system can still win. The game can take
     the focus while it starts. With the focus it ignores such a message and gets the keys of the person,
-    so the focus goes back at once, whichever client took it.
+    so the focus goes back at once, whichever client took it. Before a scenario starts there is nothing
+    to disturb, so only the focus taken after that counts.
     """
     user32 = ctypes.windll.user32
     outer = user32.GetForegroundWindow() or user32.GetShellWindow()
@@ -390,7 +396,7 @@ def run_game(clients: list[Client], cwd: Path) -> bool:
                 break
             time.sleep(MOUSE_REPEAT_SECONDS)
             if game_has_focus([client.process.pid for client in running]):
-                disturbed = True
+                disturbed = disturbed or any(client.started for client in clients)
                 give_focus_back(outer)
             for client in running:
                 if client.cursor:
@@ -455,6 +461,30 @@ def problems_of_clients(clients: list[Client], sim_helper: bool, expected: list[
     return problems
 
 
+def control_problems(clients: list[Client], expected: list[str], disturbed: bool) -> list[str]:
+    """A control run counts only if the scenario started and failed by itself, with nobody at the PC.
+
+    A game that did not exit is no reason for doubt: an error ends the thread of the scenario, and the
+    game stays until the timeout.
+    """
+    problems = []
+    logs = []
+    for index, client in enumerate(clients):
+        tag = f"Клиент {index + 1}: " if index else ""
+        log = client.log_path.read_text(encoding="utf-8", errors="replace") if client.log_path.exists() else ""
+        remove_replay(log)
+        logs.append(log)
+        if client.code not in (0, None):
+            problems.append(f"{tag}Код выхода игры {client.code}")
+        if SCENARIO_START not in log:
+            problems.append(f"{tag}Сценарий не запустился")
+    if problems:
+        return problems
+    if SCENARIO_PASS in logs[0] and all(text in logs[0] for text in expected):
+        return ["Сценарий прошёл без мода, значит он ничего не проверяет"]
+    return ["Сценарий упал, но мог упасть от чужого ввода"] if disturbed else []
+
+
 def run_scenario(mod: Path, info: ModInfo, scenario: str, faf: Path, without_mod: bool) -> tuple[list[str], bool]:
     bin_dir = faf / "bin"
     setup = read_setup(mod, scenario)
@@ -492,6 +522,8 @@ def run_scenario(mod: Path, info: ModInfo, scenario: str, faf: Path, without_mod
         if any(client.prefs.with_name("Game.prefs.bad").exists() for client in clients):
             problems.append("Игра отвергла временные настройки")
 
+    if without_mod:
+        return [*problems, *control_problems(clients, setup.expected, disturbed)], disturbed
     return [*problems, *problems_of_clients(clients, sim_helper, setup.expected)], disturbed
 
 
@@ -535,14 +567,12 @@ def main() -> int:
             started = time.monotonic()
             for attempt in range(1, ATTEMPTS + 1):
                 problems, disturbed = run_scenario(mod, info, scenario, options.faf, options.without_mod)
-                if options.without_mod or not problems or not disturbed:
+                if not problems or not disturbed:
                     break
                 if attempt == ATTEMPTS:
                     problems.insert(0, "За компьютером работал человек, результат может быть ложным")
                     break
                 print(f"[..] {scenario}: за компьютером работал человек, его ввод мог попасть в игру, повторяю")
-            if options.without_mod:
-                problems = [] if problems else ["Сценарий прошёл без мода, значит он ничего не проверяет"]
             label = f"{scenario}, контроль без мода" if options.without_mod else scenario
             print(f"[{'FAIL' if problems else 'OK'}] {mod.name}: {label}, {time.monotonic() - started:.0f} с")
             for problem in problems[:8]:
