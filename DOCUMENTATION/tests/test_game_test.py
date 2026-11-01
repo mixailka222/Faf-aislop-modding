@@ -30,8 +30,8 @@ class TempCase(unittest.TestCase):
 
 
 class ProblemsInLogTests(unittest.TestCase):
-    def problems(self, log, scenario="smoke"):
-        return game_test.problems_in_log(log, scenario)
+    def problems(self, log, scenario="smoke", expected=()):
+        return game_test.problems_in_log(log, scenario, list(expected))
 
     def test_clean_smoke_has_no_problems(self):
         self.assertEqual(self.problems(PASS), [])
@@ -50,6 +50,14 @@ class ProblemsInLogTests(unittest.TestCase):
     def test_error_in_a_thread_cannot_hide_behind_pass(self):
         log = "warning: Error running lua script: main.lua(10): x\n" + PASS
         self.assertEqual(len(self.problems(log)), 1)
+
+    def test_guard_of_a_mod_cannot_hide_behind_pass(self):
+        self.assertEqual(len(self.problems("info: ReclaimPause: IsBuilding FAILED: x\n" + PASS)), 1)
+        self.assertEqual(len(self.problems("info: OverflowSync: ERROR (1/3): x\n" + PASS)), 1)
+
+    def test_expected_line_has_to_be_in_the_log(self):
+        self.assertEqual(self.problems("info: mod: installed\n" + PASS, expected=["mod: installed"]), [])
+        self.assertEqual(len(self.problems(PASS, expected=["mod: installed"])), 1)
 
     def test_scenario_needs_the_list_of_sim_mods(self):
         self.assertEqual(len(self.problems(PASS, "pause")), 1)
@@ -104,10 +112,15 @@ class PrefsTests(unittest.TestCase):
             game_test.prefs_argument(r"D:\run\Game.prefs", self.PREFS_DIR)
 
     def test_prefs_activate_exactly_the_given_mods(self):
-        text = game_test.prefs_text(["one", "two"])
+        text = game_test.prefs_text(["one", "two"], [])
         self.assertIn("['one'] = true", text)
         self.assertIn("['two'] = true", text)
         self.assertEqual(text.count("= true"), 2)
+
+    def test_scenario_text_goes_into_the_profile(self):
+        text = game_test.prefs_text([], ["options = { ui_scale = 1.5 }"])
+        self.assertLess(text.index("Name ="), text.index("options = { ui_scale = 1.5 },"))
+        self.assertLess(text.index("options = { ui_scale = 1.5 },"), text.index("version ="))
 
 
 class InitTests(unittest.TestCase):
@@ -153,6 +166,39 @@ class ActiveModsTests(unittest.TestCase):
         uids = game_test.active_uids(self.INFO, ["lib"], "pause", without_mod=True)
         self.assertNotIn(TARGET, uids)
         self.assertIn("lib", uids)
+
+
+class PressTests(unittest.TestCase):
+    def test_line_of_a_scenario_gives_the_key(self):
+        self.assertEqual(game_test.PRESS.findall("info: [MODTEST] PRESS K\ninfo: [MODTEST] PRESS L\n"), ["K", "L"])
+
+    def test_other_lines_give_no_key(self):
+        self.assertEqual(game_test.PRESS.findall("info: [MODTEST] PRESS first\ninfo: PRESS K\n"), [])
+
+
+class SetupTests(TempCase):
+    def setup_of(self, text):
+        write(self.root / "project" / "tests" / "game" / "scenario.lua", text)
+        return game_test.read_setup(self.root / "project" / "Mod", "scenario")
+
+    def test_plain_scenario_keeps_the_defaults(self):
+        setup = self.setup_of("function Run()\nend\n")
+        self.assertFalse(setup.ai)
+        self.assertEqual(setup.profile, [])
+        self.assertEqual(setup.expected, [])
+
+    def test_lines_of_the_stand_are_read(self):
+        setup = self.setup_of("-- stand: ai\n-- stand: profile options = { a = 1 }\n-- stand: expect mod: ready\n")
+        self.assertTrue(setup.ai)
+        self.assertEqual(setup.profile, ["options = { a = 1 }"])
+        self.assertEqual(setup.expected, ["mod: ready"])
+
+    def test_unknown_line_stops_the_run(self):
+        with self.assertRaises(game_test.GameTestError):
+            self.setup_of("-- stand: aii\n")
+
+    def test_smoke_has_no_file_to_read(self):
+        self.assertFalse(game_test.read_setup(self.root / "project" / "Mod", game_test.SMOKE).ai)
 
 
 class ScenariosTests(TempCase):
@@ -205,14 +251,14 @@ class TestModsTests(unittest.TestCase):
         self.assertEqual(game_test.read_mod_info(game_test.TEST_MODS / "ModTestSim").uid, game_test.SIM_HELPER_UID)
 
     def test_lua_files_follow_the_mod_rules(self):
-        files = sorted(game_test.TEST_MODS.rglob("*.lua")) + sorted(ROOT.glob("My_mods/*/tests/game/*.lua"))
+        files = sorted(game_test.TEST_MODS.rglob("*.lua")) + sorted(ROOT.glob("My_mods/**/tests/game/**/*.lua"))
         self.assertTrue(files)
         for path in files:
             self.assertEqual(validate_mod.check_file(path), [], path.name)
 
     @unittest.skipUnless(bootstrap.luac_path().exists(), "FAF Lua is not built")
     def test_lua_files_compile(self):
-        for folder in [game_test.TEST_MODS, *ROOT.glob("My_mods/*/tests/game")]:
+        for folder in [game_test.TEST_MODS, *ROOT.glob("My_mods/**/tests/game")]:
             self.assertEqual(check.check_luac(folder), [])
 
 

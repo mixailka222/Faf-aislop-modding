@@ -12,6 +12,12 @@ the mods are mounted from their folders and the installed ones are left out of t
 
 The smoke run has UI mods only, as for a player. A scenario also needs ModTestSim, because a UI
 mod cannot create units, and the run fails if anything else gets into the sim.
+
+Lines at the top of a scenario file change its run:
+
+    -- stand: ai                           the other armies of the map are played by the AI
+    -- stand: profile options = { ... }    this text goes into the profile of the temporary settings
+    -- stand: expect text                  the log has to contain this text
 """
 import argparse
 import ntpath
@@ -21,7 +27,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -44,8 +50,13 @@ REUI_TAG = re.compile(r"^ReUI\s*=", re.M)
 UMT_FLAG = re.compile(r"^__umt\s*=\s*true\b", re.M)
 REPLAY = re.compile(r'Saving replay to "([^"]+)"')
 SIM_MODS = re.compile(r"\[MODTEST\] sim mods:(.*)")
-ERROR_LINE = re.compile(r"FAILED TO LOAD|CRASH in|Error importing|Error running lua script|SCR_LuaDoFileConcat"
+ERROR_LINE = re.compile(r"FAILED|: ERROR\b|CRASH in|Error importing|Error running lua script|SCR_LuaDoFileConcat"
                         r"|[Aa]ttempt to |nonexistent global|stack traceback")
+DIRECTIVE = re.compile(r"^-- stand: (\w+) ?(.*?)\s*$", re.M)
+PRESS = re.compile(r"\[MODTEST\] PRESS (\w)\s*$", re.M)
+POLL_SECONDS = 0.2
+WM_KEYDOWN = 0x0100
+WM_KEYUP = 0x0101
 
 
 class GameTestError(Exception):
@@ -57,6 +68,13 @@ class ModInfo:
     uid: str
     ui_only: bool
     libraries: list[str]
+
+
+@dataclass
+class ScenarioSetup:
+    ai: bool = False
+    profile: list[str] = field(default_factory=list)
+    expected: list[str] = field(default_factory=list)
 
 
 def read_mod_info(mod: Path) -> ModInfo:
@@ -77,6 +95,23 @@ def scenario_names(mod: Path) -> list[str]:
     return [SMOKE, *sorted(path.stem for path in folder.glob("*.lua"))]
 
 
+def read_setup(mod: Path, scenario: str) -> ScenarioSetup:
+    setup = ScenarioSetup()
+    if scenario == SMOKE:
+        return setup
+    text = (mod.parent / "tests" / "game" / f"{scenario}.lua").read_text(encoding="utf-8")
+    for name, value in DIRECTIVE.findall(text):
+        if name == "ai":
+            setup.ai = True
+        elif name == "profile":
+            setup.profile.append(value)
+        elif name == "expect":
+            setup.expected.append(value)
+        else:
+            raise GameTestError(f"В сценарии {scenario} неизвестная строка стенда: {name}")
+    return setup
+
+
 def active_uids(info: ModInfo, library_uids: list[str], scenario: str, without_mod: bool) -> list[str]:
     uids = [TEST_MOD_UID, *library_uids]
     if not without_mod:
@@ -94,9 +129,10 @@ def prefs_argument(prefs: str | Path, prefs_dir: str | Path) -> str:
         raise GameTestError(f"Временная папка на другом диске, чем настройки игры: {prefs}") from error
 
 
-def prefs_text(uids: list[str]) -> str:
+def prefs_text(uids: list[str], profile: list[str]) -> str:
     mods = "".join(f"    ['{uid}'] = true,\n" for uid in uids)
-    return (f"profile = {{\n    current = 1,\n    profiles = {{\n        {{\n            Name = '{PROFILE}',\n"
+    fields = "".join(f"            {line},\n" for line in [f"Name = '{PROFILE}'", *profile])
+    return (f"profile = {{\n    current = 1,\n    profiles = {{\n        {{\n{fields}"
             f"        }},\n    }},\n}}\nversion = {{\n    major = 1,\n}}\nactive_mods = {{\n{mods}}}\n")
 
 
@@ -122,12 +158,13 @@ def init_text(bin_dir: Path, prefs_folder: Path, mounts: dict[str, Path]) -> str
     return "\n".join(lines) + "\n"
 
 
-def problems_in_log(log: str, scenario: str) -> list[str]:
+def problems_in_log(log: str, scenario: str, expected: list[str]) -> list[str]:
     """The verdict comes from the log: a mod that failed to load does not stop the test mod."""
     lines = log.splitlines()
     problems = [line.strip() for line in lines if "[MODTEST] FAIL" in line or ERROR_LINE.search(line)]
     if not any("[MODTEST] PASS" in line for line in lines):
         problems.append("В логе нет строки [MODTEST] PASS")
+    problems += [f"В логе нет строки: {text}" for text in expected if text not in log]
     if scenario != SMOKE:
         found = SIM_MODS.search(log)
         if not found:
@@ -160,14 +197,54 @@ def library_folder(name: str) -> Path:
     return folder
 
 
-def run_game(args: list[str], cwd: Path) -> int | None:
+def press_key(pid: int, key: str) -> None:
+    """A real key message for the window of the view, the main window of the game ignores keys.
+
+    It goes to the game and nowhere else, so the player can go on working. A message carries no state of
+    Ctrl, Alt and Shift, so it works only for a key without them.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+    views = []
+
+    def on_child(hwnd, _):
+        views.append(hwnd)
+        return True
+
+    def on_window(hwnd, _):
+        owner = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value == pid:
+            user32.EnumChildWindows(hwnd, callback_type(on_child), 0)
+        return True
+
+    user32.EnumWindows(callback_type(on_window), 0)
+    code = ord(key.upper())
+    scan = user32.MapVirtualKeyW(code, 0)
+    for hwnd in views:
+        user32.PostMessageW(hwnd, WM_KEYDOWN, code, 1 | scan << 16)
+        user32.PostMessageW(hwnd, WM_KEYUP, code, 1 | scan << 16 | 1 << 30 | 1 << 31)
+
+
+def run_game(args: list[str], cwd: Path, log_path: Path) -> int | None:
     process = subprocess.Popen(args, cwd=cwd)
-    try:
-        return process.wait(TIMEOUT)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait()
-        return None
+    deadline = time.monotonic() + TIMEOUT
+    pressed = 0
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            return process.returncode
+        time.sleep(POLL_SECONDS)
+        if log_path.exists():
+            keys = PRESS.findall(log_path.read_text(encoding="utf-8", errors="replace"))
+            for key in keys[pressed:]:
+                press_key(process.pid, key)
+            pressed = len(keys)
+    process.kill()
+    process.wait()
+    return None
 
 
 def run_scenario(mod: Path, info: ModInfo, scenario: str, faf: Path, without_mod: bool) -> list[str]:
@@ -178,6 +255,7 @@ def run_scenario(mod: Path, info: ModInfo, scenario: str, faf: Path, without_mod
     mounts["/mods/modtestscenarios"] = mod.parent / "tests" / "game"
     library_uids = [read_mod_info(folder).uid for folder in libraries]
     uids = active_uids(info, library_uids, scenario, without_mod)
+    setup = read_setup(mod, scenario)
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_path = LOG_DIR / f"{mod.name}-{scenario}.log"
@@ -186,14 +264,15 @@ def run_scenario(mod: Path, info: ModInfo, scenario: str, faf: Path, without_mod
 
     with tempfile.TemporaryDirectory(prefix="modtest") as temp:
         prefs = Path(temp) / "Game.prefs"
-        prefs.write_text(prefs_text(uids), encoding="utf-8")
+        prefs.write_text(prefs_text(uids, setup.profile), encoding="utf-8")
         init = Path(temp) / "init_modtest.lua"
         init.write_text(init_text(bin_dir, Path(temp), mounts), encoding="utf-8")
         code = run_game([str(bin_dir / "ForgedAlliance.exe"), "/init", init.as_posix(),
                          "/prefs", prefs_argument(prefs, prefs_dir), "/profile", PROFILE, "/log", str(log_path),
-                         "/map", MAP, "/noAi", "/seed", "1", "/faction", "1", "/windowed", "1024", "768",
-                         "/nomovie", "/nosound", "/nomusic", "/nobugreport", "/novalidate",
-                         "/modtest", scenario, NO_TARGET if without_mod else info.uid], bin_dir)
+                         "/map", MAP, *([] if setup.ai else ["/noAi"]), "/seed", "1", "/faction", "1",
+                         "/windowed", "1024", "768", "/nomovie", "/nosound", "/nomusic", "/nobugreport",
+                         "/novalidate", "/modtest", scenario, NO_TARGET if without_mod else info.uid],
+                        bin_dir, log_path)
         problems = []
         if prefs.with_name("Game.prefs.bad").exists():
             problems.append("Игра отвергла временные настройки")
@@ -206,7 +285,7 @@ def run_scenario(mod: Path, info: ModInfo, scenario: str, faf: Path, without_mod
         return [*problems, "Игра не создала лог"]
     log = log_path.read_text(encoding="utf-8", errors="replace")
     remove_replay(log)
-    return [*problems, *problems_in_log(log, scenario)]
+    return [*problems, *problems_in_log(log, scenario, setup.expected)]
 
 
 def main() -> int:
