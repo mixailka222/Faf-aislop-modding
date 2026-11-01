@@ -649,7 +649,7 @@ function ReclaimPauseForceCheck()
         ' energy=' .. string.format('%.1f', energyFill * 100) .. '%' ..
         ' needMass=' .. tostring(cfg.highMass) ..
         ' needEnergy=' .. tostring(cfg.energyMin) ..
-        ' engineersFound=' .. tostring(got and n or 0) ..
+        ' engineersFound=' .. (got and tostring(n) or '?') ..
         ' held=' .. tostring(HeldCount()) ..
         ' verdict=' .. Explain(cfg, massFill, energyFill) ..
         ' | ' .. Settings.ReclaimPauseSettingsLine())

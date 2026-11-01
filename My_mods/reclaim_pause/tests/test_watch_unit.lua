@@ -697,6 +697,22 @@ check(string.find(joined4, 'verdict=WAIT%-ENERGY') ~= nil,
       'при энергии 20% вердикт WAIT-ENERGY')
 
 print('')
+print('=== 27a: РУЧНАЯ ПРОВЕРКА различает "не искали" и "никого нет" ===')
+Reset(0.95, 1.0)
+add(eng(100, AM))
+CMDMODE_ACTIVE = true
+msgs = {}
+WATCH.ReclaimPauseForceCheck()
+check(string.find(table.concat(msgs, ' | '), 'engineersFound=?', 1, true) ~= nil,
+      'в режиме команд обхода нет, поэтому вместо числа стоит ?')
+
+Reset(0.95, 1.0)
+msgs = {}
+WATCH.ReclaimPauseForceCheck()
+check(string.find(table.concat(msgs, ' | '), 'engineersFound=0', 1, true) ~= nil,
+      'обход прошёл и никого не нашёл, поэтому стоит 0')
+
+print('')
 print('=== 28: ОБРЫВ МАРШРУТА ===')
 Reset(0.95, 1.0)
 add(eng(100, AM))
