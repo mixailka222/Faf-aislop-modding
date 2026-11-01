@@ -13,9 +13,9 @@ the mods are mounted from their folders and the installed ones are left out of t
 The smoke run has UI mods only, as for a player. A scenario also needs ModTestSim, because a UI
 mod cannot create units, and the run fails if anything else gets into the sim.
 
-A scenario with the line "players" is a real match of several clients on this PC over LAN, each with
+A scenario with the line "players" is a real match of two clients on this PC over LAN, each with
 its own settings and log. The auto lobby of the game starts it without sim mods, so ModTestSim
-stays out. The first client hosts and runs the scenario, the others play their armies until it ends.
+stays out. The first client hosts and runs the scenario, the second plays its army until it ends.
 The verdict needs the scenario to pass on the host, and an error line in any log fails the run.
 
 Lines at the top of a scenario file change its run:
@@ -24,7 +24,7 @@ Lines at the top of a scenario file change its run:
     -- stand: profile options = { ... }    this text goes into the profile of the temporary settings
     -- stand: expect text                  the log has to contain this text
     -- stand: mod name                     this library from references/ui-libs/mods is active as well
-    -- stand: players 2                    this many clients play on one team, see above
+    -- stand: players 2                    two clients play on one team, see above
 """
 import argparse
 import ctypes
@@ -53,7 +53,6 @@ PROFILE = "modtest"
 SMOKE = "smoke"
 MAP = "SCMP_009"
 MAP_FILE = f"/maps/{MAP}/{MAP}_scenario.lua"
-MAP_PLAYERS = 8
 LAN_PROTOCOL = "udp"
 LAN_HOST = "127.0.0.1"
 LAN_TEAM = "2"
@@ -150,9 +149,9 @@ def read_setup(mod: Path, scenario: str) -> ScenarioSetup:
         elif name == "mod":
             setup.mods.append(value)
         elif name == "players":
-            if not value.isdigit() or not 2 <= int(value) <= MAP_PLAYERS:
-                raise GameTestError(f"В сценарии {scenario} число игроков не от 2 до {MAP_PLAYERS}: {value}")
-            setup.players = int(value)
+            if value != "2":
+                raise GameTestError(f"В сценарии {scenario} число игроков не 2: {value}")
+            setup.players = 2
         else:
             raise GameTestError(f"В сценарии {scenario} неизвестная строка стенда: {name}")
     if setup.ai and setup.players > 1:

@@ -333,7 +333,7 @@ class SetupTests(TempCase):
         self.assertEqual(self.setup_of("-- stand: players 2\n").players, 2)
 
     def test_wrong_number_of_players_stops_the_run(self):
-        for value in ("1", "9", "two", ""):
+        for value in ("1", "3", "two", ""):
             with self.subTest(value), self.assertRaises(game_test.GameTestError):
                 self.setup_of(f"-- stand: players {value}\n")
 
