@@ -56,14 +56,20 @@ SIM_MODS = re.compile(r"\[MODTEST\] sim mods:(.*)")
 ERROR_LINE = re.compile(r"FAILED|: ERROR\b|CRASH in|Error importing|Error running lua script|SCR_LuaDoFileConcat"
                         r"|[Aa]ttempt to |nonexistent global|stack traceback")
 DIRECTIVE = re.compile(r"^-- stand: (\w+) ?(.*?)\s*$", re.M)
-INPUT = re.compile(r"\[MODTEST\] (PRESS \w|MOUSE \d+ \d+)\s*$", re.M)
+INPUT = re.compile(r"\[MODTEST\] (PRESS (?:(?:Ctrl|Alt|Shift)-)*\w|MOUSE \d+ \d+)\s*$", re.M)
+ATTEMPTS = 3
 POLL_SECONDS = 0.2
 MOUSE_REPEAT_SECONDS = 0.02
+HOLD_SECONDS = 0.2
 VIEW_CLASS = "wxWindowClass"
 WM_KEYDOWN = 0x0100
 WM_KEYUP = 0x0101
 WM_MOUSEMOVE = 0x0200
 SW_SHOWNOACTIVATE = 4
+MOUSEEVENTF_MOVE = 0x0001
+KF_ALTDOWN = 1 << 29
+KEY_DOWN = 0x80
+HELD_KEYS = {"Ctrl": (0x11, 0xA2), "Shift": (0x10, 0xA0)}
 
 
 class GameTestError(Exception):
@@ -233,14 +239,38 @@ def view_windows(pid: int) -> list[int]:
     return views
 
 
-def press_key(views: list[int], key: str) -> None:
-    """A real key message. It goes to the game and nowhere else, so the player can go on working."""
+def set_held_keys(keys: list[int], down: bool) -> None:
     user32 = ctypes.windll.user32
+    state = (ctypes.c_ubyte * 256)()
+    user32.GetKeyboardState(state)
+    for key in keys:
+        state[key] = KEY_DOWN if down else 0
+    user32.SetKeyboardState(state)
+
+
+def press_key(views: list[int], combination: str) -> None:
+    """A real key message. It goes to the game and nowhere else, so the player can go on working.
+
+    The game reads Ctrl and Shift from the keyboard state of its thread, this thread shares that state for
+    the time of the press, and Alt from a bit of the message. Only the key map sees them, IsKeyDown does not.
+    """
+    user32 = ctypes.windll.user32
+    *modifiers, key = combination.split("-")
     code = ord(key.upper())
-    scan = user32.MapVirtualKeyW(code, 0)
+    flags = 1 | user32.MapVirtualKeyW(code, 0) << 16 | (KF_ALTDOWN if "Alt" in modifiers else 0)
+    held = [virtual_key for name in modifiers for virtual_key in HELD_KEYS.get(name, ())]
+    game_thread = user32.GetWindowThreadProcessId(views[0], None)
+    own_thread = ctypes.windll.kernel32.GetCurrentThreadId()
+    if held:
+        user32.AttachThreadInput(own_thread, game_thread, True)
+        set_held_keys(held, True)
     for hwnd in views:
-        user32.PostMessageW(hwnd, WM_KEYDOWN, code, 1 | scan << 16)
-        user32.PostMessageW(hwnd, WM_KEYUP, code, 1 | scan << 16 | 1 << 30 | 1 << 31)
+        user32.PostMessageW(hwnd, WM_KEYDOWN, code, flags)
+        user32.PostMessageW(hwnd, WM_KEYUP, code, flags | 1 << 30 | 1 << 31)
+    if held:
+        time.sleep(HOLD_SECONDS)
+        set_held_keys(held, False)
+        user32.AttachThreadInput(own_thread, game_thread, False)
 
 
 def move_mouse(views: list[int], x: int, y: int) -> None:
@@ -250,12 +280,37 @@ def move_mouse(views: list[int], x: int, y: int) -> None:
         user32.PostMessageW(hwnd, WM_MOUSEMOVE, 0, y << 16 | x)
 
 
-def run_game(args: list[str], cwd: Path, log_path: Path) -> int | None:
-    """The window opens behind the others and the stand never gives it the focus, so the player keeps working.
+def game_has_focus(pid: int) -> bool:
+    user32 = ctypes.windll.user32
+    owner = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), ctypes.byref(owner))
+    return owner.value == pid
+
+
+def give_focus_back(window: int) -> None:
+    """Windows lets go of the focus only for the program that made the last input, a zero move counts."""
+    user32 = ctypes.windll.user32
+    user32.mouse_event(MOUSEEVENTF_MOVE, 0, 0, 0, 0)
+    user32.SetForegroundWindow(window)
+
+
+def system_cursor() -> tuple[int, int]:
+    point = wintypes.POINT()
+    ctypes.windll.user32.GetCursorPos(ctypes.byref(point))
+    return point.x, point.y
+
+
+def run_game(args: list[str], cwd: Path, log_path: Path) -> tuple[int | None, bool]:
+    """Returns the exit code and whether a person at the PC could disturb the run. The window opens behind
+    the others.
 
     The game soon replaces the position of a mouse message with the cursor of the system, so the message
-    is repeated until the next one.
+    is repeated until the next one, and a moving cursor of the system can still win. The game can take
+    the focus while it starts. With the focus it ignores such a message and gets the keys of the person,
+    so the focus goes back at once.
     """
+    user32 = ctypes.windll.user32
+    outer = user32.GetForegroundWindow() or user32.GetShellWindow()
     startup = subprocess.STARTUPINFO()
     startup.dwFlags = subprocess.STARTF_USESHOWWINDOW
     startup.wShowWindow = SW_SHOWNOACTIVATE
@@ -265,13 +320,20 @@ def run_game(args: list[str], cwd: Path, log_path: Path) -> int | None:
     sent = 0
     views = []
     cursor = None
+    disturbed = False
+    person_cursor = system_cursor()
     try:
         while time.monotonic() < deadline:
             if process.poll() is not None:
-                return process.returncode
+                return process.returncode, disturbed
             time.sleep(MOUSE_REPEAT_SECONDS)
+            if game_has_focus(process.pid):
+                disturbed = True
+                give_focus_back(outer)
             if cursor:
                 move_mouse(views, *cursor)
+                disturbed = disturbed or system_cursor() != person_cursor
+            person_cursor = system_cursor()
             if time.monotonic() < next_read or not log_path.exists():
                 continue
             next_read = time.monotonic() + POLL_SECONDS
@@ -284,14 +346,14 @@ def run_game(args: list[str], cwd: Path, log_path: Path) -> int | None:
                 else:
                     press_key(views, values[0])
             sent = len(commands)
-        return None
+        return None, disturbed
     finally:
         if process.poll() is None:
             process.kill()
             process.wait()
 
 
-def run_scenario(mod: Path, info: ModInfo, scenario: str, faf: Path, without_mod: bool) -> list[str]:
+def run_scenario(mod: Path, info: ModInfo, scenario: str, faf: Path, without_mod: bool) -> tuple[list[str], bool]:
     bin_dir = faf / "bin"
     setup = read_setup(mod, scenario)
     libraries = [library_folder(name) for name in [*info.libraries, *setup.mods]]
@@ -311,12 +373,12 @@ def run_scenario(mod: Path, info: ModInfo, scenario: str, faf: Path, without_mod
         prefs.write_text(prefs_text(uids, setup.profile), encoding="utf-8")
         init = Path(temp) / "init_modtest.lua"
         init.write_text(init_text(bin_dir, Path(temp), mounts), encoding="utf-8")
-        code = run_game([str(bin_dir / "ForgedAlliance.exe"), "/init", init.as_posix(),
-                         "/prefs", prefs_argument(prefs, prefs_dir), "/profile", PROFILE, "/log", str(log_path),
-                         "/map", MAP, *([] if setup.ai else ["/noAi"]), "/seed", "1", "/faction", "1",
-                         "/windowed", "1024", "768", "/nomovie", "/nosound", "/nomusic", "/nobugreport",
-                         "/novalidate", "/modtest", scenario, NO_TARGET if without_mod else info.uid],
-                        bin_dir, log_path)
+        code, disturbed = run_game([str(bin_dir / "ForgedAlliance.exe"), "/init", init.as_posix(),
+                                     "/prefs", prefs_argument(prefs, prefs_dir), "/profile", PROFILE,
+                                     "/log", str(log_path), "/map", MAP, *([] if setup.ai else ["/noAi"]),
+                                     "/seed", "1", "/faction", "1", "/windowed", "1024", "768", "/nomovie",
+                                     "/nosound", "/nomusic", "/nobugreport", "/novalidate", "/modtest", scenario,
+                                     NO_TARGET if without_mod else info.uid], bin_dir, log_path)
         problems = []
         if prefs.with_name("Game.prefs.bad").exists():
             problems.append("Игра отвергла временные настройки")
@@ -326,10 +388,10 @@ def run_scenario(mod: Path, info: ModInfo, scenario: str, faf: Path, without_mod
     elif code != 0:
         problems.append(f"Код выхода игры {code}")
     if not log_path.exists():
-        return [*problems, "Игра не создала лог"]
+        return [*problems, "Игра не создала лог"], disturbed
     log = log_path.read_text(encoding="utf-8", errors="replace")
     remove_replay(log)
-    return [*problems, *problems_in_log(log, scenario, setup.expected)]
+    return [*problems, *problems_in_log(log, scenario, setup.expected)], disturbed
 
 
 def main() -> int:
@@ -359,7 +421,14 @@ def main() -> int:
             raise GameTestError(f"Нет сценария {options.only}, есть: {', '.join(known)}")
         for scenario in [options.only] if options.only else known:
             started = time.monotonic()
-            problems = run_scenario(mod, info, scenario, options.faf, options.without_mod)
+            for attempt in range(1, ATTEMPTS + 1):
+                problems, disturbed = run_scenario(mod, info, scenario, options.faf, options.without_mod)
+                if options.without_mod or not problems or not disturbed:
+                    break
+                if attempt == ATTEMPTS:
+                    problems.insert(0, "За компьютером работал человек, результат может быть ложным")
+                    break
+                print(f"[..] {scenario}: за компьютером работал человек, его ввод мог попасть в игру, повторяю")
             if options.without_mod:
                 problems = [] if problems else ["Сценарий прошёл без мода, значит он ничего не проверяет"]
             label = f"{scenario}, контроль без мода" if options.without_mod else scenario

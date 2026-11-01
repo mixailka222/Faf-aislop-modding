@@ -6,6 +6,9 @@ local NO_TARGET = "none"
 local SIM_HELPER_UID = "modtest-sim-1"
 local START_TICKS = 60
 local MOUSE_SECONDS = 8
+-- The game shows the position of a mouse message only for a moment, see run_game in game_test.py.
+local MOUSE_STEP_SECONDS = 0.02
+local MOUSE_MARGIN = 2
 
 local failures = 0
 
@@ -23,13 +26,13 @@ function Check(condition, label)
 end
 
 --- Returns the last result of condition. The time is real, as for the WaitSeconds of a mod.
-function WaitUntil(condition, seconds)
+function WaitUntil(condition, seconds, step)
     local deadline = CurrentTime() + seconds
     while CurrentTime() < deadline do
         if condition() then
             return true
         end
-        WaitSeconds(0.5)
+        WaitSeconds(step or 0.5)
     end
     return condition()
 end
@@ -95,24 +98,26 @@ function SetupAllies(givers, takers, massPerSecond, energyPerSecond)
 end
 
 --- game_test.py reads this line and posts a real key message to the game. The log gets to the disk with a
---- delay of a second or two, so a scenario waits for the effect. One letter, without Ctrl, Alt and Shift.
+--- delay of a second or two, so a scenario waits for the effect. One letter, with Ctrl-, Alt- and Shift-
+--- before it as in the key map. The key map sees them, IsKeyDown does not.
 function PressKey(key)
     Step("PRESS " .. key)
 end
 
---- Moves the cursor of the game over a place of the map with a real mouse message. It has to be in the view.
+--- Moves the cursor of the game over a place of the map near the commander with a real mouse message. It has
+--- to be in the view. The height of a flying unit is no use here, the cursor points at the ground below it.
+--- A mod reads GetMouseWorldPos, and GetMouseScreenPos can show the cursor of the system at the same moment.
 function MoveMouseTo(position)
     local view = import("/lua/ui/game/worldview.lua").viewLeft
-    local point = view:Project(Vector(position[1], GetMouseWorldPos()[2], position[3]))
+    local ground = GetArmyAvatars()[1]:GetPosition()[2]
+    local point = view:Project(Vector(position[1], ground, position[3]))
     local x, y = math.floor(point.x), math.floor(point.y)
     Check(x > view.Left() and x < view.Right() and y > view.Top() and y < view.Bottom(), "the place is in the view")
     Step("MOUSE " .. x .. " " .. y)
-    local arrived = WaitUntil(function()
-        local mouse = GetMouseScreenPos()
-        return mouse.x == x and mouse.y == y
-    end, MOUSE_SECONDS)
-    local mouse = GetMouseScreenPos()
-    Check(arrived, "the cursor came to " .. x .. "," .. y .. ", it is at " .. mouse.x .. "," .. mouse.y)
+    Check(WaitUntil(function()
+        local mouse = GetMouseWorldPos()
+        return math.abs(mouse[1] - position[1]) < MOUSE_MARGIN and math.abs(mouse[3] - position[3]) < MOUSE_MARGIN
+    end, MOUSE_SECONDS, MOUSE_STEP_SECONDS), "the cursor came to the place")
 end
 
 --- A module of a mod keeps its state in locals, this reads one from a function that uses it.

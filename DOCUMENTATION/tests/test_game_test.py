@@ -170,11 +170,11 @@ class ActiveModsTests(unittest.TestCase):
 
 class InputTests(unittest.TestCase):
     def test_lines_of_a_scenario_give_the_commands_in_their_order(self):
-        log = "info: [MODTEST] MOUSE 300 200\ninfo: [MODTEST] PRESS K\n"
-        self.assertEqual(game_test.INPUT.findall(log), ["MOUSE 300 200", "PRESS K"])
+        log = "info: [MODTEST] MOUSE 300 200\ninfo: [MODTEST] PRESS K\ninfo: [MODTEST] PRESS Ctrl-Alt-R\n"
+        self.assertEqual(game_test.INPUT.findall(log), ["MOUSE 300 200", "PRESS K", "PRESS Ctrl-Alt-R"])
 
     def test_other_lines_give_no_command(self):
-        log = "info: [MODTEST] PRESS first\ninfo: PRESS K\ninfo: [MODTEST] MOUSE x y\n"
+        log = "info: [MODTEST] PRESS first\ninfo: PRESS K\ninfo: [MODTEST] MOUSE x y\ninfo: [MODTEST] PRESS Win-K\n"
         self.assertEqual(game_test.INPUT.findall(log), [])
 
 
