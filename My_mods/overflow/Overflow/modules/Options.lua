@@ -67,7 +67,7 @@ function Main()
     local PFX = 'Overflow: '
     -- Оператор # движком не поддерживается, длина таблицы - только
     -- через table.getn. Объявляем здесь явно: неявное
-    -- обращение к глобалу, которого нет, роняет загрузку модуля (3.6).
+    -- обращение к глобалу, которого нет, роняет загрузку модуля.
     local TableGetn = table.getn
 
     local Rows = import('/mods/Overflow/modules/rows.lua')

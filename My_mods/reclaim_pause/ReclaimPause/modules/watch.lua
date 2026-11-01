@@ -783,8 +783,8 @@ local function TickOnce()
     local fresh = nil
     local foundN = -1
     local graceLeft = cfg.startGrace - iterNo * SCAN_SEC
-    -- Обход трогает выделение (WithAllEngineers), поэтому он идёт только
-    -- при активной паузе.
+    -- The scan touches the selection (WithAllEngineers), so it runs only while the
+    -- pause is active.
     if want and graceLeft <= 0 then
         local got, n = EnsureEngineers()
         if got then
@@ -989,9 +989,8 @@ end
 
 local function Loop()
     while running do
-        -- Корутина умирает МОЛЧА на любой ошибке: движок не пишет ничего.
-        -- Один nil-вызов - и мод перестаёт работать без единого слова в логе.
-        -- Поэтому TickOnce под pcall, а ошибка печатается.
+        -- An error would end this thread: the game logs it, but the mod stays
+        -- stopped until the next match. Under pcall the loop goes on.
         local ok, err = pcall(TickOnce)
         if not ok then
             LOG(PFX .. 'CRASH in TickOnce: ' .. tostring(err))
