@@ -111,22 +111,17 @@ function Main()
     -- вызовов, 12 лишних сохранений профиля и 12 лишних строк в логе.
     local writing = false
 
-    -- Raw(), not Set: OptionVar:Set remembers the old value, and Cancel in the
-    -- UMT window would bring it back. The new value is already in the profile,
-    -- so nothing here has to call OnChange.
-    local function PushToWindow()
-        local cfg = Settings.ReclaimPauseCfg
-        options.enabled:Raw():Set(cfg.enabled)
-        options.highMass:Raw():Set(cfg.highMass)
-        options.lowMass:Raw():Set(cfg.lowMass)
-        options.energyMin:Raw():Set(cfg.energyMin)
-        options.minSec:Raw():Set(cfg.minSec)
-        options.releaseHoldSec:Raw():Set(cfg.releaseHoldSec)
-        options.rescanSec:Raw():Set(cfg.rescanSec)
-        options.startGrace:Raw():Set(cfg.startGrace)
-        options.abortMove:Raw():Set(cfg.abortMove)
-        options.abortSec:Raw():Set(cfg.abortSec)
-        options.skipSec:Raw():Set(cfg.skipSec)
+    -- Raw(), not Set: Set would remember the old value for Cancel and call Refresh.
+    -- Save forgets the value remembered when a slider moved before the key press,
+    -- otherwise Cancel would bring it back. The profile already has the new value.
+    -- A key that changes one setting names it, so Cancel still undoes the others.
+    local function PushToWindow(name)
+        for field, value in Settings.ReclaimPauseCfg do
+            if name == nil or name == field then
+                options[field]:Raw():Set(value)
+                options[field]:Save()
+            end
+        end
     end
 
     local function Refresh()
@@ -136,7 +131,7 @@ function Main()
 
         -- СБРОС К УМОЛЧАНИЯМ. Идёт ПЕРВЫМ: если поставить его ниже,
         -- строки после присвоят cfg старые значения и затрут сброс.
-        -- Значения в ползунки пишет PushToWindow через ReclaimPauseBindWindow.
+        -- PushToWindow writes the sliders: ReclaimPauseResetDefaults calls it.
         if options.resetFlag() then
             writing = true
             options.resetFlag:Set(false)

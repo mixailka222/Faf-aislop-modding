@@ -453,6 +453,27 @@ check(SET.ReclaimPauseCfg.enabled == false,
       'Cancel не включил мод обратно после выключения клавишей')
 WATCH.ReclaimPauseToggle()
 
+-- A slider moved before the key has already remembered the value Cancel returns to.
+opts.highMass:Set(85)
+Window('Save')
+opts.highMass:Set(91)
+SET.ReclaimPauseResetDefaults()
+Window('Reset')
+check(SET.ReclaimPauseCfg.highMass == SET.ReclaimPauseDefaults().highMass,
+      'Cancel не вернул порог, сдвинутый до сброса клавишей (получено ' ..
+      tostring(SET.ReclaimPauseCfg.highMass) .. ')')
+
+-- The toggle key changes one setting, so Cancel still undoes a slider move.
+opts.highMass:Set(85)
+Window('Save')
+opts.highMass:Set(91)
+WATCH.ReclaimPauseToggle()
+Window('Reset')
+check(SET.ReclaimPauseCfg.highMass == 85,
+      'клавиша включения не мешает Cancel откатить ползунок (получено ' ..
+      tostring(SET.ReclaimPauseCfg.highMass) .. ')')
+WATCH.ReclaimPauseToggle()
+
 return fails
 end)
 

@@ -36,31 +36,16 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 ORIG = io.open(OPT, encoding="utf-8").read()
 
-SET_BLOCK = u"""        options.enabled:Raw():Set(cfg.enabled)
-        options.highMass:Raw():Set(cfg.highMass)
-        options.lowMass:Raw():Set(cfg.lowMass)
-        options.energyMin:Raw():Set(cfg.energyMin)
-        options.minSec:Raw():Set(cfg.minSec)
-        options.releaseHoldSec:Raw():Set(cfg.releaseHoldSec)
-        options.rescanSec:Raw():Set(cfg.rescanSec)
-        options.startGrace:Raw():Set(cfg.startGrace)
-        options.abortMove:Raw():Set(cfg.abortMove)
-        options.abortSec:Raw():Set(cfg.abortSec)
-        options.skipSec:Raw():Set(cfg.skipSec)
+SET_LINE = u"""                options[field]:Raw():Set(value)
 """
 
-CALL_BLOCK = u"""        options.enabled(cfg.enabled)
-        options.highMass(cfg.highMass)
-        options.lowMass(cfg.lowMass)
-        options.energyMin(cfg.energyMin)
-        options.minSec(cfg.minSec)
-        options.releaseHoldSec(cfg.releaseHoldSec)
-        options.rescanSec(cfg.rescanSec)
-        options.startGrace(cfg.startGrace)
-        options.abortMove(cfg.abortMove)
-        options.abortSec(cfg.abortSec)
-        options.skipSec(cfg.skipSec)
+CALL_LINE = u"""                options[field](value)
 """
+
+SAVE_LINE = u"""                options[field]:Save()
+"""
+
+FILTER = u"            if name == nil or name == field then"
 
 STUCK = u"""            writing = false
 """
@@ -70,13 +55,13 @@ CLEAR = u"""            options.resetFlag:Set(false)
 
 BROKEN = [
     (u"1. запись ползунков вызовом вместо Raw():Set",
-     SET_BLOCK, CALL_BLOCK),
+     SET_LINE, CALL_LINE),
 
     (u"2. галочка не снимает себя",
      CLEAR, u""),
 
     (u"3. сброс не пишет значения в ползунки",
-     SET_BLOCK, u""),
+     SET_LINE, u""),
 
     (u"4. сброс стоит ПОСЛЕ присвоения ползунков (затирается)",
      u"""        if options.resetFlag() then
@@ -97,6 +82,12 @@ BROKEN = [
 
     (u"6. сброса нет вообще",
      u"        if options.resetFlag() then", u"        if false then"),
+
+    (u"7. Cancel возвращает ползунок, сдвинутый до клавиши сброса",
+     SAVE_LINE, u""),
+
+    (u"8. клавиша включения лишает Cancel отката ползунков",
+     FILTER, u"            if true then"),
 ]
 
 results = []

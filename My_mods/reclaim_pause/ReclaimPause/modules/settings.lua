@@ -159,11 +159,12 @@ end
 
 ---Hotkeys change the settings past the page. The page must get the new values:
 ---its next slider move reads all OptionVars and would write the old ones back.
-function ReclaimPausePushToWindow()
+---@param name? string the only setting that changed, nil means all of them
+function ReclaimPausePushToWindow(name)
     if windowPush == nil then
         return
     end
-    local ok, err = pcall(windowPush)
+    local ok, err = pcall(windowPush, name)
     if not ok then
         LOG(PFX .. 'PushToWindow FAILED: ' .. tostring(err))
     end

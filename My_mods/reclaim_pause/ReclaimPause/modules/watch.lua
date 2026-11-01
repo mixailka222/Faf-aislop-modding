@@ -1067,7 +1067,7 @@ function ReclaimPauseToggle()
         Settings.ReclaimPauseCfg.enabled = true
     end
     Settings.ReclaimPauseSaveSettings()
-    Settings.ReclaimPausePushToWindow()
+    Settings.ReclaimPausePushToWindow('enabled')
     switchIter = iterNo - Settings.ReclaimPauseCfg.minSec
     LOG(PFX .. 'toggled, ' .. Settings.ReclaimPauseSettingsLine())
 end
