@@ -5,6 +5,7 @@
 local NO_TARGET = "none"
 local SIM_HELPER_UID = "modtest-sim-1"
 local START_TICKS = 60
+local MOUSE_SECONDS = 8
 
 local failures = 0
 
@@ -97,6 +98,21 @@ end
 --- delay of a second or two, so a scenario waits for the effect. One letter, without Ctrl, Alt and Shift.
 function PressKey(key)
     Step("PRESS " .. key)
+end
+
+--- Moves the cursor of the game over a place of the map with a real mouse message. It has to be in the view.
+function MoveMouseTo(position)
+    local view = import("/lua/ui/game/worldview.lua").viewLeft
+    local point = view:Project(Vector(position[1], GetMouseWorldPos()[2], position[3]))
+    local x, y = math.floor(point.x), math.floor(point.y)
+    Check(x > view.Left() and x < view.Right() and y > view.Top() and y < view.Bottom(), "the place is in the view")
+    Step("MOUSE " .. x .. " " .. y)
+    local arrived = WaitUntil(function()
+        local mouse = GetMouseScreenPos()
+        return mouse.x == x and mouse.y == y
+    end, MOUSE_SECONDS)
+    local mouse = GetMouseScreenPos()
+    Check(arrived, "the cursor came to " .. x .. "," .. y .. ", it is at " .. mouse.x .. "," .. mouse.y)
 end
 
 --- A module of a mod keeps its state in locals, this reads one from a function that uses it.

@@ -168,12 +168,14 @@ class ActiveModsTests(unittest.TestCase):
         self.assertIn("lib", uids)
 
 
-class PressTests(unittest.TestCase):
-    def test_line_of_a_scenario_gives_the_key(self):
-        self.assertEqual(game_test.PRESS.findall("info: [MODTEST] PRESS K\ninfo: [MODTEST] PRESS L\n"), ["K", "L"])
+class InputTests(unittest.TestCase):
+    def test_lines_of_a_scenario_give_the_commands_in_their_order(self):
+        log = "info: [MODTEST] MOUSE 300 200\ninfo: [MODTEST] PRESS K\n"
+        self.assertEqual(game_test.INPUT.findall(log), ["MOUSE 300 200", "PRESS K"])
 
-    def test_other_lines_give_no_key(self):
-        self.assertEqual(game_test.PRESS.findall("info: [MODTEST] PRESS first\ninfo: PRESS K\n"), [])
+    def test_other_lines_give_no_command(self):
+        log = "info: [MODTEST] PRESS first\ninfo: PRESS K\ninfo: [MODTEST] MOUSE x y\n"
+        self.assertEqual(game_test.INPUT.findall(log), [])
 
 
 class SetupTests(TempCase):
@@ -186,12 +188,15 @@ class SetupTests(TempCase):
         self.assertFalse(setup.ai)
         self.assertEqual(setup.profile, [])
         self.assertEqual(setup.expected, [])
+        self.assertEqual(setup.mods, [])
 
     def test_lines_of_the_stand_are_read(self):
-        setup = self.setup_of("-- stand: ai\n-- stand: profile options = { a = 1 }\n-- stand: expect mod: ready\n")
+        setup = self.setup_of("-- stand: ai\n-- stand: profile options = { a = 1 }\n-- stand: expect mod: ready\n"
+                              "-- stand: mod ASE\n")
         self.assertTrue(setup.ai)
         self.assertEqual(setup.profile, ["options = { a = 1 }"])
         self.assertEqual(setup.expected, ["mod: ready"])
+        self.assertEqual(setup.mods, ["ASE"])
 
     def test_unknown_line_stops_the_run(self):
         with self.assertRaises(game_test.GameTestError):

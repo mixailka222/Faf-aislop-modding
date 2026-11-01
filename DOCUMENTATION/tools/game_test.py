@@ -18,8 +18,10 @@ Lines at the top of a scenario file change its run:
     -- stand: ai                           the other armies of the map are played by the AI
     -- stand: profile options = { ... }    this text goes into the profile of the temporary settings
     -- stand: expect text                  the log has to contain this text
+    -- stand: mod name                     this library from references/ui-libs/mods is active as well
 """
 import argparse
+import ctypes
 import ntpath
 import os
 import re
@@ -27,6 +29,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from ctypes import wintypes
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -53,10 +56,14 @@ SIM_MODS = re.compile(r"\[MODTEST\] sim mods:(.*)")
 ERROR_LINE = re.compile(r"FAILED|: ERROR\b|CRASH in|Error importing|Error running lua script|SCR_LuaDoFileConcat"
                         r"|[Aa]ttempt to |nonexistent global|stack traceback")
 DIRECTIVE = re.compile(r"^-- stand: (\w+) ?(.*?)\s*$", re.M)
-PRESS = re.compile(r"\[MODTEST\] PRESS (\w)\s*$", re.M)
+INPUT = re.compile(r"\[MODTEST\] (PRESS \w|MOUSE \d+ \d+)\s*$", re.M)
 POLL_SECONDS = 0.2
+MOUSE_REPEAT_SECONDS = 0.02
+VIEW_CLASS = "wxWindowClass"
 WM_KEYDOWN = 0x0100
 WM_KEYUP = 0x0101
+WM_MOUSEMOVE = 0x0200
+SW_SHOWNOACTIVATE = 4
 
 
 class GameTestError(Exception):
@@ -75,6 +82,7 @@ class ScenarioSetup:
     ai: bool = False
     profile: list[str] = field(default_factory=list)
     expected: list[str] = field(default_factory=list)
+    mods: list[str] = field(default_factory=list)
 
 
 def read_mod_info(mod: Path) -> ModInfo:
@@ -107,6 +115,8 @@ def read_setup(mod: Path, scenario: str) -> ScenarioSetup:
             setup.profile.append(value)
         elif name == "expect":
             setup.expected.append(value)
+        elif name == "mod":
+            setup.mods.append(value)
         else:
             raise GameTestError(f"В сценарии {scenario} неизвестная строка стенда: {name}")
     return setup
@@ -197,21 +207,17 @@ def library_folder(name: str) -> Path:
     return folder
 
 
-def press_key(pid: int, key: str) -> None:
-    """A real key message for the window of the view, the main window of the game ignores keys.
-
-    It goes to the game and nowhere else, so the player can go on working. A message carries no state of
-    Ctrl, Alt and Shift, so it works only for a key without them.
-    """
-    import ctypes
-    from ctypes import wintypes
-
+def view_windows(pid: int) -> list[int]:
+    """The windows of the view take keys and the mouse, the main window of the game ignores them."""
     user32 = ctypes.windll.user32
     callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
     views = []
 
     def on_child(hwnd, _):
-        views.append(hwnd)
+        name = ctypes.create_unicode_buffer(len(VIEW_CLASS) + 1)
+        user32.GetClassNameW(hwnd, name, len(name))
+        if name.value == VIEW_CLASS:
+            views.append(hwnd)
         return True
 
     def on_window(hwnd, _):
@@ -222,6 +228,14 @@ def press_key(pid: int, key: str) -> None:
         return True
 
     user32.EnumWindows(callback_type(on_window), 0)
+    if not views:
+        raise GameTestError(f"У игры нет окна класса {VIEW_CLASS}")
+    return views
+
+
+def press_key(views: list[int], key: str) -> None:
+    """A real key message. It goes to the game and nowhere else, so the player can go on working."""
+    user32 = ctypes.windll.user32
     code = ord(key.upper())
     scan = user32.MapVirtualKeyW(code, 0)
     for hwnd in views:
@@ -229,33 +243,63 @@ def press_key(pid: int, key: str) -> None:
         user32.PostMessageW(hwnd, WM_KEYUP, code, 1 | scan << 16 | 1 << 30 | 1 << 31)
 
 
+def move_mouse(views: list[int], x: int, y: int) -> None:
+    """A real mouse message, the cursor of the player stays."""
+    user32 = ctypes.windll.user32
+    for hwnd in views:
+        user32.PostMessageW(hwnd, WM_MOUSEMOVE, 0, y << 16 | x)
+
+
 def run_game(args: list[str], cwd: Path, log_path: Path) -> int | None:
-    process = subprocess.Popen(args, cwd=cwd)
+    """The window opens behind the others and the stand never gives it the focus, so the player keeps working.
+
+    The game soon replaces the position of a mouse message with the cursor of the system, so the message
+    is repeated until the next one.
+    """
+    startup = subprocess.STARTUPINFO()
+    startup.dwFlags = subprocess.STARTF_USESHOWWINDOW
+    startup.wShowWindow = SW_SHOWNOACTIVATE
+    process = subprocess.Popen(args, cwd=cwd, startupinfo=startup)
     deadline = time.monotonic() + TIMEOUT
-    pressed = 0
-    while time.monotonic() < deadline:
-        if process.poll() is not None:
-            return process.returncode
-        time.sleep(POLL_SECONDS)
-        if log_path.exists():
-            keys = PRESS.findall(log_path.read_text(encoding="utf-8", errors="replace"))
-            for key in keys[pressed:]:
-                press_key(process.pid, key)
-            pressed = len(keys)
-    process.kill()
-    process.wait()
-    return None
+    next_read = 0.0
+    sent = 0
+    views = []
+    cursor = None
+    try:
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                return process.returncode
+            time.sleep(MOUSE_REPEAT_SECONDS)
+            if cursor:
+                move_mouse(views, *cursor)
+            if time.monotonic() < next_read or not log_path.exists():
+                continue
+            next_read = time.monotonic() + POLL_SECONDS
+            commands = INPUT.findall(log_path.read_text(encoding="utf-8", errors="replace"))
+            for command in commands[sent:]:
+                views = views or view_windows(process.pid)
+                kind, *values = command.split()
+                if kind == "MOUSE":
+                    cursor = int(values[0]), int(values[1])
+                else:
+                    press_key(views, values[0])
+            sent = len(commands)
+        return None
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
 
 
 def run_scenario(mod: Path, info: ModInfo, scenario: str, faf: Path, without_mod: bool) -> list[str]:
     bin_dir = faf / "bin"
-    libraries = [library_folder(name) for name in info.libraries]
+    setup = read_setup(mod, scenario)
+    libraries = [library_folder(name) for name in [*info.libraries, *setup.mods]]
     mounts = {f"/mods/{folder.name.lower()}": folder
               for folder in [mod, *libraries, TEST_MODS / "ModTest", TEST_MODS / "ModTestSim"]}
     mounts["/mods/modtestscenarios"] = mod.parent / "tests" / "game"
     library_uids = [read_mod_info(folder).uid for folder in libraries]
     uids = active_uids(info, library_uids, scenario, without_mod)
-    setup = read_setup(mod, scenario)
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_path = LOG_DIR / f"{mod.name}-{scenario}.log"
