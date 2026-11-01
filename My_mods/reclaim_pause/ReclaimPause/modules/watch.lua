@@ -1,61 +1,30 @@
--- ReclaimPause - модуль слежения за хранилищами.
+-- ReclaimPause - watches the storages and pauses reclaiming engineers.
 --
--- ЗАДАЧА. Пока хранилище массы почти полно, реклейм бессмысленен: массу
--- некуда девать, лишнее уходит союзникам или сгорает. Мод ставит
--- реклеймящих инженеров на паузу и снимает ее, как только игрок снова
--- начал тратить массу.
+-- While the mass storage is nearly full, reclaim has nowhere to go: the extra goes to
+-- allies or burns. The mod pauses the engineers that reclaim and releases them once the
+-- player spends mass again. A pause also needs enough energy: reclaim can yield energy, and
+-- energy can run out while mass is full.
 --
--- УСЛОВИЕ ПАУЗЫ. Раньше мод смотрел только на массу, и это
--- было ошибкой: реклейм может давать энергию (сгоревшие генераторы), а
--- энергия может кончиться при полном хранилище массы. На игре это
--- подтвердилось - 2026-10-04 в логе энергия падала с 3400 до 500, пока
--- масса стояла на 100 процентах. Теперь пауза разрешена только когда
--- масса полна И энергии не меньше порога.
+-- A pause keeps the order: EntityBeingReclaimed stays set, only effects and sound stop, and
+-- OnUnpaused resumes the same target. Checked in the game for engineers on attack move.
 --
--- ПОЧЕМУ ПАУЗА, А НЕ СБРОС ПРИКАЗА. В sim/Unit.lua:571-609 при паузе
--- поле EntityBeingReclaimed НЕ обнуляется: останавливаются только
--- эффекты и звук. Снятие паузы (OnUnpaused) возобновляет реклейм того же
--- объекта. Для инженеров на атак-мув это отдельно проверено в игре
--- 2026-10-04: после снятия паузы инженер продолжает маршрут и реклейм.
+-- The game has no call that lists the units, so engineers are found by a hidden selection,
+-- only while the mod holds a pause and at most once in rescanSec seconds.
 --
--- КАК НАХОДИМ ИНЖЕНЕРОВ. Отдельной функции движка "дай всех юнитов" НЕТ.
--- GetUnits() в игровом коде отсутствует: функции с таким именем есть
--- только у сторонних модов (UMT.Units.Get). Единственный штатный способ -
--- выделить всех и прочитать GetSelectedUnits(). Так делает мод ui mod
--- tools, modules/units.lua:33-42. Поэтому здесь скрытое выделение, и
--- обход делается РЕДКО: только когда хранилище полно, и не чаще раза в
--- RESCAN_SEC секунд. В остальное время выделение не трогается вообще.
+-- A scan only adds engineers. Release is decided for each unit from its own order, which
+-- costs no selection, so a unit missing from a scan is never released.
 --
--- ВАЖНО. Обход инженеров ТОЛЬКО ДОБАВЛЯЕТ новых. Никто не снимается с паузы
--- из-за того, что его не оказалось в обходе: иначе пауза снималась бы с живых
--- инженеров.
--- Освобождение проверяется напрямую по каждому юниту, у которого уже
--- есть приказ под рукой, - это не стоит обращения к выделению.
---
--- ЭКСПОРТ. Функции объявляются глобальными именами. Возврат return {...}
--- движок FAF отбрасывает (import.lua:61,171), поэтому его писать нельзя.
+-- Functions are exported as globals: the game discards what a module returns.
 
 local GameMain = import('/lua/ui/game/gamemain.lua')
 local CommandMode = import('/lua/ui/game/commandmode.lua')
 
--- ВАЖНО про модули FAF. У каждого файла мода своё окружение, и присваивание
--- "глобального" имени попадает В ТАБЛИЦУ МОДУЛЯ, а не в общий _G.
--- Поэтому соседний файл не видит наших имён как глобальных - он увидит
--- ошибку "access to nonexistent global variable". Правильный способ - самому
--- импортировать нужный файл и обращаться к тому, что вернул import():
---   local Settings = import('.../settings.lua')
---   Settings.Settings.ReclaimPauseLoadSettings()
--- Без этого settings.lua загружается, хук радуется, а
--- ReclaimPauseStart() падал на первой же строке.
 local okSet, Settings = pcall(import, '/mods/ReclaimPause/modules/settings.lua')
 
 local PFX = 'ReclaimPause: '
-local SCAN_SEC = 1        -- как часто смотрим хранилища и состояние инженеров
--- частота обхода берётся из настроек (rescanSec), а не из константы:
+local SCAN_SEC = 1        -- how often the storages and engineers are checked
+-- The scan period comes from the setting rescanSec.
 local rescanSec = 3
--- Первые секунды матча обход не делаем НИКОГДА: игрок ставит командира
--- и строит базу, выделение ему важно, а торопиться некуда. Настраивается
--- через startGrace в окне настроек.
 
 -- Числовые коды приказов, sim/commands/shared.lua:280-360. Сверены со
 -- справочником референс-мода, расхождений нет.
@@ -78,7 +47,7 @@ local MANAGED = {
 }
 
 --------------------------------------------------------------------------------
--- СОСТОЯНИЕ
+-- State
 --------------------------------------------------------------------------------
 
 local running = false
@@ -90,21 +59,17 @@ local abortIter = 0
 local abortCount = 0
 local abortLogTick = 0
 local engineerCount = 0
-local holding = false      -- сейчас мод держит инженеров на паузе
-local held = {}            -- id -> unit, кого мод поставил на паузу
-local heldAt = {}          -- id -> номер прохода, на котором поставили
-local skipUntil = {}       -- id -> номер прохода, до какого юнита не трогаем
-local lowSinceIter = 0     -- с какого прохода условие снятия держится (0 = нет)
--- Разбор, почему инженер НЕ попал под паузу. Без него на вопрос
--- "почему они не встали" приходится отвечать догадками.
---
--- Три счётчика, а не три переменные: у TickOnce жёсткий предел в 32
--- upvalue, и три отдельных локальных переменных его упирали в стену.
--- Таблица стоит один upvalue вместо трёх.
+local holding = false      -- the mod holds the engineers paused now
+local held = {}            -- id -> unit paused by the mod
+local heldAt = {}          -- id -> pass on which it was paused
+local skipUntil = {}       -- id -> pass until which the unit is left alone
+local lowSinceIter = 0     -- pass since which the release condition holds, 0 = it does not
+-- Why engineers stayed out of the pause, for the log. A table and not three locals:
+-- TickOnce is at the limit of 32 upvalues.
 local why = {
-    skip = 0,      -- игрок снял паузу вручную, мод его не трогает
-    player = 0,    -- уже на паузе, но не нашей
-    other = 0,     -- приказ не наш, и не пустой
+    skip = 0,      -- the player released it by hand
+    player = 0,    -- already paused, not by the mod
+    other = 0,     -- has an order the mod does not manage
 }
 
 --------------------------------------------------------------------------------
@@ -180,8 +145,7 @@ local function FrontIsManaged(unit)
 end
 
 --------------------------------------------------------------------------------
--- ПРОВЕРКИ ЮНИТА. Каждая обёрнута в pcall: юнит мог умереть между
--- проверкой и вызовом.
+-- Unit checks. Each goes through pcall: the unit may have died since the last read.
 --------------------------------------------------------------------------------
 
 local function IsMine(unit)
@@ -278,15 +242,11 @@ local function IsCurrentlyPaused(unit)
 end
 
 --------------------------------------------------------------------------------
--- СКРЫТЫЙ ОБХОД ИНЖЕНЕРОВ
+-- Hidden scan of the engineers
 --
--- UISelectionByCategory - штатная функция движка, сама игра так выделяет
--- инженеров горячей клавишей (lua/keymap/misckeyactions.lua:615). Второй
--- параметр addToSelection = false означает "заменить выделение", третий
--- onScreenOnly = false - "все, не только на экране".
---
--- Выделение обязательно возвращается, даже если что-то упало: иначе игрок
--- останется с кучей выделенных инженеров.
+-- UISelectionByCategory replaces the selection (addToSelection = false) with all engineers,
+-- not only those on screen (onScreenOnly = false). The game selects engineers on a hotkey
+-- the same way. The selection always returns, even after an error.
 --------------------------------------------------------------------------------
 
 -- If the check fails, the selection stays untouched: a missed pass costs one
@@ -317,18 +277,10 @@ local function CollectEngineers(picked)
     return found, n
 end
 
--- Скрытое выделение - единственный способ получить список инженеров, но
--- оно очень легко сбивает выделение игрока. На игре 2026-10-05 игрок
--- пожаловался, что мод снимает выделение с командира при старте. Разбор:
---
--- 1) RestoreCommandMode(true) - лишний аргумент. commandmode.lua:243-250
---    показывает, что он сбрасывает issuedOneCommand, а сам StartCommandMode
---    ПЕРЕЗАПУСКАЕТ режим команд. Мы не имеем права трогать состояние, которое
---    не меняли. Вызываем без аргументов.
--- 2) Если у игрока активен режим команд, обход вообще не делаем: кэшировать
---    и перезапускать чужой режим - гарантированная помеха.
--- 3) Возвращаем выделение и ПРОВЕРЯЕМ, что вернулось. Если не совпало -
---    пишем в лог, иначе о такой проблеме узнаём только от игрока.
+-- RestoreCommandMode takes no argument: with true it resets issuedOneCommand, and
+-- StartCommandMode restarts the mode of the player. Callers skip the scan during a command
+-- mode. The restored selection is compared with the saved one, and a mismatch goes to the
+-- log.
 local function WithAllEngineers(callback)
     local saved = nil
     local beforeN = 0
@@ -379,37 +331,13 @@ local function EnsureEngineers(force)
 end
 
 --------------------------------------------------------------------------------
--- ПРИМЕНЕНИЕ ПАУЗЫ
+-- Applying the pause
 --------------------------------------------------------------------------------
 
--- ПАУЗОЙ ФЛАГОМ. И только флагом.
---
--- Разбор двух механизмов, проведённый на игре 2026-10-05 и 2026-10-06.
---
--- SetPaused(units, bool) - штатная функция, её же использует сама игра для
--- клавиши паузы (ui/game/construction.lua:1884). Идемпотентна: true ставит,
--- false снимает, повторный вызов ничего не ломает.
---
---   + ПРИКАЗ СОХРАНЯЕТСЯ. Игрок проверил: инженер на атак-муве, поставленный
---     на паузу сразу после выхода с завода, доходит до точки, стоит там и
---     НЕ теряет приказ. Снял паузу - продолжил реклеймить.
---   + РЕКЛЕЙМ ОСТАНАВЛИВАЕТСЯ, то есть цель мода достигнута.
---   - Инженер продолжает идти к точке. Это НЕ беда: дойдя, он останавливается
---     и ждёт. Так же ведёт себя штатная пауза игры, то есть мод здесь не хуже
---     встроенного поведения.
---
--- IssueUnitCommand(list, 'Pause') - команда. Проверено и отброшено:
---   - очередь приказов СНОСИТ. Приказ атак-мув теряется, а это ровно то,
---     ради чего мод затевался. Игрок подтвердил вручную: флаг сохраняет
---     приказ, команда - нет.
---   - как переключатель работает неверно. Команда 'Pause' должна
---     переключать состояние, но по факту состояние расходится с
---     GetIsPaused: мод отпускал инженеров, рассчитывая снять паузу, а они
---     оказывались поставлены на паузу, и следующий проход их пропускал.
---     В логе это выглядело как "найдено 10 инженеров, на паузу поставлено 0".
---
--- Значит команда паузы непригодна ни в чём: и приказ теряет, и состояние
--- путает. Механизм удалён целиком, настройки hardPause больше нет.
+-- The pause is the SetPaused flag: the order stays and the reclaim stops. The engineer
+-- still walks on, AbortMove below stops that. IssueUnitCommand(list, 'Pause') does not fit:
+-- it clears the queue, so an attack move is lost, and as a toggle it drifts from
+-- GetIsPaused.
 local function PauseUnits(list, n)
     if n == 0 then
         return
@@ -430,36 +358,10 @@ local function ResumeUnits(list, n)
     end
 end
 
--- ОБРЫВ МАРШРУТА.
---
--- Флаговая пауза останавливает РЕКЛЕЙМ, но не ДВИЖЕНИЕ: инженер на
--- атак-муве продолжает идти к точке и там встаёт. Формально это безвредно,
--- приказ сохраняется, но выглядит как поломка.
---
--- В игре есть ВСТРОЕННАЯ команда, которая останавливает движение и НЕ трогает
--- очередь приказов: sim/commands/abort-navigation.lua
---
---   function AbortNavigation(units, doPrint)
---       local navigator = unit:GetNavigator()
---       navigator:AbortMove()
---       unit:RefocusAssisters()
---   end
---
--- Её докстринг прямо про наш случай: "For engineers that are on a patrol or
--- an attack move the engineer can start reclaiming from further away".
--- Это штатная функция с горячей клавишей игрока, см.
--- ui/keymap/misckeyactions.lua:538-540:
---
---   AbortNavigation = function()
---       SimCallback({ Func = 'AbortNavigation', Args = {} }, true)
---   end
---
--- SimCallback с признаком true применяется к ТЕКУЩЕМУ ВЫДЕЛЕНИЮ, поэтому
--- нужные юниты надо на секунду выделить и вернуть выделение обратно. Тот же
--- приём, что и при обходе инженеров.
---
--- Итог: флаг останавливает реклейм, обрыв маршрута останавливает движение,
--- приказ атак-мув остаётся в очереди в обоих случаях.
+-- The pause flag stops the reclaim but not the movement, so an engineer on attack move
+-- would walk on to its target. AbortNavigation stops it and leaves the queue alone.
+-- SimCallback with true acts on the current selection, so the units are selected for a
+-- moment, as in the scan.
 local function AbortMove(list, n)
     if n == 0 then
         return
@@ -492,12 +394,7 @@ local function AbortMove(list, n)
         LOG(PFX .. 'AbortMove FAILED: ' .. tostring(err))
         return
     end
-    -- Считаем обрывы и печатаем их раз в 10 штук. Иначе по логу нельзя
-    -- понять, работает обрыв вообще или нет: инженер с приказом идёт к
-    -- точке либо потому, что обрыва не было, либо потому, что приказ
-    -- восстановился после него.
-    -- Раз в десять обрывов, а не по модулю: оператор '%' движок не
-    -- поддерживает.
+    -- Logged every ten aborts: the log has to show whether aborts happen at all.
     abortCount = abortCount + 1
     abortLogTick = abortLogTick + 1
     if abortLogTick >= 10 then
@@ -512,7 +409,7 @@ local function AbortMove(list, n)
     end
 end
 
--- Сколько секунд инженер провисел на паузе. -1 если неизвестно.
+-- Seconds the engineer has been held, -1 if unknown.
 local function HeldSecs(id)
     local at = heldAt[id]
     if at == nil then
@@ -521,12 +418,8 @@ local function HeldSecs(id)
     return (iterNo - at) * SCAN_SEC
 end
 
--- Кого игрок снял с паузы вручную - не трогаем, но НЕ НАВСЕГДА.
---
--- Теперь это только страховка на случай, когда приказ прочитать нельзя.
--- Раньше флаг ставился навсегда, и одно случайное нажатие исключало
--- инженера до конца матча: он оставался с приказом, а мод его не видел.
--- Теперь помним только на skipSec секунд.
+-- An engineer the player released by hand stays out for skipSec seconds. This only covers
+-- the case when its order cannot be read.
 local function IsSkipped(id)
     local untilNo = skipUntil[id]
     if untilNo == nil then
@@ -548,7 +441,7 @@ local function HeldCount()
 end
 
 --------------------------------------------------------------------------------
--- ОСВОБОЖДЕНИЕ ВСЕХ
+-- Releasing everyone
 --------------------------------------------------------------------------------
 
 local function ReleaseAll(why)
@@ -570,7 +463,7 @@ local function ReleaseAll(why)
 end
 
 --------------------------------------------------------------------------------
--- ЧТЕНИЕ ХРАНИЛИЩ
+-- Reading the storages
 --------------------------------------------------------------------------------
 
 local function FillOf(econ, res)
@@ -586,14 +479,10 @@ local function FillOf(econ, res)
 end
 
 --------------------------------------------------------------------------------
--- ОСНОВНОЙ ШАГ
+-- Main step
 --------------------------------------------------------------------------------
 
--- РУЧНАЯ ПРОВЕРКА по клавише, которую назначил игрок.
---
--- Главный инструмент отладки: показывает, что мод видит ПРЯМО СЕЙЧАС, и
--- называет причину, по которой он не сработал. Без неё приходится ждать,
--- пока хранилище дойдёт до порога, а это минуты матча.
+-- What keeps the mod from pausing now, for the log.
 local function Explain(cfg, massFill, energyFill)
     if not cfg.enabled then
         return 'MOD-DISABLED'
@@ -603,10 +492,8 @@ local function Explain(cfg, massFill, energyFill)
             ' (need ' .. string.format('%.0f', cfg.highMass) .. '%)'
     end
     if energyFill < cfg.energyMin / 100 then
-        -- Оба числа обязательны. Раньше здесь печатался только требуемый
-        -- порог, и по строке 'WAIT-ENERGY (need 50%)' нельзя было понять
-        -- главное: масса давно выше порога, и паузу задерживает энергия.
-        -- Игрок решил, что мод неправильно считает порог по массе.
+        -- Both numbers matter: mass can be well above its threshold while energy delays the
+        -- pause.
         return 'WAIT-ENERGY ' .. string.format('%.0f', energyFill * 100) .. '%' ..
             ' (need ' .. string.format('%.0f', cfg.energyMin) .. '%)' ..
             ', mass ' .. string.format('%.0f', massFill * 100) .. '%' ..
@@ -615,8 +502,7 @@ local function Explain(cfg, massFill, energyFill)
     return 'THRESHOLDS-OK'
 end
 
--- ПОЧЕМУ МЫ ВСЁ ЕЩЁ ДЕРЖИМ. Отдельная строка: без неё в логе
--- не видно, ждём мы положенного срока или условие уже выполнено.
+-- Why the mod still holds: the condition is not met, or the release time has not passed.
 local function ExplainHold(cfg, massFill, holdSec)
     if not holding then
         return 'not-holding'
@@ -631,6 +517,8 @@ local function ExplainHold(cfg, massFill, holdSec)
     return 'release-in ' .. tostring(math.floor(left)) .. 's'
 end
 
+---Manual check on a key assigned by the player: shows what the mod sees right now and why
+---it did not act, without waiting minutes for the threshold.
 function ReclaimPauseForceCheck()
     Settings.ReclaimPauseLoadSettings()
     local cfg = Settings.ReclaimPauseCfg
@@ -655,21 +543,13 @@ function ReclaimPauseForceCheck()
         ' | ' .. Settings.ReclaimPauseSettingsLine())
 end
 
--- ПЕРИОДИЧЕСКАЯ СТРОКА ЛОГА.
---
--- Вынесена из TickOnce не ради красоты: у Lua жёсткий предел в 32 upvalue
--- на функцию, и TickOnce дошёл до 31. Добавление одной переменной состояния
--- ломало бы файл ЦЕЛИКОМ, причём ошибкой времени компиляции в игре.
--- Логика вынесения - обычная: переменные состояния уезжают вместе с кодом,
--- который их использует.
---
--- Вердикт пишем ВСЕГДА: игрок не обязан знать про горячую клавишу, чтобы
--- понять, работает мод или нет.
+-- Split from TickOnce to stay under the limit of 32 upvalues per function: exceeding it
+-- stops the whole file from compiling. The verdict is always logged, so the state shows
+-- without the hotkey.
 local function PeriodicLog(cfg, massFill, energyFill, holdSec)
     logTick = logTick + 1
-    -- У порога пишем чаще. Именно в этом окне решается, кто кого обгонит:
-    -- мод или игра. При редком логе момент остановки реклейма просто не
-    -- попадает в строку, и потом нечего разбирать.
+    -- More often near the threshold: that is where the mod races the game, which stops
+    -- reclaim by itself.
     local logEvery = 15
     if massFill >= cfg.lowMass / 100 then
         logEvery = 5
@@ -705,16 +585,9 @@ local function TickOnce()
     local cfg = Settings.ReclaimPauseCfg
     rescanSec = cfg.rescanSec
 
-    -- гистерезис по массе: два порога, иначе мод дергается
-    -- ТАЙМЕР УДЕРЖАНИЯ УСЛОВИЯ СНЯТИЯ.
-    --
-    -- Раньше мод отпускал инженеров в тот же проход, где масса впервые
-    -- упала ниже lowMass, и тут же ставил обратно, если она вернулась
-    -- выше highMass: игрок видел, как инженеры дёргаются на границе.
-    --
-    -- Теперь условие снятия должно ПРОДЕРЖАТЬСЯ releaseHoldSec секунд.
-    -- Короткий провал ниже lowMass ничего не отменяет, устойчивое низкое
-    -- хранилище отпускает всегда. Значение 0 = старое поведение.
+    -- Hysteresis over two thresholds. A release also needs the condition to hold for
+    -- releaseHoldSec seconds: a short dip below lowMass changes nothing, and engineers do
+    -- not flicker at the border.
     local holdSec = 0
     local holdCfg = cfg.releaseHoldSec
     if holdCfg == nil or holdCfg < 0 then
@@ -741,15 +614,14 @@ local function TickOnce()
         end
     end
 
-    -- ЭНЕРГИЯ. Пауза разрешена, только если энергии хватает. Иначе мы бы
-    -- мешали инженерам собирать её. Проверка зеркальна: если энергия
-    -- упала ниже порога, пока инженеры на паузе, тоже отпускаем.
+    -- A pause needs enough energy, otherwise the mod would keep engineers from collecting
+    -- it. The check is symmetric: if energy drops while paused, the engineers are released.
     local energyOk = energyFill >= cfg.energyMin / 100
     if want and not energyOk then
         want = false
     end
 
-    -- и не переключаться чаще отведённого интервала
+    -- no switch sooner than minSec
     local minSec = cfg.minSec
     if minSec < 0 then
         minSec = 0
@@ -767,8 +639,7 @@ local function TickOnce()
     why.player = 0
     why.other = 0
 
-    -- Переключение фиксируем ДО обхода: в момент перехода обход должен
-    -- произойти сразу, а не ждать своей очереди.
+    -- The switch is recorded before the scan: after a switch the scan has to run at once.
     local changed = (want ~= holding)
     if changed then
         holding = want
@@ -779,7 +650,6 @@ local function TickOnce()
         rescanIter = iterNo - rescanSec
     end
 
-    -- Пока снимать нечего, инженеров НЕ обходим.
     local fresh = nil
     local foundN = -1
     local graceLeft = cfg.startGrace - iterNo * SCAN_SEC
@@ -793,8 +663,8 @@ local function TickOnce()
             engineerCount = n
         end
     else
-        -- Обхода не было. -1 означает "не искали", и в логе печатается
-        -- как "?", а не как 0. Ноль и отсутствие данных - не одно и то же.
+        -- No scan: -1 means "not searched" and is logged as "?", because zero and no data
+        -- differ.
         foundN = -1
         engineerCount = -1
     end
@@ -805,7 +675,7 @@ local function TickOnce()
     local pauseN = 0
 
     if not want then
-        -- Снимаем паузу со всех, кого держим. Обход для этого не нужен.
+        -- Release everyone held. No scan is needed for that.
         for id, unit in pairs(held) do
             if IsCurrentlyPaused(unit) then
                 release[releaseN + 1] = unit
@@ -818,8 +688,7 @@ local function TickOnce()
             skipUntil[id] = nil
         end
     else
-        -- 1. Уже известные инженеры проверяем напрямую, без выделения.
-        --    Обход не имеет права никого отпускать.
+        -- 1. Known engineers are checked directly, without the selection.
         for id, unit in pairs(held) do
             if not IsAlive(unit) then
                 held[id] = nil
@@ -830,30 +699,18 @@ local function TickOnce()
                 if managed then
                     if actuallyPaused then
                         held[id] = unit
-                        -- ДИАГНОСТИКА: первые две проверки после паузы
-                        -- пишем приказ как есть. Так видно, приказ СБРОШЕН
-                        -- или просто не читается.
+                        -- The first two checks after the pause log the order as it is,
+                        -- which shows whether it is lost or only unreadable.
                         if HeldSecs(id) <= 1 then
                             LOG(PFX .. 'unit ' .. tostring(id) ..
                                 ' check after pause +' .. tostring(HeldSecs(id)) ..
                                 's, order=' .. tostring(kind))
                         end
                     else
-                        -- Игрок снял паузу вручную, НО ПРИКАЗ НА МЕСТЕ.
-                        --
-                        -- Значит он хочет, чтобы инженер работал, и мод для
-                        -- того и нучен: хранилище полно. Игнорировать здесь
-                        -- нечего - приказ есть, и приказ наш.
-                        --
-                        -- Раньше здесь стоял skipUntil на skipSec секунд.
-                        -- Это была дыра: игрок снимал паузу и отправлял
-                        -- инженеров в атак-мув, а мод игнорировал их минуту.
-                        -- За это время они дореклеймивали, доезжали до
-                        -- точки и теряли приказ - после чего мод уже не
-                        -- понимал, что они его.
-                        --
-                        -- Если игрок хочет, чтобы мод не вмешивался, он
-                        -- выключает его в окне настроек или своей клавишей.
+                        -- The player unpaused it, but the order is still ours and the
+                        -- storage is full, so the pause returns. Leaving it alone would let
+                        -- it finish the reclaim, reach the target and lose the order. To
+                        -- keep the mod out, the player turns it off.
                         topause[pauseN + 1] = unit
                         pauseN = pauseN + 1
                         held[id] = unit
@@ -863,16 +720,9 @@ local function TickOnce()
                             ' - pause returned')
                     end
                 elseif kind == 'empty' or kind == 'queue-error' then
-                    -- ВАЖНО (найдено в игре 2026-10-05). У юнита, стоящего на
-                    -- паузе, очередь приказов ЧИТАЕТСЯ ПУСТОЙ. Это не значит,
-                    -- что приказ выполнен: sim/Unit.lua:514-515 показывает, что
-                    -- пауза вызывает только SetPaused(true) и очередь не
-                    -- трогает. За секунду инженер не может дойти до цели.
-                    --
-                    -- Прежняя версия принимала 'empty' за "приказ слетел" и
-                    -- тут же снимала паузу - инженеры уходили к точке
-                    -- атак-мува. Теперь пустая очередь на паузе означает
-                    -- "ничего не знаю", и мы продолжаем держать инженера.
+                    -- An empty or unreadable queue does not prove that the order is done:
+                    -- an engineer cannot reach its target within a second. A paused unit
+                    -- stays held.
                     if actuallyPaused then
                         held[id] = unit
                         if HeldSecs(id) <= 1 then
@@ -887,8 +737,8 @@ local function TickOnce()
                         heldAt[id] = nil
                     end
                 else
-                    -- Конкретный чужой приказ (Guard, Build, Attack) - это
-                    -- достоверное чтение, освобождаем.
+                    -- A specific foreign order (Guard, Build, Attack) is a reliable read:
+                    -- release it.
                     local secs = HeldSecs(id)
                     if actuallyPaused then
                         release[releaseN + 1] = unit
@@ -903,7 +753,7 @@ local function TickOnce()
             end
         end
 
-        -- 2. Новые кандидаты - только из свежего обхода
+        -- 2. New candidates come only from a fresh scan.
         if fresh then
             for id, unit in pairs(fresh) do
                 -- уже стоящих на паузе (например, поставил игрок) трогать
@@ -947,9 +797,9 @@ local function TickOnce()
         PauseUnits(topause, pauseN)
         AbortMove(topause, pauseN)
     elseif cfg.abortMove and holding then
-        -- Обрыв маршрута ОДНОРАЗОВЫЙ: прерванный атак-мув снова находит путь
-        -- и юнит идёт дальше. Поэтому пока хранилище полно, обрыв повторяется
-        -- каждые abortSec секунд - иначе инженер дойдёт до точки.
+        -- An abort works once: an interrupted attack move finds its path again. So while
+        -- the storage is full it repeats every abortSec seconds, or the engineer reaches
+        -- its target.
         if (iterNo - abortIter) * SCAN_SEC >= cfg.abortSec then
             local alist = {}
             local an = 0
@@ -965,7 +815,6 @@ local function TickOnce()
         end
     end
 
-    -- 3. Лог
     if changed then
         local what = 'RELEASED'
         if want then
@@ -984,7 +833,7 @@ local function TickOnce()
 end
 
 --------------------------------------------------------------------------------
--- ЦИКЛ. WaitSeconds НЕЛЬЗЯ оборачивать в pcall - внутри pcall он fatal.
+-- Loop. WaitSeconds cannot run inside pcall: a coroutine cannot yield through a C function.
 --------------------------------------------------------------------------------
 
 local function Loop()
@@ -995,16 +844,15 @@ local function Loop()
         if not ok then
             LOG(PFX .. 'CRASH in TickOnce: ' .. tostring(err))
         end
-        -- WaitSeconds внутри pcall fatal, поэтому он ВНЕ pcall.
         WaitSeconds(SCAN_SEC)
     end
 end
 
 --------------------------------------------------------------------------------
--- ТОЧКИ ВХОДА
+-- Entry points
 --------------------------------------------------------------------------------
 
----Применить изменившиеся настройки на ходу. Вызывает страница настроек.
+---Apply changed settings on the fly. Called by the settings page.
 function ReclaimPauseApplySettings()
     if not running then
         return
@@ -1030,8 +878,7 @@ function ReclaimPauseStart()
     running = true
     iterNo = 0
     ProbePausedOfUnit()
-    -- Считаем, что последнее переключение было давно: иначе первое
-    -- срабатывание ждало бы minSec.
+    -- The last switch counts as long ago, otherwise the first one would wait for minSec.
     switchIter = -(Settings.ReclaimPauseCfg.minSec)
     rescanIter = 0 - Settings.ReclaimPauseCfg.rescanSec
     logTick = 0

@@ -1,6 +1,5 @@
--- uid идентифицирует КОНКРЕТНУЮ ВЕРСИЮ мода, а не сам мод, поэтому на каждую
--- новую версию нужен новый uid, а имя остаётся прежним - по имени клиент FAF
--- находит, какой мод обновлять. См. lua/MODS.LUA:41-50 и 69-72.
+-- The uid identifies one version of the mod, so every version needs a new one. The name
+-- stays: by it the FAF client finds the mod to update.
 name = "OverflowTesting"
 version = 4
 uid = "eba25b12-c803-4aba-a17b-abbb69ef3c08"

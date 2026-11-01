@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Проверка: новые проверки сброса краснеют на сломанном коде.
+"""Checks the reset checks of test_options_unit.lua: they have to go red on broken code.
 
-Поломки повторяют реальные ошибки, одна из которых уже была допущена
-при написании кода (запись options.x(v) вместо options.x:Set(v)).
+The breakages repeat realistic mistakes, such as writing options.x(v) instead of
+options.x:Set(v).
 
-Мод и тест копируются во временную папку, поломки делаются только в копии.
-Настоящие исходники скрипт не меняет, поэтому прерывание ничего не портит.
+The mod and the test are copied into a temporary folder and the breakages are made in the
+copy only, so the real sources are never touched and an interrupted run damages nothing.
 
-Тест выполняет Lua игры из .tools/faf-lua, его собирает bootstrap.py.
+The test runs on the game's Lua from .tools/faf-lua, which bootstrap.py builds.
 """
 import atexit
 import io

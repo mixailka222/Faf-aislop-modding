@@ -1,17 +1,18 @@
--- Юнит-тест мода PausePlzAfk (modules/pause_afk.lua + hook gamemain.lua).
+-- Unit test of the PausePlzAfk mod (modules/pause_afk.lua + hook gamemain.lua).
 --
--- Каждого файла мода в FAF своё окружение: присваивание "глобального" имени
--- попадает в таблицу модуля, а НЕ в общий _G. Тест это воспроизводит:
--- каждый файл выполняется в отдельной таблице с __index = _G.
+-- Run from the tests folder: lua test_pause_afk_unit.lua. The paths below are relative to
+-- it. check.py does that with the Lua of the game, so this code follows its dialect.
 --
--- Проверяем: AFK-игрок получает паузу и два сообщения; активный игрок не
--- трогается; пустое выделение завершается молча; чужая пауза не дублируется,
--- но сообщения уходят; приказ в середине проверки отменяет срабатывание;
--- мёртвый юнит считается занятым (паузы нет); хук не ломает CreateUI и
--- молча отключается при битом импорте.
+-- Every file of a mod in FAF has its own environment: assigning a "global" name puts it
+-- into the module table, not into the shared _G. The test reproduces this: each file runs
+-- in a separate table with __index = _G.
+--
+-- Covered: an AFK player gets the pause and two messages; an active player is left alone;
+-- an empty selection ends silently; someone else's pause is not duplicated, but the
+-- messages still go out; an order in the middle of the check cancels the trigger; a dead
+-- unit counts as busy (no pause); the hook does not break CreateUI and, on a broken import,
+-- switches itself off and logs FAILED TO LOAD.
 
--- Run from the tests folder: the paths below are relative to it. check.py does
--- that with the Lua of the game, so this code follows its dialect.
 local function ReadFile(path)
     local file = assert(io.open(path, 'rb'))
     local text = file:read('*a')
@@ -53,7 +54,7 @@ HOOK_ORIG_CALLED = 0
 
 function LOG(m) MSGS[table.getn(MSGS) + 1] = tostring(m) end
 
--- Время: каждая пауза двигает такты (10 тактов в секунду).
+-- Time: every wait advances the ticks (10 ticks per second).
 function WaitSeconds(x) TICKS = TICKS + (x or 0) * 10 end
 function GameTick() return TICKS end
 function ForkThread(f) f() return {} end
@@ -101,12 +102,12 @@ function import(p)
   return {}
 end
 
--- Настройки в изоляции, как в движке. pause_afk.lua подхватит их через import.
+-- The settings in isolation, as in the engine. pause_afk.lua picks them up through import.
 local env_sett = MakeEnv()
 LoadInto(MOD .. 'modules/settings.lua', env_sett)
 SETT = env_sett
 
--- Модуль мода в изоляции, как в движке.
+-- The mod module in isolation, as in the engine.
 local env_mod = MakeEnv()
 LoadInto(MOD .. 'modules/pause_afk.lua', env_mod)
 MODT = env_mod
@@ -117,7 +118,7 @@ function check(cond, what)
   if not cond then fails = fails + 1 print('  [FAIL] ' .. what) end
 end
 
--- 1. AFK: юнит 10 тактов без приказов -> пауза и два сообщения всем.
+-- AFK: the unit has no orders for 10 ticks -> pause and two messages to everyone.
 print('=== 1: AFK fires pause and two chat messages ===')
 Reset()
 SEL = { MakeUnit({ true }) }
@@ -128,7 +129,6 @@ check(CHAT[1].text == 'plz hold pause im afk', 'текст первого соо
 check(CHAT[1].to == 'all' and CHAT[1].Chat == true, 'первое сообщение помечено всем')
 check(string.find(CHAT[2].text, 'Pause Plz AFK') ~= nil, 'второе сообщение - подпись мода')
 
--- 2. Активный игрок: юнит занят -> тишина.
 print('=== 2: busy player left alone ===')
 Reset()
 SEL = { MakeUnit({ false }) }
@@ -136,7 +136,6 @@ MODT.PauseAfkOnCreateUI()
 check(PAUSE_REQ == 0, 'пауза не запрошена')
 check(table.getn(CHAT) == 0, 'в чат ничего не отправлено')
 
--- 3. Нет выделения вообще -> молчаливый выход, ничего не отправлено.
 print('=== 3: empty selection exits silently ===')
 Reset()
 SEL = nil
@@ -144,7 +143,8 @@ MODT.PauseAfkOnCreateUI()
 check(PAUSE_REQ == 0, 'пауза не запрошена')
 check(table.getn(CHAT) == 0, 'в чат ничего не отправлено')
 
--- 4. Чужая пауза уже стоит: запрос не дублируется, сообщения уходят.
+-- Someone else's pause is already set: the request is not duplicated, the messages still go
+-- out.
 print('=== 4: existing pause is not duplicated ===')
 Reset()
 PAUSED = true
@@ -153,7 +153,7 @@ MODT.PauseAfkOnCreateUI()
 check(PAUSE_REQ == 0, 'повторный запрос паузы не сделан')
 check(table.getn(CHAT) == 2, 'объяснение в чат всё равно отправлено')
 
--- 5. Приказ в середине проверки: первые замеры idle, потом busy -> отмена.
+-- An order in the middle of the check: the first samples are idle, then busy -> cancel.
 print('=== 5: order mid-check cancels ===')
 Reset()
 SEL = { MakeUnit({ true, true, true, false }) }
@@ -161,7 +161,7 @@ MODT.PauseAfkOnCreateUI()
 check(PAUSE_REQ == 0, 'пауза не запрошена')
 check(table.getn(CHAT) == 0, 'в чат ничего не отправлено')
 
--- 6. Юнит умер в середине проверки (IsIdle бросает) -> считаем занятым.
+-- The unit dies in the middle of the check (IsIdle throws) -> counts as busy.
 print('=== 6: dead unit counts as busy ===')
 Reset()
 SEL = { MakeUnit({ true, 'dead' }) }
@@ -169,7 +169,6 @@ MODT.PauseAfkOnCreateUI()
 check(PAUSE_REQ == 0, 'пауза не запрошена')
 check(table.getn(CHAT) == 0, 'в чат ничего не отправлено')
 
--- 7. Несколько юнитов: один занят -> игрок активен.
 print('=== 7: one busy unit of many is enough ===')
 Reset()
 SEL = { MakeUnit({ true }), MakeUnit({ false }) }
@@ -191,7 +190,6 @@ check(PAUSE_REQ == 1, 'пауза запрошена')
 check(table.getn(CHAT) == 2, 'два сообщения отправлены')
 check(CHAT[1].text == 'hold on, brb', 'в чат ушёл текст из профиля')
 
--- 11. Пустой текст -> умолчание, а не пустое сообщение.
 print('=== 11: blank text falls back to default ===')
 Reset()
 STORE['PausePlzAfk'] = { msgText = '   ' }
@@ -199,7 +197,6 @@ SEL = { MakeUnit({ true }) }
 MODT.PauseAfkOnCreateUI()
 check(CHAT[1].text == 'plz hold pause im afk', 'пустой текст заменён умолчанием')
 
--- 12. Мусор вместо строки -> умолчание.
 print('=== 12: non-string falls back to default ===')
 Reset()
 STORE['PausePlzAfk'] = { msgText = 42 }
@@ -207,7 +204,6 @@ SEL = { MakeUnit({ true }) }
 MODT.PauseAfkOnCreateUI()
 check(CHAT[1].text == 'plz hold pause im afk', 'число вместо строки заменено умолчанием')
 
--- 13. Длинный текст обрезается до лимита чата.
 print('=== 13: long text is cut to chat limit ===')
 Reset()
 STORE['PausePlzAfk'] = { msgText = string.rep('x', 300) }
@@ -215,7 +211,6 @@ SEL = { MakeUnit({ true }) }
 MODT.PauseAfkOnCreateUI()
 check(string.len(CHAT[1].text) <= 200, 'текст не длиннее 200')
 
--- 14. Профиля нет вообще -> умолчание.
 print('=== 14: missing profile falls back to default ===')
 Reset()
 SEL = { MakeUnit({ true }) }
@@ -225,8 +220,8 @@ check(CHAT[1].text == 'plz hold pause im afk', 'без профиля отпра
 return fails
 end)
 
--- Страница UMT с поддельным UMT: регистрация, поле на 200 символов,
--- правка через окно пишется в профиль и видна моду.
+-- The UMT page with a fake UMT: registration, a field of 200 characters, and an edit
+-- through the window is written to the profile and seen by the mod.
 UMT = { Options = { Mods = {} } }
 function UMT.Options.Opt(v)
   local box = { val = v }
@@ -270,8 +265,8 @@ check(CHAT[1].text == 'window text', 'мод отправил текст из о
 return fails
 end)
 
--- Точка входа UMT: Main() обязан прочитать поле настроек: это чтение заставляет
--- настоящий UMT загрузить options.lua со страницей.
+-- The UMT entry point: Main() must read the settings field, and that read makes the real
+-- UMT load options.lua with the page.
 local env_main = MakeEnv()
 LoadInto(MOD .. 'modules/main.lua', env_main)
 MAINT = env_main
@@ -286,7 +281,8 @@ check(ACCESSED == 'PausePlzAfk', 'Main прочитал поле настрое�
 return fails
 end)
 
--- Хук в отдельном окружении: свой import (отдаёт модуль), свой CreateUI.
+-- The hook in its own environment: its own import (returns the module) and its own
+-- CreateUI.
 local HOOK = MOD .. 'hook/lua/ui/game/gamemain.lua'
 HOOK_ORIG_CALLED = 0
 local hook_env = MakeEnv()
@@ -303,7 +299,7 @@ function check(cond, what)
   if not cond then fails = fails + 1 print('  [FAIL] ' .. what) end
 end
 
--- Хук подменил CreateUI, оригинал вызывается, мод стартует не в повторе.
+-- The hook wraps CreateUI: the original is called and the mod starts, except in a replay.
 print('=== 8: hook chains CreateUI ===')
 Reset()
 SEL = { MakeUnit({ false }) }
@@ -311,7 +307,6 @@ HOOKT.CreateUI(false)
 check(HOOK_ORIG_CALLED == 1, 'оригинальный CreateUI вызван')
 check(PAUSE_REQ == 0 and table.getn(CHAT) == 0, 'активный игрок не тронут через хук')
 
--- В повторе мод не стартует вообще.
 print('=== 9: replay does nothing ===')
 Reset()
 SEL = { MakeUnit({ true }) }
@@ -321,7 +316,7 @@ check(PAUSE_REQ == 0 and table.getn(CHAT) == 0, 'в повторе паузы и
 return fails
 end)
 
--- Битый импорт: хук обязан отключиться, а не уронить интерфейс.
+-- A broken import: the hook has to switch itself off, not crash the interface.
 local bad_env = MakeEnv()
 bad_env.import = function(p) error('no such file') end
 bad_env.CreateUI = function(isReplay) HOOK_ORIG_CALLED = HOOK_ORIG_CALLED + 1 end

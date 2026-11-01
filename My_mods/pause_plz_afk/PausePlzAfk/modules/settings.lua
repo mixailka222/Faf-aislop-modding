@@ -12,7 +12,6 @@ local Prefs = import('/lua/user/prefs.lua')
 local PREFS_KEY = 'PausePlzAfk'
 local MSG_LIMIT = 200
 
--- Defaults. Same text the mod used before settings existed.
 local DEFAULTS = {
     msgText = 'plz hold pause im afk',
 }

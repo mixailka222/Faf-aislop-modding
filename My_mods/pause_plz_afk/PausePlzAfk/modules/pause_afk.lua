@@ -1,16 +1,10 @@
 -- PausePlzAfk - auto-pause when the player missed the match start.
 -- Based on PPA by 4z0t.
 --
--- How it works: 5 seconds after the interface is built, look at the current
--- selection (the game selects the ACU itself around 2.5s in). If every
--- selected unit sits without orders for 10 sim ticks (~1s), the player is
--- considered AFK: request a pause and tell everyone in chat. Fires once.
---
--- Fixes vs the original: the message text lives in the player profile
--- (modules/settings.lua, editable from the UMT options window) instead of a
--- wrongly-pathed Message.lua that was never read; all selected units
--- are checked, not just the first; the wait for a selection has a timeout
--- instead of looping forever; chat goes to everyone (single-argument call).
+-- 5 seconds after the interface is built, look at the current selection (the game selects
+-- the ACU itself around 2.5s in). If every selected unit sits without orders for 10 sim
+-- ticks (~1s), the player is considered AFK: request a pause and tell everyone in chat.
+-- Fires once.
 
 local PauseAfkMsgText = 'plz hold pause im afk'
 local PauseAfkMsgTag = '<<message sent with "Pause Plz AFK" mod>>'

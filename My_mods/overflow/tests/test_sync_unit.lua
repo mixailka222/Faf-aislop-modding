@@ -1,23 +1,19 @@
--- Юнит-тест настоящего sync.lua на ЗАДАННЫХ числах, где ответ известен заранее.
+-- Unit test of the real sync.lua on fixed numbers whose answers are known in advance: the
+-- expected values are worked out from the formulas by hand. Our income is 20/s.
 --
--- Лог игры больше не подходит: предыдущий файл с диагностикой заменён.
--- Зато тут всё детерминировано - ожидания выведены из формулы руками.
+-- Scenarios (all rates per second):
 --
--- Сценарии (окно 2 с, значит делим на 2, чтобы получить /с):
+--   A. The ally has room, our storage is full.
+--      We: dIn=20, dOut=0, dExc=0, dSt=0 -> outgoing 20.
+--      Ally: dIn=20, dSt=20 -> it gives nothing. Incoming 0, own = 20 - 0 = 20.
 --
---  A. у союзника есть место, наше хранилище полное
---     ME:   dIn=40  dOut=0  dExc=0  dSt=0   -> исходящий 40/2 = 20/с
---     ALLY: dIn=40  dOut=0  dExc=0  dSt=40  -> союзник отдал 0
---     входящий = 0, своё = 40/2 - 0 = 20/с
+--   B. Both storages are full, the surplus burns.
+--      We: dExc equals dIn -> outgoing 0. Incoming 0, own 20.
 --
---  B. оба хранилища полные, излишек уходит в пустоту
---     ME:   dIn=40  dOut=0  dExc=40 dSt=0   -> исходящий 0, всё сгорело
---     входящий = 0, своё = 20/с
---
---  C. мы тратим, союзник делится с нами
---     ME:   dIn=72  dOut=140 dExc=0  dSt=0   -> исходящий 0 (переполнение)
---     ALLY: dIn=40  dOut=8  dExc=0  dSt=0   -> союзник отдал 32/2 = 16/с
---     входящий = 16/с, своё = 36 - 16 = 20/с
+--   C. We spend more than we earn, the ally shares with us.
+--      We: dOut=140, dExc equals dIn -> the balance is negative, outgoing 0.
+--      Ally: dIn=20, dOut=8, storage constant -> it gives 12.
+--      Incoming 12, own = 20 - 12 = 8.
 
 local function ReadFile(path)
     local file = assert(io.open(path, 'rb'))
@@ -39,8 +35,8 @@ env.IsAlly = function(a, b) return a == 1 and b == 2 end
 env.AddOnSyncHashedCallback = function(cb, cat, id) callback = cb end
 env.RemoveOnSyncHashedCallback = function(cat, id) callback = nil end
 env.import = function(p) return {} end
--- Движок отдаёт income ЗА ТИК. Мод умножает на simFreq (10).
--- Ставим 2.0 -> 20/с, как командир.
+-- The engine returns income per tick and the mod multiplies it by simFreq (10): 2.0 gives
+-- 20/s, as for a commander.
 env.GetEconomyTotals = function()
     return { income = { ENERGY = 2.0, MASS = 0.1 },
              reclaimed = { ENERGY = 0.0, MASS = 0.0 },
@@ -52,9 +48,9 @@ end
 local chunk = assert(loadstring(ReadFile('../Overflow/modules/sync.lua'), 'sync.lua'))
 setfenv(chunk, env)
 local ret = chunk()
--- В ФАФ значение return ОТБРАСЫВАЕТСЯ: экспорт идёт через глобалы, потому что
--- doscript выполняет файл с таблицей модуля как окружением. Поэтому и здесь
--- проверяем глобалы, а не результат выполнения.
+-- The game discards the return value of a module: exports go through globals, because
+-- doscript runs the file with the module table as its environment. So the globals are
+-- checked here, not the result.
 assert(ret == nil, 'модуль не должен ничего возвращать: экспорт через глобалы')
 assert(type(rawget(env, 'Start')) == 'function', 'экспорт Start отсутствует')
 assert(type(rawget(env, 'GetResult')) == 'function', 'экспорт GetResult отсутствует')
@@ -85,17 +81,18 @@ local function payload(me, ally)
     }
 end
 
--- Окно теперь 50 тиков, и дельты КОПЯТСЯ. Значит каждый payload добавляет
--- своё, а публикация происходит раз в 50 тиков. Подаём много шагов и смотрим
--- результат после каждой публикации.
-local TICK_PER_STEP = 18    -- так приходят payload в игре
-local PROD_E = 20           -- 2.0/тик * 10 = 20/с
+-- The window is 50 ticks and the deltas accumulate: each payload adds its own, and a result
+-- is published once per window. Many steps are fed and the last published result is
+-- checked.
+local TICK_PER_STEP = 18    -- ticks between payloads in the game
+local PROD_E = 20           -- 2.0 per tick * 10 = 20/s
 local PROD_M = 1
 
--- Прогоняет nSteps payload подряд, возвращает последнюю публикацию.
+-- Feeds nSteps payloads in a row and returns the last publication and the number of
+-- publications.
 --
--- СБРОС ОБЯЗАТЕЛЕН: счётчики модуля переживают сценарий, а следующий
--- начинается с меньших тиков, и разности выходят отрицательными.
+-- The reset is required: module counters outlive a scenario, and the next one starts with
+-- smaller ticks, so the differences come out negative.
 local function series(nSteps, meFn, allyFn)
     env.ResetCounters()
     local last = nil
@@ -124,8 +121,7 @@ local function mkAL(ein, eout, est)
     return { ein = ein, eout = eout, eexc = 0, est = est }
 end
 
--- A: у союзника есть место. Наш излишек (dSt=0, dExc=0) уходит к нему,
---    у союзника растёт запас.
+-- A: the ally has room. Our surplus (dSt=0, dExc=0) goes to the ally, whose stock grows.
 local function aME(i)
     return mkME(i, 0, 0, 4000, 0, 650, 0)
 end
@@ -134,7 +130,7 @@ local function aAL(i)
                 PROD_E * ((i + 1) * TICK_PER_STEP) / 10.0)
 end
 
--- B: оба полные, наш излишек сгорает (dExc повторяет dIn)
+-- B: both are full, our surplus burns (dExc repeats dIn).
 local function bME(i)
     local dIn = PROD_E * TICK_PER_STEP / 10.0
     return mkME(i, 0, 4000 + dIn * (i + 1), 4000, 0, 650,
@@ -142,15 +138,15 @@ local function bME(i)
 end
 local bAL = aAL
 
--- C: союзник делится с нами: его излишек 20-8=12/с -> к нам
+-- C: the ally shares with us: its surplus 20-8=12/s comes to us.
 local function cME(i)
     local dIn = PROD_E * TICK_PER_STEP / 10.0
     return mkME(i, 140 * TICK_PER_STEP / 10.0 * (i + 1), 4000 + dIn * (i + 1),
                 4000, 0, 650, 0)
 end
 local function cAL(i)
-    -- запас ПОСТОЯННЫЙ: союзник полон и расти не может.
-    -- Тогда исходящий союзника = (36 - 14.4 - 0 - 0) / 1.8 = 12/с
+    -- The stock is constant: the ally is full and cannot grow.
+    -- Its outgoing is then (36 - 14.4 - 0 - 0) / 1.8 = 12/s.
     return mkAL(4000 + PROD_E * ((i + 1) * TICK_PER_STEP) / 10.0,
                 8 * TICK_PER_STEP / 10.0 * (i + 1), 0)
 end

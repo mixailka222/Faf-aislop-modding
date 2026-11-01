@@ -1,28 +1,28 @@
--- Тест страницы настроек UMT.
+-- Test of the UMT settings page.
 --
--- ПОЧЕМУ ТЕСТ НУЖЕН. Мод однажды упал в игре чёрным экраном: options.lua
--- вызвал метод Bind у объекта, у которого такого метода нет. Код страницы
--- не исполнялся НИ ОДНИМ тестом - про ошибку узнали только в игре.
+-- Run from the tests folder: lua test_options_unit.lua. The paths below are relative to it.
+-- check.py does that with the Lua of the game, so this code follows its dialect.
 --
--- Этот тест воспроизводит настоящий API UMT по исходникам
--- mods/umt/modules/Options.lua и mods/umt/modules/OptionVar.lua, без
--- выдумок:
+-- The page code (options.lua) runs against a reproduction of the real UMT API, taken from
+-- UMT's Options.lua and OptionVar.lua. Without it no test would execute the page, and an
+-- error such as calling Bind on an object that has no such method would show up only in the
+-- game, as a black screen.
 --
---   Opt(value)                        Options.lua:400-402, ОДИН аргумент
---   OptValueMetaTable.IsInstance()    Options.lua:335-337
---   LoadOptions()                     Options.lua:339-358
---   Mods.__newindex / __index         Options.lua:378-396
---   LoadOptionsFile()                 Options.lua:361-376
---   OptionVar:Bind(fn)                OptionVar.lua:73-76, вызывает СРАЗУ
---   OptionVar:Save()                  OptionVar.lua:41-47
---   AddOptions(option, title, t)      Options.lua:317-319
+-- The API reproduced here:
 --
--- Заодно проверяется вещь, которую легко сломать молча: диапазоны ползунков
--- не должны выходить за границы SaneInt в settings.lua, иначе окно и мод
--- станут считать разные значения.
+--   Opt(value)                        takes ONE argument
+--   OptValueMetaTable.IsInstance()
+--   LoadOptions()
+--   Mods.__newindex / __index
+--   LoadOptionsFile()
+--   OptionVar:Bind(fn)                calls fn IMMEDIATELY
+--   OptionVar:Save()
+--   AddOptions(option, title, t)
+--
+-- Also checked, because it is easy to break silently: the slider ranges must not go beyond
+-- the SaneInt bounds in settings.lua, otherwise the window and the mod would compute
+-- different values.
 
--- Run from the tests folder: the paths below are relative to it. check.py does
--- that with the Lua of the game, so this code follows its dialect.
 local function ReadFile(path)
     local file = assert(io.open(path, 'rb'))
     local text = file:read('*a')
@@ -59,8 +59,8 @@ msgs = {}
 
 function LOG(m) msgs[table.getn(msgs) + 1] = tostring(m) end
 
--- Мод запускается через ForkThread. Здесь достаточно заглушки: цикл нам
--- не нужен, нужен только факт, что мод считает себя запущенным.
+-- The mod starts through ForkThread. A stub is enough: the loop is not needed, only the
+-- fact that the mod considers itself started.
 function ForkThread(f) end
 
 Prefs = {}
@@ -144,7 +144,7 @@ function Option.Slider(name, mn, mx, inc, optionVar, indent)
            optionVar = optionVar, indent = indent }
 end
 
--- Дословно по Options.lua:339-358, включая IsInstance вместо type()
+-- Verbatim from UMT's Options.lua, including IsInstance instead of type().
 local function LoadOptions(values, modName, prefix)
   local options = {}
   for optName, defaultValue in pairs(values) do
@@ -160,8 +160,8 @@ local function LoadOptions(values, modName, prefix)
   return options
 end
 
--- LoadOptionsFile у нас упрощён: вместо поиска по диску он просто зовёт
--- наш Main. Именно так и работает UMT: файл нашёлся, Main вызван.
+-- LoadOptionsFile is simplified here: instead of searching the disk it just calls our Main.
+-- UMT works the same way: the file is found, Main is called.
 local function LoadOptionsFile(mods, key)
   OPTIONS_MAIN()
   return rawget(mods, key) ~= nil
@@ -183,8 +183,8 @@ UMT = { Options = Option }
 function import(p)
   if p == '/mods/ReclaimPause/modules/settings.lua' then return MODULES.settings end
   if p == '/mods/ReclaimPause/modules/watch.lua' then return MODULES.watch end
-  -- prefs обязан возвращаться настоящим: settings.lua делает
-  -- Prefs.SetToCurrentProfile, и при заглушке {} он падает в pcall.
+  -- prefs has to be the real stub: settings.lua calls Prefs.SetToCurrentProfile, and with
+  -- an empty {} that call would fail inside pcall.
   if p == '/lua/user/prefs.lua' then return Prefs end
   return {}
 end
@@ -201,7 +201,7 @@ MODULES.watch = env_w
 WATCH = env_w
 SET = env_s
 
--- страница настроек грузится в собственное окружение, как это делает движок
+-- the settings page loads into its own environment, as the engine does
 local env_o = MakeEnv()
 LoadInto(MOD .. 'options.lua', env_o)
 OPTIONS_MAIN = env_o.Main
@@ -210,13 +210,13 @@ local env_m = MakeEnv()
 LoadInto(MOD .. 'main.lua', env_m)
 SHIM = env_m.Main
 
--- Мод запущен. В игре к моменту загрузки страницы настроек CreateUI уже
--- отработал, поэтому Bind вызывает Refresh на живом моде - это и проверяем.
+-- The mod is started. In the game CreateUI has already run by the time the settings page
+-- loads, so Bind calls Refresh on a live mod, and that is what is checked.
 WATCH.ReclaimPauseStart()
 
--- Настоящий порядок в игре: сначала UMT зовёт Main каждого мода с флагом
--- __umt, потом строит интерфейс. Main шима ЧИТАЕТ наше поле - это и есть
--- причина, по которой options.lua вообще выполняется.
+-- The order in the game: UMT first calls Main of every mod with the __umt flag, then builds
+-- the interface. The Main of the shim READS our field, which is the reason options.lua runs
+-- at all.
 print('=== 1: страница настроек UMT ===')
 local okMain, errMain = pcall(env_m.Main, false)
 if okMain then
@@ -256,13 +256,12 @@ for i = 1, table.getn(expected) do
         'поле ' .. k .. ' - OptionVar с методом Bind')
 end
 
--- Страница должна использовать ИМЕННО OptionVar, а не сырые Opt().
--- Раньше здесь стояло options.highMass = Opt(...): тип табличный, метода
--- Bind нет - ровно та ошибка, что роняла игру.
+-- The page has to use OptionVar, not a raw Opt(): an Opt value is a plain table without a
+-- Bind method, which is the error that crashed the game.
 local build = BUILDS['ReclaimPause']
 if build == nil then
-  -- AddOptions не вызвали или упали на нём. В игре это и есть чёрный
-  -- экран, поэтому дальше идти бессмысленно - падаем с внятным текстом.
+  -- AddOptions was not called or failed. In the game this is a black screen, so going
+  -- further makes no sense: fail with a clear message.
   check(false, 'AddOptions не отработал: окно не собрано, в игре это чёрный экран')
   return fails
 end
@@ -273,8 +272,8 @@ for i = 1, table.getn(build) do
 end
 check(uses >= 12, 'в окне ' .. tostring(uses) .. ' полей, и все на OptionVar')
 
--- ДИАПАЗОНЫ. Ползунок шире, чем SaneInt в settings.lua, - окно и мод
--- будут считать разные значения, и это молча.
+-- RANGES. A slider wider than SaneInt in settings.lua makes the window and the mod compute
+-- different values, and it happens silently.
 local sane = {
   highMass = { 50, 100 }, lowMass = { 0, 100 }, energyMin = { 0, 100 },
   minSec = { 0, 120 }, releaseHoldSec = { 0, 300 },
@@ -312,9 +311,9 @@ end
 check(offStep == '', 'значение по умолчанию попадает на шаг ползунка' ..
       (offStep == '' and '' or (' НАРУШЕНО: ' .. offStep)))
 
--- ГЛАВНОЕ. Имитируем работу игрока с ползунками: OptionVar:Set держит
--- значение в памяти и НЕ пишет в профиль - ровно как настоящий
--- (OptionVar.lua:24-30). Если мод читает профиль, он увидит старое.
+-- MAIN POINT. Simulate the player moving the sliders: OptionVar:Set keeps the value in
+-- memory and does NOT write the profile, exactly like the real one. If the mod reads the
+-- profile, it sees the old value.
 local opts = UMT.Options.Mods['ReclaimPause']
 opts.highMass:Set(70)
 opts.lowMass:Set(65)
@@ -326,19 +325,19 @@ check(SET.ReclaimPauseCfg.lowMass == 65,
       'ползунок lowMass=65 дошёл до мода (было ' ..
       tostring(SET.ReclaimPauseCfg.lowMass) .. ')')
 
--- значения обязаны попасть и в профиль: иначе в следующем матче мод
--- снова стартует со старых чисел
+-- the values have to reach the profile too, otherwise the next match starts the mod with
+-- the old numbers again
 local prof = PROFILE['ReclaimPause']
 check(type(prof) == 'table' and prof.highMass == 70 and prof.lowMass == 65,
       'живые значения записаны в профиль для следующего матча')
 
--- предохранитель от залипания при lowMass > highMass
+-- the safeguard for lowMass > highMass
 opts.highMass:Set(60)
 opts.lowMass:Set(90)
 check(SET.ReclaimPauseCfg.lowMass <= SET.ReclaimPauseCfg.highMass,
       'lowMass > highMax опущен до highMass, мод не залипнет')
 
--- Значение, сохранённое до подъёма минимума, поднимается до него.
+-- A value saved before the minimum was raised is lifted to the minimum.
 PROFILE['ReclaimPause'].startGrace = 0
 SET.ReclaimPauseLoadSettings()
 check(SET.ReclaimPauseCfg.startGrace == 10,
@@ -371,12 +370,12 @@ opts.startGrace:Raw():Set(15)
 opts.skipSec:Raw():Set(3)
 opts.minSec:Set(3)
 
--- возвращаем как было, чтобы следующие проверки считались от известного
+-- put it back, so that the next checks start from a known value
 opts.highMass:Set(90)
 opts.lowMass:Set(80)
 
--- Bind вызывается СРАЗУ (OptionVar.lua:75). Значит Refresh обязан был
--- отработать и привести настройки в согласованное состояние.
+-- Bind calls fn IMMEDIATELY. So Refresh must have run and brought the settings to a
+-- consistent state.
 local cfg = SET.ReclaimPauseCfg
 check(cfg ~= nil and cfg.releaseHoldSec ~= nil,
       'Refresh из окна применил настройки: releaseHoldSec=' ..
@@ -388,17 +387,16 @@ check(string.find(joined, 'FAILED') == nil,
 
 print('')
 print('=== СБРОС НАСТРОЕК ГАЛОЧКОЙ В ОКНЕ ===')
--- Кнопки UMT не умеет: OptionsWindow.lua:238-412 знает всего восемь
--- типов элементов, кнопки среди них нет. Поэтому сброс сделан
--- галочкой, которая после сброса снимает себя сама.
+-- UMT has no buttons: its options window knows only eight element types, and a button is
+-- not among them. So the reset is a check box that clears itself after the reset.
 
--- Ставим значения, которых нет в DEFAULTS: их видно в профиле.
+-- Set values that are not in DEFAULTS, so that they are visible in the profile.
 opts.highMass:Set(100)
 opts.lowMass:Set(99)
 opts.minSec:Set(9)
 
--- Галочка снята с себя сама: повторное открытие окна не должно
--- молча сбросить настройки ещё раз.
+-- The check box cleared itself: reopening the window must not silently reset the settings
+-- again.
 opts.resetFlag:Set(true)
 check(SET.ReclaimPauseCfg.highMass == 70,
       'галочка сбросила мод к умолчаниям: highMass 70 вместо ' ..
@@ -409,12 +407,9 @@ check(SET.ReclaimPauseCfg.lowMass == 65,
 check(opts.resetFlag() == false,
       'галочка сняла себя сама, второй тихий сброс при запуске не будет')
 
--- ГЛАВНОЕ ДЛЯ ЭТОГО ТЕСТА. Ползунки в окне обязаны показывать
--- умолчания. Если писать options.x(значение) вместо
--- options.x:Set(значение), то по OptionVar.lua:18-20 вызов только
--- ЧИТАЕТ значение и аргумент выбрасывает: сброс пройдёт, а игрок
--- увидит в окне старые 100/99 - ровно тот симптом, с которым
--- пришли к нам.
+-- MAIN POINT OF THIS TEST. The sliders in the window have to show the defaults. Writing
+-- options.x(value) instead of options.x:Set(value) only READS the value and discards the
+-- argument: the reset would pass while the player sees the old 100/99 in the window.
 check(opts.highMass() == 70,
       'ползунок в окне показывает 70, а не старое 100 (получено ' ..
       tostring(opts.highMass()) .. ')')
@@ -425,15 +420,14 @@ check(opts.minSec() == SET.ReclaimPauseDefaults().minSec,
       'ползунок интервала вернулся к значению по умолчанию (получено ' ..
       tostring(opts.minSec()) .. ')')
 
--- Флаг writing не должен залипнуть: после сброса ползунок снова
--- обязан управлять настройкой.
+-- The writing flag must not stay stuck: after a reset the slider has to control the setting
+-- again.
 opts.highMass:Set(88)
 check(SET.ReclaimPauseCfg.highMass == 88,
       'после сброса мод снова живой: ползунок снова влияет на настройку (получено ' ..
       tostring(SET.ReclaimPauseCfg.highMass) .. ')')
 
--- В лог попала строка о сбросе - видно, что галочка реально
--- сработала, а не подействовала вхолостую.
+-- The log has a line about the reset: the check box really worked and did not act idle.
 local after = table.concat(msgs, ' | ')
 check(string.find(after, 'RESET FROM PAGE') ~= nil,
       'в лог попала строка RESET FROM PAGE')

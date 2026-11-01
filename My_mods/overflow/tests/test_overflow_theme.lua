@@ -1,37 +1,29 @@
--- Тесты Overflow: темы оформления и мигание тревожной строки.
+-- Tests of Overflow: themes and the blinking of the alarm row.
 --
--- МОД: My_mods\overflow\Overflow.
--- Лежит рядом: папка tests\ в одной директории с папкой Overflow\.
+-- Run from the tests folder: lua test_overflow_theme.lua. The paths below are relative to
+-- it. check.py does that with the Lua of the game, so this code follows its dialect.
 --
--- ЧТО ПРОВЕРЯЕМ
+-- themes.lua: frames and presets, their names and the rule for the default. The defaults
+-- themselves are up to the mod, so the tests do not pin them.
 --
--- 1) themes.lua - рамки и пресеты: их названия и правило значения по умолчанию.
---    Сами значения по умолчанию решает мод, тесты их не закрепляют.
+-- Reading from the game skin: faction themes have to take their values from skins.lua, not
+-- from numbers of their own, otherwise a typo in a hex value would silently break a theme
+-- and show only in the game.
 --
--- 2) Чтение из скина игры. Фракционные темы обязаны брать значения из
---    skins.lua, а не из своих чисел: опечатка в шестнадцатеричном значении
---    иначе просто съела бы тему, и заметить это можно было бы только в игре.
+-- The faction_font_color setting: it is OFF by default, and when it is off the game draws
+-- text in grey instead of the faction colour. Both sides are checked.
 --
--- 3) Настройка faction_font_color. Она ВЫКЛЮЧЕНА по умолчанию
---    (options.lua:1217-1221, default = false), и когда выключена, игра рисует
---    серым вместо цвета фракции (uiutil.lua:301-305). Проверяем обе стороны.
+-- Robustness: an unknown value in the profile, a missing skin or a missing skin key must
+-- never leave a theme without a colour, because a panel with a nil colour is not drawn at
+-- all.
 --
--- 4) Устойчивость. Неизвестное значение в профиле, отсутствующий скин,
---    пропавший ключ скина - ни один случай не имеет права оставить тему без
---    цвета: панель с nil-цветом не рисуется вообще.
+-- ui.lua: the theme reaches the panel, and changing the theme in the profile rebuilds the
+-- panel. The colour is set in the constructor, so a theme applied after the elements are
+-- created would leave the panel with the old colour for good.
 --
--- 5) ui.lua - тема доезжает до панели, и смена темы в профиле приводит к
---    пересборке. Главный риск был не в данных, а в порядке вызовов: цвет
---    задаётся в конструкторе, и тема, применённая после создания элементов,
---    оставила бы панель со старым цветом навсегда.
---
--- 6) Мигание - выключено по умолчанию, при включении строка мигает
---    приглушённым цветом, после предела перестаёт (economy.lua:254,271-272).
---
--- ЗАПУСК из папки tests:  lua test_overflow_theme.lua
+-- Blinking: off by default; when on, the row blinks with a muted colour and stops after a
+-- limit.
 
--- Run from the tests folder: the paths below are relative to it. check.py does
--- that with the Lua of the game, so this code follows its dialect.
 local function ReadFile(path)
     local file = assert(io.open(path, 'rb'))
     local text = file:read('*a')
@@ -72,10 +64,9 @@ Prefs = {}
 function Prefs.GetFromCurrentProfile(k) return PROFILE[k] end
 function Prefs.SetToCurrentProfile(k, v) PROFILE[k] = v end
 
--- Настройка игры «цвет шрифта фракции». Настоящий Prefs.GetOption возвращает
--- значение по умолчанию, если опции нет (prefs.lua:116-132), то есть nil не
--- возвращается НИКОГДА. Заглушка повторяет это: при отсутствии ключа отдаёт
--- FALLBACK_OPT, а не nil.
+-- Game option "faction font colour". The real Prefs.GetOption returns the default value
+-- when the option is absent, so it NEVER returns nil. The stub does the same: with no key
+-- set it returns FALLBACK_OPT, not nil.
 FACTION_FONT_COLOR = nil
 FALLBACK_OPT = false
 function Prefs.GetOption(k)
@@ -86,11 +77,10 @@ function Prefs.GetOption(k)
     return nil
 end
 
--- ---------------------------------------------------------- СКИНЫ ИГРЫ
+-- ------------------------------------------------------- GAME SKINS
 --
--- Копия значений из lua/skins/skins.lua:152-177 и строк фракций 76-131.
--- Проверяем ровно против этих чисел. Если игра поменяет палитру, тест об
--- этом сообщит - и это будет правда, а не сюрприз.
+-- A copy of the values from lua/skins/skins.lua: the default palette and the faction
+-- sections. The checks run against exactly these numbers.
 SKINS_REAL = {
     default = {
         fontColor = 'FFbadbdb',
@@ -102,10 +92,9 @@ SKINS_REAL = {
         panelColor = 'FF4A5D6B',
         transparentPanelColor = 'AA4A5D6B',
     },
-    -- UEF в skins.lua:59-68 не переопределяет НИ ОДНОГО цвета. Но игра всё
-    -- равно копирует в него всю цепочку default (skins.lua:224-232,
-    -- table.assimilate), поэтому в таблице у UEF значения дефолтные - именно
-    -- их и видит мод.
+    -- In skins.lua UEF overrides NO colour. But the game copies the whole default chain
+    -- into it (table.assimilate), so the UEF table holds the default values, and that is
+    -- what the mod sees.
     uef = {
         fontColor = 'FFbadbdb',
         bodyColor = 'FF6FAFAF',
@@ -137,27 +126,26 @@ SKINS = SKINS_REAL
 function ForkThread(f) f() end
 function WaitSeconds(n) end
 
--- ------------------------------------------------------- элементы интерфейса
+-- ------------------------------------------------------- UI controls
 MADE = {}
 NEWCOLORS = {}
--- Цвета ЗАЛИВКИ отдельно от цветов текста. Это разные вещи, и смешивать их
--- нельзя: перерисовка панели вызывает SetColor на подписях, а пересборка -
--- ещё и SetSolidColor на фоне. Чтобы отличить «панель перерисовали» от
--- «панель пересобрали», нужен отдельный список.
+-- Fill colours are kept apart from text colours. They are different things: redrawing the
+-- panel calls SetColor on the captions, while rebuilding it also calls SetSolidColor on the
+-- background. Telling "redrawn" from "rebuilt" takes a separate list.
 NEWSOLID = {}
--- Текстуры отдельно от заливок. Подложка рамки Minimal - это Bitmap с
--- SetTexture, и без отдельного списка нельзя отличить «подложку создали с
--- нужной текстурой» от «подложку не создали вовсе».
+-- Textures are kept apart from fills. The backing of the Minimal frame is a Bitmap with
+-- SetTexture, and without a separate list "the backing was created with the right texture"
+-- cannot be told from "the backing was not created at all".
 NEWTEX = {}
--- Обрезка текстуры отдельно от самой текстуры. Подложка рамки Minimal
--- рисуется двумя кусками, а встроенная линия текстуры между ними
--- ПРОПУСКАЕТСЯ через SetUV. Без отдельного списка нельзя отличить «линию
--- пропустили» от «линию растянули на всё окно».
+-- Texture cropping is kept apart from the texture itself. The backing of the Minimal frame
+-- is drawn in two pieces, and the built-in line of the texture between them is SKIPPED
+-- through SetUV. Without a separate list "the line was skipped" cannot be told from "the
+-- line was stretched over the whole window".
 NEWUV = {}
 
 local function valueProp(getter, setter)
-    -- Повторяет LazyVar игры: значение может быть задано числом, вычисляться
-    -- функцией или быть связано с другим объектом значения.
+    -- Mirrors the game's LazyVar: a value can be a number, be computed by a function, or be
+    -- bound to another value object.
     local p = {}
     p._get = getter
     p._set = setter
@@ -180,7 +168,7 @@ local function valueProp(getter, setter)
     return p
 end
 
--- Предел размера, который мод отдал окну последним.
+-- The last size limit the mod gave the window.
 MINSIZE = nil
 
 local function NewCtrl(kind, parent)
@@ -192,9 +180,9 @@ local function NewCtrl(kind, parent)
     c._text = ''
     c._color = nil
     c._destroyed = false
-    -- Depth - такой же объект значения, как Left: его умеют ЧИТАТЬ. Мод
-    -- поднимает полосу заголовка над содержимым через client.Depth() + 1, а
-    -- заглушка с одним Set() этот вызов не пережила бы.
+    -- Depth is a value object like Left: it can be READ. The mod raises the title strip
+    -- above the content through client.Depth() + 1, and a stub with only Set() would fail
+    -- on that call.
     c.Depth = valueProp(function() return c._depth or 0 end,
                         function(v) c._depth = v end)
     function c:SetSolidColor(v)
@@ -206,10 +194,8 @@ local function NewCtrl(kind, parent)
         self._texture = v
         NEWTEX[table.getn(NEWTEX) + 1] = v
     end
-    -- SetUV есть у Bitmap (maui/bitmap.lua:4; так же режет игрушка в
-    -- ui/game/statusbar.lua:46-83). Заглушка обязана его иметь: без него
-    -- подложка вообще не создалась бы - мод зовёт SetUV сразу после
-    -- SetTexture.
+    -- SetUV exists on Bitmap. The stub has to have it: without it the backing would not be
+    -- created at all, because the mod calls SetUV right after SetTexture.
     function c:SetUV(u0, v0, u1, v1)
         self._uv = { u0, v0, u1, v1 }
         NEWUV[table.getn(NEWUV) + 1] = { u0, v0, u1, v1 }
@@ -230,11 +216,10 @@ local function NewCtrl(kind, parent)
     function c:GetRootFrame() return FRAME end
     function c:SetText(t) self._text = t end
     function c:GetText() return self._text end
-    -- GetStringAdvance есть у текстового контрола (maui/text.lua; так же
-    -- меряют в uiutil.lua:1054 и ui/dialogs/createunit.lua:2120). Мод меряет
-    -- им ширину самой длинной строки. Без него проверка предела ширины
-    -- проверяла бы заглушку, а не мод. Ширина растёт с длиной строки - как и
-    -- настоящая, поэтому подмена короткой подписи на длинную видна.
+    -- GetStringAdvance exists on a text control. The mod measures the width of its longest
+    -- line with it. Without it the width limit check would test the stub, not the mod. The
+    -- width grows with the string length, as the real one does, so swapping a short caption
+    -- for a long one shows.
     function c:GetStringAdvance(s)
         s = s or ''
         return string.len(s) * 6
@@ -245,10 +230,10 @@ local function NewCtrl(kind, parent)
                         function(v) c._w = v end)
     c.Height = valueProp(function() return c._h end,
                          function(v) c._h = v end)
-    -- Right и Bottom считаются из СОСЕДНИХ значений - ровно так их связывает
-    -- ResetLayout в игре (control.lua:36-39). Читать поля _x/_w напрямую
-    -- нельзя: когда Left и Width заданы ССЫЛКАМИ (крестик закрытия привязан к
-    -- правому краю окна), поля остаются нулями и Right вышел бы нулевым.
+    -- Right and Bottom are computed from the neighbouring values, the way ResetLayout binds
+    -- them in the game. Reading the _x/_w fields directly does not work: when Left and
+    -- Width are set by references (the close button is bound to the right edge of the
+    -- window), the fields stay zero and Right would come out zero.
     c.Right = valueProp(function() return c.Left() + c.Width() end,
                        function(v) c._w = v - c.Left() end)
     c.Bottom = valueProp(function() return c.Top() + c.Height() end,
@@ -268,9 +253,9 @@ function UIUtil.CreateText(parent, text, size, font)
     local c = NewCtrl('Text', parent)
     c._text = text or ''
     c._size = size
-    -- Текст мод пишет через SetText. Записываем его ещё и в общий список,
-    -- иначе по экрану нельзя проверить режим «только числа»: подписи у
-    -- подписей есть только _text, а он у каждой свой.
+    -- The mod writes text through SetText. It is also recorded in a shared list: otherwise
+    -- the "numbers only" mode could not be checked on the screen, since each caption has
+    -- only its own _text.
     c.SetText = function(self, v)
         self._text = v
         NEWTEXT[table.getn(NEWTEXT) + 1] = v
@@ -280,31 +265,30 @@ end
 function UIUtil.GetCursor(name)
     return { SetTexture = function() end, Reset = function() end }
 end
--- UIFile ведёт путь в папку скина (uiutil.lua:423-487). В заглушке возвращаем
--- путь как есть: нас интересует сам вызов, а не разрешённый файл.
+-- UIFile resolves a path into the skin folder in the game. The stub returns the path as is:
+-- only the call matters, not the resolved file.
 function UIUtil.UIFile(filespec) return filespec end
 
--- ------------------------------------------------------- класс Window (игры)
+-- ------------------------------------------------------- Window class (game)
 --
--- Настоящий класс лежит в lua/maui/window.lua. Мод вызывает из него:
--- конструктор, ClientGroup, Left/Top/Right/Bottom/Height как ОБЪЕКТЫ ЗНАЧЕНИЯ,
--- Depth:Set, DisableHitTest, SetMinimumResize, Hide, Show, Destroy.
--- Плюс присваивает OnClose и OnResize - тут это обычные поля.
+-- The real class is lua/maui/window.lua. The mod uses from it: the constructor,
+-- ClientGroup, Left/Top/Right/Bottom/Height as VALUE OBJECTS, Depth:Set, DisableHitTest,
+-- SetMinimumResize, Hide, Show, Destroy. It also assigns OnClose and OnResize, which are
+-- plain fields here.
 local function NewWindow(parent)
     local w = NewCtrl('Window', parent)
     w._x, w._y, w._w, w._h = 8, 80, 340, 160
     w.ClientGroup = NewCtrl('ClientGroup', w)
-    -- ГРАНИЦЫ КЛИЕНТСКОЙ ОБЛАСТИ. Класс Window отступает от краёв окна на
-    -- рамку и на полосу заголовка (window.lua:287-293): слева и справа по 5,
-    -- сверху 30, снизу 8. Заглушка обязана это повторить: без клиентской
-    -- области не посчитать ни отступ строки под крестиком, ни проверку, что
-    -- строки начинаются от верха окна.
+    -- CLIENT AREA BOUNDS. The Window class insets the client area from the window edges by
+    -- the frame and the title strip: 5 left and right, 30 top, 8 bottom. The stub has to
+    -- repeat this: without a client area neither the indent of a row under the close button
+    -- nor the check that rows start at the top of the window can be computed.
     w.ClientGroup.Left:Set(function() return w.Left() + 5 end)
     w.ClientGroup.Right:Set(function() return w.Right() - 5 end)
     w.ClientGroup.Top:Set(function() return w.Top() + 30 end)
     w.ClientGroup.Bottom:Set(function() return w.Bottom() - 8 end)
-    -- Предел размера запоминаем: без этого проверка "мод сообщил окну
-    -- предел по содержимому" превратилась бы в проверку заглушки.
+    -- The size limit is remembered: otherwise the check "the mod gave the window a limit
+    -- based on the content" would test the stub.
     function w:SetMinimumResize(a, b)
         MINSIZE = { a, b }
     end
@@ -331,21 +315,19 @@ local function NewWindow(parent)
     end
     w.Left   = valueProp(function() return w._x end, function(v) w._x = v end)
     w.Top    = valueProp(function() return w._y end, function(v) w._y = v end)
-    -- Right и Bottom ЗАДАЮТ РАЗМЕР, как в MAUI: Right = Left + Width,
-    -- Bottom = Top + Height. Класс Window задаёт размер именно так
-    -- (window.lua:469-511) и Height не трогает вовсе. Заглушка с пустым
-    -- setter не увидела бы этого и пропустила бы регресс.
+    -- Right and Bottom SET THE SIZE, as in MAUI: Right = Left + Width, Bottom = Top +
+    -- Height. The Window class sizes itself this way and does not touch Height at all. A
+    -- stub with an empty setter would miss this and let a regression through.
     w.Right  = valueProp(function() return w._x + w._w end,
                          function(v) w._w = v - w._x end)
     w.Bottom = valueProp(function() return w._y + w._h end,
                          function(v) w._h = v - w._y end)
     w.Height = valueProp(function() return w._h end, function(v) w._h = v end)
-    -- ПОЛОСА ЗАГОЛОВКА И КРЕСТИК. Класс Window заводит их ВСЕГДА
-    -- (window.lua:219-251), даже когда название не передано: полоса высотой
-    -- 30 px, крестик в её правом верхнем углу с отступом 10 по правому краю и
-    -- 5 по верхнему. Мод растягивает полосу на всё окно, а строки под
-    -- крестиком отступают вправо - значит заглушка обязана отдать и полосу, и
-    -- крестик, и НАСТОЯЩИЕ границы крестика.
+    -- TITLE STRIP AND CLOSE BUTTON. The Window class always creates them, even when no
+    -- title is passed: a 30 px strip and a close button in its top-right corner, 10 from
+    -- the right edge and 5 from the top. The mod stretches the strip over the whole window,
+    -- and the rows under the button are indented to the right, so the stub has to provide
+    -- the strip, the button and the REAL bounds of the button.
     w.TitleGroup = NewCtrl('TitleGroup', w)
     w.TitleGroup._h = 30
     w._closeBtn = NewCtrl('Button', w)
@@ -354,9 +336,9 @@ local function NewWindow(parent)
     w._closeBtn.Left:Set(function() return w.Right() - 30 end)
     w._closeBtn.Top:Set(function() return w.Top() + 5 end)
 
-    -- ДЕВЯТЬ КУСКОВ РАМКИ. Класс создаёт их в ApplyWindowTextures
-    -- (window.lua:176-184), и мод заливает их сплошным цветом в теме Minimal.
-    -- Заглушка обязана их иметь, иначе поломка этой темы не видна.
+    -- NINE FRAME PIECES. The class creates them in ApplyWindowTextures, and the mod fills
+    -- them with a solid colour in the Minimal theme. The stub has to have them, otherwise a
+    -- broken theme goes unnoticed.
     for _, part in ipairs({ 'window_tl', 'window_tr', 'window_tm',
                             'window_ml', 'window_m', 'window_mr',
                             'window_bl', 'window_bm', 'window_br' }) do
@@ -372,19 +354,18 @@ local Group  = function(parent) return NewCtrl('Group', parent) end
 
 LayoutHelpers = {}
 function LayoutHelpers.SetDimensions(c, w, h) c._w = w c._h = h end
--- pixelScaleFactor - масштаб интерфейса игры. В заглушке единица: умножение
--- ничего не меняет, но проверка вызова и порядка вычислений сохраняется.
+-- pixelScaleFactor is the interface scale of the game. The stub uses 1: the multiplication
+-- changes nothing, but the call and the order of computations are still checked.
 pixelScaleFactor = 1.0
 
--- Глобала MathFloor в ФАФ НЕТ. Каждый файл игры объявляет его сам:
--- local MathFloor = math.floor (maui/layouthelpers.lua:20 и другие).
--- Заглушка поэтому НЕ создаёт глобал, а берёт math.floor на месте вызова.
--- Если бы она объявила MathFloor как глобал, она бы скрыла ровно ту поломку,
--- из-за которой мод однажды не загрузился.
+-- There is no global MathFloor in FAF: every game file declares its own alias (`local
+-- MathFloor = math.floor`). So the stub does not create the global and takes math.floor at
+-- the call site. Declaring MathFloor as a global would hide a read of this nonexistent
+-- global, which fails the module load in the game.
 
--- Привязки повторяют layouthelpers.lua:384-420: отступ умножается на
--- pixelScaleFactor, результат берётся через MathFloor, а привязка ставится
--- SetFunction - то есть значение пересчитывается само.
+-- The anchors repeat layouthelpers.lua: the offset is multiplied by pixelScaleFactor, the
+-- result goes through MathFloor, and the anchor is set with SetFunction, so the value
+-- recomputes by itself.
 function LayoutHelpers.AtLeftIn(c, p, leftOffset)
     if leftOffset and leftOffset ~= 0 then
         c.Left:Set(function() return math.floor(p.Left() + leftOffset * pixelScaleFactor) end)
@@ -414,8 +395,8 @@ function LayoutHelpers.AtHorizontalCenterIn(c, p) end
 function LayoutHelpers.AtVerticalCenterIn(c, p) end
 function LayoutHelpers.FillParent(c, p) end
 function LayoutHelpers.InvScaleNumber(v) return v end
--- ScaleNumber есть в игре (layouthelpers.lua:57-59): им окно доращивается до
--- предела по содержимому (ui.lua, ApplyMinSize).
+-- ScaleNumber exists in the game: the mod uses it to grow a window to its content limit
+-- (ApplyMinSize in ui.lua).
 function LayoutHelpers.ScaleNumber(v) return math.floor(v * pixelScaleFactor) end
 
 local Dragger = function()
@@ -461,13 +442,12 @@ function import(p)
     return {}
 end
 
--- ------------------------------------------------------------- помощники
+-- ------------------------------------------------------- helpers
 function alltext() return table.concat(msgs, ' | ') end
 NEWTEXT = {}
 function resetlog() msgs = {} NEWTEXT = {} NEWUV = {} end
 
--- Оператор # движком не поддерживается, длина таблицы
--- берётся через table.getn.
+-- The # operator is not supported by the engine; the table length is taken with table.getn.
 TableGetn = table.getn
 
 function PickTheme(name)
@@ -483,7 +463,7 @@ function PickBlink(on)
     PROFILE['Overflow'] = t
 end
 
--- Выборы в профиле. У пресета и рамки свои ключи: style и theme.
+-- Choices in the profile. The preset and the frame have their own keys: style and theme.
 function PickStyle(name)
     local t = PROFILE['Overflow']
     if type(t) ~= 'table' then t = {} end
@@ -509,14 +489,13 @@ function PickNumbers(on)
     PROFILE['Overflow'] = t
 end
 
--- ПУСТОЙ ПРОФИЛЬ - ЭТО ПУСТОЙ ПРОФИЛЬ ЦЕЛИКОМ, а не только ключ 'Overflow'.
+-- AN EMPTY PROFILE MEANS THE WHOLE PROFILE IS EMPTY, not only the 'Overflow' key.
 --
--- Свёрнутое состояние панель хранит под СВОИМ ключом верхнего уровня
--- (ui.lua:252, COLLAPSE_KEY = 'OverflowCollapsed'), и обратно читает его при
--- сборке окна. Пока чистился один ключ, свёрнутое состояние переживало
--- ClearProfile: следующий U.OnCreateUI() поднимал панель уже свёрнутой, Render
--- не звался, и подписи на экран не возвращались. Проверка «подписи вернулись»
--- это и поймала.
+-- The panel keeps its collapsed state under its OWN top-level key (COLLAPSE_KEY =
+-- 'OverflowCollapsed' in ui.lua) and reads it back when it builds the window. If only one
+-- key were cleared, the collapsed state would survive ClearProfile: the next U.OnCreateUI()
+-- would raise the panel already collapsed, Render would not be called, and the captions
+-- would not return to the screen.
 function ClearProfile() PROFILE = {} end
 
 FIELDS = { 'BG', 'CLOSED', 'DIVIDER', 'TITLE', 'TOTAL', 'NEUTRAL',
@@ -542,7 +521,7 @@ MODULES = {}
 local env_theme = MakeEnv()
 LoadInto(MOD .. 'themes.lua', env_theme)
 MODULES.themes = env_theme
--- Отдельным глобалом: блоки проверок видят модуль только через него.
+-- A separate global: the check blocks see the module only through it.
 T = env_theme
 
 local env_rows = MakeEnv()
@@ -550,8 +529,8 @@ LoadInto(MOD .. 'rows.lua', env_rows)
 MODULES.rows = env_rows
 ROWS = env_rows
 
--- ui.lua грузится последним: он тянет themes.lua и rows.lua через import, и без
--- них в логе будет FATAL.
+-- ui.lua loads last: it pulls themes.lua and rows.lua through import, and without them the
+-- log gets FATAL.
 local env_ui = MakeEnv()
 LoadInto(MOD .. 'ui.lua', env_ui)
 MODULES.ui = env_ui
@@ -588,8 +567,8 @@ check(T.StyleCurrent() == styles[1],
       'пресет по умолчанию - первый пункт списка, а не ' ..
       tostring(T.StyleCurrent()))
 
--- ФРАКЦИОННЫХ ТЕМ БОЛЬШЕ НЕТ. Рамка и так берётся из папки скина, поэтому
--- отдельного пункта под фракцию в списках быть не должно.
+-- THERE ARE NO FACTION THEMES. The frame is taken from the skin folder anyway, so the lists
+-- must have no separate item for a faction.
 local joined = frames[1] .. frames[2] .. styles[1] .. styles[2]
 for _, gone in ipairs({ 'AEON', 'UEF', 'Cybran', 'Seraphim', 'SSB', 'Тихая',
                         'Неон' }) do
@@ -607,8 +586,8 @@ local function check(cond, text)
     print('  [FAIL] ' .. text)
 end
 
--- Панель с nil-цветом не рисуется вообще, поэтому набор полей обязан быть
--- полным при любом выборе.
+-- A panel with a nil colour is not drawn at all, so the set of fields has to be complete
+-- for any choice.
 local styleList = { 'Vanilla', 'Minimal' }
 for i = 1, TableGetn(styleList) do
     ClearProfile()
@@ -618,11 +597,10 @@ for i = 1, TableGetn(styleList) do
           'пресет ' .. styleList[i] .. ' вернул полный набор полей')
 end
 
--- КЕГЛЬ ЕСТЬ У ОБОИХ ПРЕСЕТОВ, ЦВЕТА РАМКИ - НЕТ. Раньше BG жил в пресете,
--- и выбор «рамка Minimal + пресет Vanilla» красил окно прозрачной панелью
--- игры AA4A5D6B (skins.lua:172) - то самое серое пятно, на которое пожаловался
--- игрок. Теперь рамку красит её собственная подложка, и пресет о раме не знает:
--- BG у Minimal такой же, как у игры.
+-- BOTH PRESETS HAVE A FONT SIZE, NEITHER SETS THE FRAME COLOURS. The frame paints itself
+-- with its own backing and the preset knows nothing about the frame. Were BG in the preset,
+-- the choice "Minimal frame + Vanilla preset" would paint the window with the game's
+-- transparent panel AA4A5D6B (skins.lua). So BG of Minimal is the same as the game's.
 ClearProfile()
 PickStyle('Minimal')
 local minPal = T.StylePalette()
@@ -642,13 +620,13 @@ local function check(cond, text)
     print('  [FAIL] ' .. text)
 end
 
--- Задача игрока: зелёный - перелива нет, жёлтый - союзники переливают тебе,
--- красный - ты зависишь от перелива. СПИСОК СОСТОЯНИЙ поэтому обязан быть
--- один и тот же, и различаться может только оттенок.
+-- The player reads the colours as: green is no overflow, yellow is allies overflowing to
+-- you, red is you depend on overflow. So the list of states has to be the same and only the
+-- shade may differ.
 --
--- Проверяем то, что можно проверить здесь: у обоих пресетов есть все три
--- состояния и все три - НЕПУСТЫЕ строки. Смысл же оттенка задаётся в
--- ui.lua:StatusColor, и он проверяется в тесте панели.
+-- What can be checked here: both presets have all three states and all three are NON-EMPTY
+-- strings. The meaning of the shade is set in StatusColor in ui.lua and is checked in the
+-- panel test.
 local want = { 'SAFE', 'WARN', 'BAD' }
 for i = 1, TableGetn(want) do
     local field = want[i]
@@ -663,7 +641,7 @@ for i = 1, TableGetn(want) do
           tostring(v) .. ', Minimal ' .. tostring(m) .. ')')
 end
 
--- Цвета состояний ПРЕСЕТА VANILLA - игровые, без исключений.
+-- The state colours of the VANILLA PRESET are the game's, without exceptions.
 ClearProfile()
 PickStyle('Vanilla')
 local van = T.StylePalette()
@@ -687,8 +665,8 @@ local function check(cond, text)
     print('  [FAIL] ' .. text)
 end
 
--- Опечатка в числе невозможна: значения берутся из скина, а если FAF поменяет
--- скин, мод пойдёт за ним.
+-- A typo in a number is impossible: the values come from the skin, and if FAF changes the
+-- skin, the mod follows.
 ClearProfile()
 FACTION_FONT_COLOR = true
 PickStyle('Vanilla')
@@ -700,11 +678,11 @@ check(v.DIVIDER == 'FF3b5511',
       'Vanilla DIVIDER читается из скина (disabledColor FF3b5511), а не ' ..
       tostring(v.DIVIDER))
 
--- Фон плостой рамки берётся из того же скина.
+-- The background of the flat frame comes from the same skin.
 check(v.BG == 'AA4A5D6B',
       'Vanilla BG - прозрачная панель игры AA4A5D6B, а не ' .. tostring(v.BG))
 
--- ПРЕСЕТ MINIMAL цвета скина игнорирует: он наш и задаётся своими числами.
+-- The MINIMAL PRESET ignores the skin colours: it is ours and uses its own numbers.
 ClearProfile()
 PickStyle('Minimal')
 local m = T.StylePalette()
@@ -724,8 +702,8 @@ local function check(cond, text)
     print('  [FAIL] ' .. text)
 end
 
--- Она выключена по умолчанию (options.lua:1217-1221), и тогда игра рисует
--- серым skins.default.fontColor (uiutil.lua:301-305). Мод повторяет это.
+-- The option is off by default, and then the game draws text with the grey
+-- skins.default.fontColor. The mod repeats this.
 ClearProfile()
 FACTION_FONT_COLOR = false
 PickStyle('Vanilla')
@@ -742,8 +720,8 @@ check(colour.TITLE == 'FFc7e98a',
       'при включённой настройке цвет шрифта фракции доезжает до панели, а не ' ..
       tostring(colour.TITLE))
 
--- А вот обычный текст от настройки НЕ зависит: bodyColor uiutil.lua:298
--- ставит из скина безусловно.
+-- Ordinary text does NOT depend on the option: the game sets bodyColor from the skin
+-- unconditionally.
 check(colour.NEUTRAL == grey.NEUTRAL,
       'цвет обычного текста не зависит от faction_font_color')
 
@@ -759,7 +737,7 @@ local function check(cond, text)
     print('  [FAIL] ' .. text)
 end
 
--- Ползунок UMT целочисленный, поэтому масштаб в процентах.
+-- The UMT slider is integer, so the scale is in percent.
 ClearProfile()
 check(T.FontScale() == T.FontScaleDefault(),
       'без настроек масштаб равен значению по умолчанию из мода, а не ' ..
@@ -788,7 +766,7 @@ check(T.StyleFontSize() == 17,
       'пресет масштабируется от СВОЕГО базового кегля (11 -> 17), а не ' ..
       tostring(T.StyleFontSize()))
 
--- Границы. Вне их мод ведёт себя как на границе, а не падает.
+-- Bounds. Outside them the mod behaves as at the bound instead of failing.
 ClearProfile()
 PickFontScale(5)
 check(T.FontScale() == 70, 'слишком маленький масштаб поднимается до 70')
@@ -796,7 +774,7 @@ ClearProfile()
 PickFontScale(9999)
 check(T.FontScale() == 200, 'слишком большой масштаб опускается до 200')
 
--- Мусор в профиле не должен ломать панель.
+-- Garbage in the profile must not break the panel.
 ClearProfile()
 PickFontScale('не число')
 check(T.FontScale() == T.FontScaleDefault(),
@@ -819,7 +797,7 @@ check(T.FrameMinimal() == true, 'рамка Minimal помечена как пл
 PickFrame('Vanilla')
 check(T.FrameMinimal() == false, 'рамка Vanilla помечена как игровая')
 
--- Неизвестное значение - рамка по умолчанию: молча пропасть нельзя.
+-- An unknown value gives the default frame: it must not silently disappear.
 ClearProfile()
 PickFrame('не существует')
 check(T.FrameCurrent() == T.FrameNames()[1],
@@ -841,11 +819,11 @@ local function check(cond, text)
     print('  [FAIL] ' .. text)
 end
 
--- Подпись решает, перестраивать ли панель. Всё, что меняет вид при сборке,
--- обязано в неё входить, иначе смена настройки не подхватится.
+-- The signature decides whether to rebuild the panel. Everything that changes the look at
+-- build time has to be part of it, otherwise a changed setting would not be picked up.
 --
--- All settings are given explicitly and exactly one differs from the base set,
--- so the check does not depend on the defaults.
+-- All settings are given explicitly and exactly one differs from the base set, so the check
+-- does not depend on the defaults.
 local function Sig(over)
     ClearProfile()
     PickStyle(over.style or 'Minimal')
@@ -872,7 +850,7 @@ check(T.ThemeBlinkOn() == true, 'мигание читается из профи
 ClearProfile()
 check(T.ThemeBlinkOn() == false, 'мигание выключено по умолчанию')
 
--- Подпись обязана быть читаемой, а не конкатенацией полей.
+-- The description has to be readable, not a concatenation of fields.
 ClearProfile()
 PickStyle('Minimal')
 local tell = T.ThemeTell()
@@ -891,7 +869,7 @@ local function check(cond, text)
     print('  [FAIL] ' .. text)
 end
 
--- Пустой профиль: всё должно взять значения по умолчанию, а не упасть.
+-- An empty profile: everything has to take its default instead of failing.
 ClearProfile()
 check(T.StyleCurrent() == T.StyleNames()[1],
       'пустой профиль даёт пресет по умолчанию')
@@ -901,7 +879,7 @@ check(T.FontScale() == T.FontScaleDefault(),
       'пустой профиль даёт масштаб по умолчанию')
 check(Complete(T.StylePalette()), 'пустой профиль даёт полную палитру')
 
--- Мусорные значения в профиле.
+-- Garbage values in the profile.
 local t = PROFILE['Overflow']
 PROFILE['Overflow'] = { style = 42, theme = {}, fontScale = {}, blink = 'да' }
 check(T.StyleCurrent() == T.StyleNames()[1],
@@ -913,8 +891,8 @@ check(T.FontScale() == T.FontScaleDefault(),
 check(T.ThemeBlinkOn() == true, 'любая непустая строка считается включённой')
 PROFILE['Overflow'] = nil
 
--- БЕЗ skins.lua. Модуль обязан выжить и вернуть полный набор: панель без
--- своих цветов лучше, чем панель с прозрачным текстом.
+-- WITHOUT skins.lua. The module has to survive and return a full set: a panel without the
+-- skin colours is better than a panel with transparent text.
 ClearProfile()
 local vanillaNoSkin = T.StylePalette()
 check(Complete(vanillaNoSkin),
@@ -932,12 +910,12 @@ local function check(cond, text)
     print('  [FAIL] ' .. text)
 end
 
--- Панель читает палитру при сборке, и цвета обязаны дойти до подписей.
+-- The panel reads the palette when it is built, and the colours have to reach the captions.
 --
--- Цвет берём ИГРОВОЙ, а не из палитры Minimal. Встроенные цвета ui.lua
--- совпадают с палитрой Minimal, и проверка на FF8FD0FF прошла бы даже при
--- НЕ вызванном ApplyTheme: тест был бы зелёным на сломанной панели.
--- Именно поэтому здесь Vanilla и FF18d006 - его во встроенной палитре нет.
+-- The colour is taken from the GAME skin, not from the Minimal palette. The built-in
+-- colours of ui.lua equal the Minimal palette, so a check for FF8FD0FF would pass even if
+-- ApplyTheme were NOT called: the test would be green on a broken panel. That is why
+-- Vanilla and FF18d006 are used here: that colour is not in the built-in palette.
 ClearProfile()
 PickStyle('Vanilla')
 resetlog()
@@ -952,8 +930,8 @@ check(string.find(alltext(), 'window created', 1, true) ~= nil,
 check(string.find(alltext(), 'Vanilla', 1, true) ~= nil,
       'в логе должно быть видно имя пресета')
 
--- РЕЖИМ «ТОЛЬКО ЧИСЛА»: в строке остаётся одно число, без подписи и без
--- единицы измерения. Проверяем по тексту, который реально попал на экран.
+-- "NUMBERS ONLY" MODE: a row keeps one number, without a caption and without a unit.
+-- Checked on the text that actually reached the screen.
 ClearProfile()
 PickNumbers(true)
 NEWTEXT = {}
@@ -966,23 +944,20 @@ check(string.find(joined, 'ally overflow', 1, true) == nil,
 check(string.find(joined, '|0.0', 1, true) ~= nil,
       'в режиме чисел остались сами числа: ' .. joined)
 
--- ПОДЛОЖКА РАМКИ MINIMAL. Задача игрока - рамка «максимально
--- минималистичная, как панели Selection Cost UI». Разобран тот мод: панель у
--- него - обычный Bitmap с одной игровой текстурой
--- (Selection Cost UI/hook/lua/ui/game/gamemain.lua:47-49), а не окно.
+-- MINIMAL FRAME BACKING. In Minimal the frame is not a window but a plain Bitmap with a
+-- game texture. So the mod BLANKS all nine window pieces with a transparent colour and
+-- draws the background with a separate Bitmap.
 --
--- Поэтому в Minimal мод ГАСИТ все девять кусков окна прозрачным цветом, а фон
--- рисует отдельным Bitmap с текстурой игры. Проверяем и число гашений, и их
--- цвет, и что подложка вообще создана с нужной текстурой: одной проверки на
--- число, как было раньше, недостаточно - девять заливок можно сделать и
--- неправильным цветом, и тогда панель останется с игровой рамкой.
+-- Checked: the number of blanked pieces, their colour, and that the backing is created with
+-- the right texture at all. A count alone is not enough: nine fills can be made in a wrong
+-- colour, and the panel would keep the game frame.
 ClearProfile()
 PickFrame('Minimal')
 NEWSOLID = {}
 NEWTEX = {}
 NEWUV = {}
--- Метка в общем списке контролов: искать подложку надо только среди тех, что
--- созданы ЭТИМ проходом, иначе в счёт попадут куски от прошлых сборок окна.
+-- A mark in the shared list of controls: the backing is looked up only among the controls
+-- created by THIS pass, otherwise pieces from earlier window builds would be counted.
 local mark = table.getn(MADE)
 U.OnCreateUI()
 check(TableGetn(NEWSOLID) >= 9,
@@ -996,17 +971,16 @@ check(cleared >= 9,
       'рамка Minimal: куски окна погашены прозрачным, а не залиты цветом (' ..
       tostring(cleared) .. ')')
 
--- ПОДЛОЖКА - ДВА КУСКА, А НЕ ОДИН.
+-- THE BACKING IS TWO PIECES, NOT ONE.
 --
--- В текстуре панели есть СВОЯ линия-разделитель на середине: y=35 из 72, во
--- всю ширину (замер по распакованному файлу, у всех четырёх скинов одинаково).
--- Тянем текстуру на всё окно - линия уезжает в пустоту, а рядом встаёт наш
--- разделитель. Игрок увидел ДВЕ линии и написал: «что она разделяет, если
--- значения и окно живут разными жизнями».
+-- The panel texture has its OWN divider line in the middle: y=35 of 72, full width
+-- (measured on the unpacked file, the same in all four skins). Stretched over the whole
+-- window, the line ends up in empty space and our own divider stands next to it, giving TWO
+-- lines.
 --
--- Поэтому фон рисуется двумя Bitmap, и встроенная линия между ними
--- ПРОПУСКАЕТСЯ через SetUV: верхний кусок берёт строки 0..34 текстуры,
--- нижний 36..71. Проверяем именно это, а не «подложка вообще есть».
+-- So the background is drawn with two Bitmaps and the built-in line between them is SKIPPED
+-- through SetUV: the top piece takes texture rows 0..34, the bottom one 36..71. This is
+-- what is checked, not just "a backing exists".
 local pieces = {}
 for i = mark + 1, table.getn(MADE) do
     local c = MADE[i]
@@ -1039,11 +1013,11 @@ check(topPiece ~= nil and botPiece ~= nil
       and botPiece._uv[3] == 1 and botPiece._uv[4] == 1,
       'два куска вместе накрывают всю текстуру, без дыр по краям')
 
--- СВОРАЧИВАНИЕ ГАСИТ ПОДЛОЖКУ.
+-- COLLAPSING REMOVES THE BACKING.
 --
--- Подложка подвешена к GetFrame(0), а НЕ к окну, поэтому G.win:Hide() её не
--- трогает. Иначе крестик убирает только значения, а пустая рамка
--- оставалась висеть на экране - ровно то, о чём сообщил игрок.
+-- The backing hangs off GetFrame(0), not off the window, so G.win:Hide() does not touch it
+-- and the mod has to hide it itself. Otherwise the close button would remove only the
+-- values and an empty frame would stay on the screen.
 local panel = nil
 for i = mark + 1, table.getn(MADE) do
     if MADE[i]._kind == 'Window' then panel = MADE[i] end
@@ -1077,7 +1051,7 @@ check(TableGetn(NEWUV) == 0,
       'в игровой рамке текстура не режется (обрезок ' ..
       tostring(TableGetn(NEWUV)) .. ')')
 
--- А без этого режима подписи на месте - иначе галочка ничего не делает.
+-- And without this mode the captions are in place: otherwise the check box does nothing.
 ClearProfile()
 NEWTEXT = {}
 U.OnCreateUI()
@@ -1091,8 +1065,8 @@ end)
 
 print('')
 local noSkinOk, noSkinErr = pcall(function()
-    -- Скин убирается ДО загрузки модуля. Именно так выглядит настоящая поломка:
-    -- themes.lua берёт таблицу скинов один раз, при импорте.
+    -- The skin is removed BEFORE the module loads: themes.lua takes the skin table once, at
+    -- import.
     SKINS = nil
     resetlog()
     local env_noskin = MakeEnv()

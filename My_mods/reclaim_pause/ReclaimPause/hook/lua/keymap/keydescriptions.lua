@@ -1,5 +1,4 @@
--- ReclaimPause: описание горячей клавиши.
--- Этот файл дописывается в конец /lua/keymap/keydescriptions.lua.
+-- ReclaimPause: hotkey descriptions, appended to /lua/keymap/keydescriptions.lua.
 
 keyDescriptions = keyDescriptions or {}
 

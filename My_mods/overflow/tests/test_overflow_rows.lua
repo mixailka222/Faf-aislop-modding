@@ -1,38 +1,24 @@
--- Тесты Overflow: выбор строк, страница UMT и раскладка панели.
+-- Tests of Overflow: row selection, the UMT settings page and the panel layout.
 --
--- МОД: My_mods\overflow\Overflow.
--- Лежит рядом: папка tests\ в одной директории с папкой Overflow\.
+-- Run from the tests folder: lua test_overflow_rows.lua. The paths below are relative to
+-- it. check.py does that with the Lua of the game, so this code follows its dialect.
 --
--- ЧТО ПРОВЕРЯЕМ
+-- rows.lua: which rows to show, what is written where, how ready-made sets expand and
+-- collapse. The body key list must contain eGo and mGo, otherwise the "to allies" rows do
+-- not hide when the panel collapses.
 --
--- 1) rows.lua - какие строки показывать, что куда записывать, как готовые
---    наборы разворачиваются и сворачиваются.
+-- Options.lua (the UMT page): OptionVar:Set keeps the value in memory and does not write
+-- the profile; only Save() on closing the window does. A page that read the profile would
+-- not see a check box the player has just cleared and would still report success, so the
+-- checks go through Set.
 --
--- 2) Options.lua - страница UMT. Главная проверка такая же, как была в
---    ReclaimPause: OptionVar:Set держит значение В ПАМЯТИ и в профиль не пишет
---    (mods/umt/modules/OptionVar.lua:24-30), а пишет только Save() при закрытии
---    окна. Если страница читает профиль, игрок снимет галочку - мод её не
---    увидит, - и страница доложит об успехе. На игре 2026-10-04 это стоило целого
---    матча мод ReclaimPause. Проверка идёт через Set.
+-- ui.lua: the layout is computed rather than taken from constants, and a mistake looks like
+-- a panel overlapping itself. The panel height and the row positions are checked.
 --
--- 3) ui.lua - раскладка. Здесь она впервые СЧИТАЕТСЯ вместо того, чтобы
---    браться из девяти констант, и ошибка выглядит как «панель с одной строкой
---    наезжает сама на себя». Проверяем высоту панели и положение строк.
---
--- 4) Отдельно - старый баг: список BODY_KEYS не
---    содержал eGo и mGo, поэтому строки "to allies" не прятались при
---    сворачивании. Регрессия проверяется явно.
---
--- ГЛАВНОЕ ПРАВИЛО ЗАГЛУШЕК. Они гоняются по исходникам, а не по памяти, и
--- ошибки в них стоили отдельного цикла проверки. В частности:
--- Left - объект значения, его И вызывают, И ставят через :Set; PostDragger -
--- игровая глобальная функция; заглушка gamemain объявляется ДО загрузки ui.lua,
--- потому что import выполняется в момент загрузки модуля.
---
--- Запуск из папки tests:  lua test_overflow_rows.lua
+-- The stubs follow the game sources, not memory. Left is a value object that is both called
+-- and assigned through :Set; PostDragger is a game global function; the gamemain stub is
+-- declared before ui.lua loads, because import runs when the module loads.
 
--- Run from the tests folder: the paths below are relative to it. check.py does
--- that with the Lua of the game, so this code follows its dialect.
 local function ReadFile(path)
     local file = assert(io.open(path, 'rb'))
     local text = file:read('*a')
@@ -72,17 +58,15 @@ function LOG(m) msgs[table.getn(msgs) + 1] = tostring(m) end
 Prefs = {}
 function Prefs.GetFromCurrentProfile(k) return PROFILE[k] end
 function Prefs.SetToCurrentProfile(k, v) PROFILE[k] = v end
--- Настройка игры «цвет шрифта фракции» для themes.lua. По умолчанию она
--- выключена (options.lua:1221) - отдаём false, а не nil: настоящий
--- Prefs.GetOption возвращает значение по умолчанию (prefs.lua:116-132).
+-- Game option "faction font colour" for themes.lua. It is off by default, so the stub
+-- returns false, not nil: the real Prefs.GetOption returns the default value.
 function Prefs.GetOption(k)
     if k == 'faction_font_color' then return false end
     return nil
 end
 
--- Скины игры для themes.lua. Здесь важно только то, что модуль загружается:
--- проверку самих цветов ведёт test_overflow_theme.py, где скины описаны
--- полностью и по-настоящему.
+-- Game skins for themes.lua. Only the module loading matters here; the colours themselves
+-- are checked in test_overflow_theme.lua, where the skins are described in full.
 SKINS = {
     default = {
         fontColor = 'FFbadbdb',
@@ -100,12 +84,12 @@ SKINS = {
 function ForkThread(f) f() end
 function WaitSeconds(n) end
 
--- ------------------------------------------------------- элементы интерфейса
+-- ------------------------------------------------------- UI controls
 MADE = {}
 
 local function valueProp(getter, setter)
-    -- Повторяет LazyVar игры: значение может быть задано числом, вычисляться
-    -- функцией или быть связано с другим объектом значения.
+    -- Mirrors the game's LazyVar: a value can be a number, be computed by a function, or be
+    -- bound to another value object.
     local p = {}
     p._get = getter
     p._set = setter
@@ -128,7 +112,7 @@ local function valueProp(getter, setter)
     return p
 end
 
--- Предел размера, который мод отдал окну последним.
+-- The last size limit the mod gave the window.
 MINSIZE = nil
 
 local function NewCtrl(kind, parent)
@@ -140,15 +124,15 @@ local function NewCtrl(kind, parent)
     c._text = ''
     c._font = 0
     c._destroyed = false
-    -- Depth - такой же объект значения, как Left: его умеют ЧИТАТЬ. Мод
-    -- поднимает полосу заголовка над содержимым через client.Depth() + 1, а
-    -- заглушка с одним Set() этот вызов не пережила бы.
+    -- Depth is a value object like Left: it can be READ. The mod raises the title strip
+    -- above the content through client.Depth() + 1, and a stub with only Set() would fail
+    -- on that call.
     c.Depth = valueProp(function() return c._depth or 0 end,
                         function(v) c._depth = v end)
     function c:SetSolidColor(v) end
     function c:SetTexture(v) end
-    -- SetUV зовётся сразу после SetTexture только в рамке Minimal. В остальных
-    -- рамках подложки нет, но заглушка обязана уметь всё, что умеет игра.
+    -- SetUV is called right after SetTexture only in the Minimal frame. Other frames have
+    -- no backing, but the stub has to support everything the game does.
     function c:SetUV(u0, v0, u1, v1) self._uv = { u0, v0, u1, v1 } end
     function c:SetAlpha(v) self._alpha = v end
     function c:SetColor(v) end
@@ -163,11 +147,10 @@ local function NewCtrl(kind, parent)
     function c:GetRootFrame() return FRAME end
     function c:SetText(t) self._text = t end
     function c:GetText() return self._text end
-    -- GetStringAdvance есть у текстового контрола (maui/text.lua; так же
-    -- меряют в uiutil.lua:1054 и ui/dialogs/createunit.lua:2120). Мод меряет
-    -- им ширину самой длинной строки. Без него проверка предела ширины
-    -- проверяла бы заглушку, а не мод. Ширина растёт с длиной строки - как и
-    -- настоящая, поэтому подмена короткой подписи на длинную видна.
+    -- GetStringAdvance exists on a text control. The mod measures the width of its longest
+    -- line with it. Without it the width limit check would test the stub, not the mod. The
+    -- width grows with the string length, as the real one does, so swapping a short caption
+    -- for a long one shows.
     function c:GetStringAdvance(s)
         s = s or ''
         return string.len(s) * 6
@@ -178,10 +161,10 @@ local function NewCtrl(kind, parent)
                         function(v) c._w = v end)
     c.Height = valueProp(function() return c._h end,
                          function(v) c._h = v end)
-    -- Right и Bottom считаются из СОСЕДНИХ значений - ровно так их связывает
-    -- ResetLayout в игре (control.lua:36-39). Читать поля _x/_w напрямую
-    -- нельзя: когда Left и Width заданы ССЫЛКАМИ (крестик закрытия привязан к
-    -- правому краю окна), поля остаются нулями и Right вышел бы нулевым.
+    -- Right and Bottom are computed from the neighbouring values, the way ResetLayout binds
+    -- them in the game. Reading the _x/_w fields directly does not work: when Left and
+    -- Width are set by references (the close button is bound to the right edge of the
+    -- window), the fields stay zero and Right would come out zero.
     c.Right = valueProp(function() return c.Left() + c.Width() end,
                        function(v) c._w = v - c.Left() end)
     c.Bottom = valueProp(function() return c.Top() + c.Height() end,
@@ -204,31 +187,30 @@ end
 function UIUtil.GetCursor(name)
     return { SetTexture = function() end, Reset = function() end }
 end
--- UIFile ведёт путь в папку скина (uiutil.lua:423-487). В заглушке возвращаем
--- путь как есть: нас интересует сам вызов, а не разрешённый файл.
+-- UIFile resolves a path into the skin folder in the game. The stub returns the path as is:
+-- only the call matters, not the resolved file.
 function UIUtil.UIFile(filespec) return filespec end
 
--- ------------------------------------------------------- класс Window (игры)
+-- ------------------------------------------------------- Window class (game)
 --
--- Настоящий класс лежит в lua/maui/window.lua. Мод вызывает из него:
--- конструктор, ClientGroup, Left/Top/Right/Bottom/Height как ОБЪЕКТЫ ЗНАЧЕНИЯ,
--- Depth:Set, DisableHitTest, SetMinimumResize, Hide, Show, Destroy.
--- Плюс присваивает OnClose и OnResize - тут это обычные поля.
+-- The real class is lua/maui/window.lua. The mod uses from it: the constructor,
+-- ClientGroup, Left/Top/Right/Bottom/Height as VALUE OBJECTS, Depth:Set, DisableHitTest,
+-- SetMinimumResize, Hide, Show, Destroy. It also assigns OnClose and OnResize, which are
+-- plain fields here.
 local function NewWindow(parent)
     local w = NewCtrl('Window', parent)
     w._x, w._y, w._w, w._h = 8, 80, 340, 160
     w.ClientGroup = NewCtrl('ClientGroup', w)
-    -- ГРАНИЦЫ КЛИЕНТСКОЙ ОБЛАСТИ. Класс Window отступает от краёв окна на
-    -- рамку и на полосу заголовка (window.lua:287-293): слева и справа по 5,
-    -- сверху 30, снизу 8. Заглушка обязана это повторить: без клиентской
-    -- области не посчитать ни отступ строки под крестиком, ни проверку, что
-    -- строки начинаются от верха окна.
+    -- CLIENT AREA BOUNDS. The Window class insets the client area from the window edges by
+    -- the frame and the title strip: 5 left and right, 30 top, 8 bottom. The stub has to
+    -- repeat this: without a client area neither the indent of a row under the close button
+    -- nor the check that rows start at the top of the window can be computed.
     w.ClientGroup.Left:Set(function() return w.Left() + 5 * pixelScaleFactor end)
     w.ClientGroup.Right:Set(function() return w.Right() - 5 * pixelScaleFactor end)
     w.ClientGroup.Top:Set(function() return w.Top() + 30 * pixelScaleFactor end)
     w.ClientGroup.Bottom:Set(function() return w.Bottom() - 8 * pixelScaleFactor end)
-    -- Предел размера запоминаем: без этого проверка "мод сообщил окну
-    -- предел по содержимому" превратилась бы в проверку заглушки.
+    -- The size limit is remembered: otherwise the check "the mod gave the window a limit
+    -- based on the content" would test the stub.
     function w:SetMinimumResize(a, b)
         MINSIZE = { a, b }
     end
@@ -255,21 +237,19 @@ local function NewWindow(parent)
     end
     w.Left   = valueProp(function() return w._x end, function(v) w._x = v end)
     w.Top    = valueProp(function() return w._y end, function(v) w._y = v end)
-    -- Right и Bottom ЗАДАЮТ РАЗМЕР, как в MAUI: Right = Left + Width,
-    -- Bottom = Top + Height. Класс Window задаёт размер именно так
-    -- (window.lua:469-511) и Height не трогает вовсе. Заглушка с пустым
-    -- setter не увидела бы этого и пропустила бы регресс.
+    -- Right and Bottom SET THE SIZE, as in MAUI: Right = Left + Width, Bottom = Top +
+    -- Height. The Window class sizes itself this way and does not touch Height at all. A
+    -- stub with an empty setter would miss this and let a regression through.
     w.Right  = valueProp(function() return w._x + w._w end,
                          function(v) w._w = v - w._x end)
     w.Bottom = valueProp(function() return w._y + w._h end,
                          function(v) w._h = v - w._y end)
     w.Height = valueProp(function() return w._h end, function(v) w._h = v end)
-    -- ПОЛОСА ЗАГОЛОВКА И КРЕСТИК. Класс Window заводит их ВСЕГДА
-    -- (window.lua:219-251), даже когда название не передано: полоса высотой
-    -- 30 px, крестик в её правом верхнем углу с отступом 10 по правому краю и
-    -- 5 по верхнему. Мод растягивает полосу на всё окно, а строки под
-    -- крестиком отступают вправо - значит заглушка обязана отдать и полосу, и
-    -- крестик, и НАСТОЯЩИЕ границы крестика.
+    -- TITLE STRIP AND CLOSE BUTTON. The Window class always creates them, even when no
+    -- title is passed: a 30 px strip and a close button in its top-right corner, 10 from
+    -- the right edge and 5 from the top. The mod stretches the strip over the whole window,
+    -- and the rows under the button are indented to the right, so the stub has to provide
+    -- the strip, the button and the REAL bounds of the button.
     w.TitleGroup = NewCtrl('TitleGroup', w)
     w.TitleGroup._h = 30
     w._closeBtn = NewCtrl('Button', w)
@@ -278,9 +258,9 @@ local function NewWindow(parent)
     w._closeBtn.Left:Set(function() return w.Right() - 30 * pixelScaleFactor end)
     w._closeBtn.Top:Set(function() return w.Top() + 5 * pixelScaleFactor end)
 
-    -- ДЕВЯТЬ КУСКОВ РАМКИ. Класс создаёт их в ApplyWindowTextures
-    -- (window.lua:176-184), и мод заливает их сплошным цветом в теме Minimal.
-    -- Заглушка обязана их иметь, иначе поломка этой темы не видна.
+    -- NINE FRAME PIECES. The class creates them in ApplyWindowTextures, and the mod fills
+    -- them with a solid colour in the Minimal theme. The stub has to have them, otherwise a
+    -- broken theme goes unnoticed.
     for _, part in ipairs({ 'window_tl', 'window_tr', 'window_tm',
                             'window_ml', 'window_m', 'window_mr',
                             'window_bl', 'window_bm', 'window_br' }) do
@@ -296,19 +276,18 @@ local Group  = function(parent) return NewCtrl('Group', parent) end
 
 LayoutHelpers = {}
 function LayoutHelpers.SetDimensions(c, w, h) c._w = w c._h = h end
--- pixelScaleFactor - масштаб интерфейса игры. В заглушке единица: умножение
--- ничего не меняет, но проверка вызова и порядка вычислений сохраняется.
+-- pixelScaleFactor is the interface scale of the game. The stub uses 1: the multiplication
+-- changes nothing, but the call and the order of computations are still checked.
 pixelScaleFactor = 1.0
 
--- Глобала MathFloor в ФАФ НЕТ. Каждый файл игры объявляет его сам:
--- local MathFloor = math.floor (maui/layouthelpers.lua:20 и другие).
--- Заглушка поэтому НЕ создаёт глобал, а берёт math.floor на месте вызова.
--- Если бы она объявила MathFloor как глобал, она бы скрыла ровно ту поломку,
--- из-за которой мод однажды не загрузился.
+-- There is no global MathFloor in FAF: every game file declares its own alias (`local
+-- MathFloor = math.floor`). So the stub does not create the global and takes math.floor at
+-- the call site. Declaring MathFloor as a global would hide a read of this nonexistent
+-- global, which fails the module load in the game.
 
--- Привязки повторяют layouthelpers.lua:384-420: отступ умножается на
--- pixelScaleFactor, результат берётся через MathFloor, а привязка ставится
--- SetFunction - то есть значение пересчитывается само.
+-- The anchors repeat layouthelpers.lua: the offset is multiplied by pixelScaleFactor, the
+-- result goes through MathFloor, and the anchor is set with SetFunction, so the value
+-- recomputes by itself.
 function LayoutHelpers.AtLeftIn(c, p, leftOffset)
     if leftOffset and leftOffset ~= 0 then
         c.Left:Set(function() return math.floor(p.Left() + leftOffset * pixelScaleFactor) end)
@@ -338,17 +317,17 @@ function LayoutHelpers.AtHorizontalCenterIn(c, p) end
 function LayoutHelpers.AtVerticalCenterIn(c, p) end
 function LayoutHelpers.FillParent(c, p) end
 function LayoutHelpers.InvScaleNumber(v) return math.ceil(v / pixelScaleFactor) end
--- ScaleNumber есть в игре (layouthelpers.lua:57-59): им окно доращивается до
--- предела по содержимому (ui.lua, ApplyMinSize).
+-- ScaleNumber exists in the game: the mod uses it to grow a window to its content limit
+-- (ApplyMinSize in ui.lua).
 function LayoutHelpers.ScaleNumber(v) return math.floor(v * pixelScaleFactor) end
 
 local Dragger = function()
     return { OnMove = nil, OnRelease = nil, Destroy = function() end }
 end
--- Dragger запоминаем: иначе тест не может сдвинуть панель настоящим
--- движением мыши и проверить ресайз и ширину.
+-- The dragger is remembered: otherwise the test could not move the panel with a real mouse
+-- drag and check the resize and the width.
 LAST_DRAG = nil
--- PostDragger - ИГРОВАЯ ГЛОБАЛЬНАЯ функция, ui.lua зовёт её без import.
+-- PostDragger is a game GLOBAL function; ui.lua calls it without import.
 function PostDragger(frame, key, drag) LAST_DRAG = drag end
 
 FRAME = {
@@ -362,10 +341,10 @@ function GetCursor()
     return { SetTexture = function() end, Reset = function() end }
 end
 
--- ------------------------------------------------------------- OptionVar.lua
+-- ------------------------------------------------------- OptionVar.lua
 --
--- Копия настоящего (mods/umt/modules/OptionVar.lua). Ключевое: Set меняет
--- значение В ПАМЯТИ и в профиль НЕ пишет.
+-- A copy of the real one from UMT. The key point: Set changes the value IN MEMORY and does
+-- NOT write the profile.
 local OptionVarMetaTable = {}
 OptionVarMetaTable.__index = OptionVarMetaTable
 function OptionVarMetaTable:__call() return self._v end
@@ -422,7 +401,7 @@ end
 function Option.Title(name, size, family, color, indent)
     return { type = 'title', name = name, indent = indent }
 end
--- Options.Strings(name, items, optionVar, indent), Options.lua:111-119
+-- Signature of UMT's Options.Strings: (name, items, optionVar, indent).
 function Option.Strings(name, items, optionVar, indent)
     return { type = 'strings', name = name, items = items,
              optionVar = optionVar, indent = indent }
@@ -461,23 +440,22 @@ local ModsMeta = {
 Option.Mods = setmetatable({}, ModsMeta)
 UMT = { Options = Option }
 
--- Ползунок UMT: OptionsWindow.lua:264-285. Целые числа, по умолчанию 1.
--- Подпись и границы сохраняем - по ним проверяется страница настроек.
+-- The UMT slider. Integer values, default 1. The caption and the bounds are kept: the
+-- settings page check reads them.
 function Option.Slider(name, lo, hi, inc, optionVar, indent)
     return { type = 'slider', name = name, optionVar = optionVar,
              min = lo, max = hi, inc = inc, indent = indent or 0 }
 end
 
--- что и когда импортировали: страница настроек обязана НЕ трогать ui.lua
+-- what was imported and when: the settings page must not touch ui.lua
 IMPORTED = {}
 
--- ------------------------------------------------------- ЦЕПОЧКА UMT ЦЕЛИКОМ
+-- ------------------------------------------------------- The whole UMT chain
 --
--- DiskFindFiles отдаёт то, что нашлось бы на диске. Сравнение
--- регистронезависимое, поэтому один и тот же ключ записан двумя
--- начертаниями папки: на диске папка лежит строчными, а UMT ищет по имени
--- мод-ключу. Именно так в игре нашлось '/mods/ase/modules/options.lua' по
--- запросу '/mods/ASE/'.
+-- DiskFindFiles returns what would be found on disk. The match is case-insensitive, so the
+-- same key is entered with two spellings of the folder: on disk the folder is lower case,
+-- while UMT searches by the mod key. This is how the game finds
+-- '/mods/ase/modules/options.lua' for the query '/mods/ASE/'.
 FOUND_ON_DISK = {
     ['/mods/overflow/|Main.lua']    = { '/mods/overflow/modules/main.lua' },
     ['/mods/overflow/|Options.lua'] = { '/mods/overflow/modules/Options.lua' },
@@ -490,11 +468,11 @@ function DiskFindFiles(dir, filename)
     return {}
 end
 
--- UMT:Add - дословно mods/umt/modules/Mods.lua:16-18
+-- UMT:Add, copied verbatim from UMT.
 UMT_MODS = {}
 function UMT.Add(name) UMT_MODS[name] = true end
 
--- UMT:Load - дословно mods/umt/modules/Mods.lua:5-12
+-- UMT:Load, copied verbatim from UMT.
 function UMT.Load(isReplay)
     for mod in pairs(UMT_MODS) do
         local files = DiskFindFiles('/mods/' .. mod .. '/', 'Main.lua')
@@ -505,9 +483,9 @@ function UMT.Load(isReplay)
     end
 end
 
--- Настоящий sync.lua нужен для проверки физического запрета. Он берёт эти
--- функции ГЛОБАЛАМИ при загрузке (sync.lua:79-86), поэтому объявления должны
--- существовать ДО загрузки модуля - иначе все они будут nil.
+-- The real sync.lua is needed for the check that incoming is zeroed while the storage is
+-- full. It takes these functions as GLOBALS when it loads, so the declarations must exist
+-- BEFORE the module loads, otherwise all of them are nil.
 TICK = 0
 INCOME_E = 0
 INCOME_M = 0
@@ -518,17 +496,17 @@ function GetEconomyTotals()
 end
 function IsAlly(me, armyIdx) return armyIdx ~= me end
 
--- sync.lua зовёт GetFocusArmy на КАЖДОМ payload. Без заглушки sync.lua
--- набирал бы три ошибки подряд и САМ снимал колбэк, после чего тест падал
--- бы с "attempt to call global 'SCORE_CB' (a nil value)".
+-- sync.lua calls GetFocusArmy on EVERY payload. Without this stub sync.lua would collect
+-- three errors in a row and remove its own callback, and the test would then fail with
+-- "attempt to call global 'SCORE_CB' (a nil value)".
 function GetFocusArmy() return 1 end
 
 SCORE_CB = nil
 function AddOnSyncHashedCallback(cb, event, id) SCORE_CB = cb end
 function RemoveOnSyncHashedCallback(event, id) SCORE_CB = nil end
 
--- заглушка sync.lua. ui.lua читает её поля через rawget, поэтому это
--- именно таблица с полями, а не набор глобалов.
+-- Stub of sync.lua. ui.lua reads its fields through rawget, so it has to be a table with
+-- fields, not a set of globals.
 SYNCSTUB = {
     started = false,
     Start = function()
@@ -561,22 +539,22 @@ function import(p)
     if p == '/mods/Overflow/modules/themes.lua' then return MODULES.themes end
     if p == '/lua/skins/skins.lua' then return { skins = SKINS } end
     if p == '/mods/Overflow/modules/ui.lua' then return MODULES.ui end
-    -- эти два пути приходят из DiskFindFiles, то есть от самой заглушки UMT
+    -- these two paths come from DiskFindFiles, i.e. from the UMT stub itself
     if p == '/mods/overflow/modules/main.lua' then return MODULES.main end
     if p == '/mods/overflow/modules/Options.lua' then return MODULES.options end
     return {}
 end
 
--- Факт сбора результата после последнего изменения набора строк.
+-- Records that the result was collected after the last change of the row set.
 ROWS_APPLIED = 0
 end
 
 MODULES = {}
 
--- ВАЖНО: заглушка gamemain обязана существовать ДО загрузки ui.lua.
--- ui.lua делает `local GameMain = import('/lua/ui/game/gamemain.lua')` при
--- загрузке. Объявленная позже, она дала бы nil, и OnCreateUI упал бы в pcall:
--- панель создалась бы, но бит игры не подписался бы.
+-- The gamemain stub MUST exist BEFORE ui.lua loads. ui.lua runs `local GameMain =
+-- import('/lua/ui/game/gamemain.lua')` at load time. Declared later, the stub would give
+-- nil and OnCreateUI would fail inside pcall: the panel would be created, but the game beat
+-- would not be subscribed.
 GameMainStub = {
     AddBeatFunction = function(f, throttle, id) BEAT = f end,
     RemoveBeatFunction = function(f, id)
@@ -592,9 +570,9 @@ LoadInto(MOD .. 'rows.lua', env_rows)
 MODULES.rows = env_rows
 ROWS = env_rows
 
--- Загружаем ДО ui.lua и Options.lua: оба импортируют themes.lua, а при
--- загрузке модуля import выполняется сразу. Если темы не загружены, ui.lua
--- останется со встроенными цветами, а Options.lua выйдет из Main() досрочно.
+-- Loaded BEFORE ui.lua and Options.lua: both import themes.lua, and import runs as soon as
+-- a module loads. If the themes are not loaded, ui.lua stays with its built-in colours and
+-- Options.lua leaves Main() early.
 local env_themes = MakeEnv()
 LoadInto(MOD .. 'themes.lua', env_themes)
 MODULES.themes = env_themes
@@ -610,13 +588,13 @@ LoadInto(MOD .. 'Options.lua', env_opt)
 MODULES.options = env_opt
 OPTIONS_MAIN = env_opt.Main
 
--- настоящий sync.lua для теста
+-- the real sync.lua for the test
 local env_sync_real = MakeEnv()
 LoadInto(MOD .. 'sync.lua', env_sync_real)
 SYNC = env_sync_real
 
--- Шим может отсутствовать - тогда это и есть провал, и тест обязан покраснеть
--- с внятным текстом, а не упасть на открытии файла.
+-- The shim may be missing: that is then a failure, and the test has to go red with a clear
+-- message instead of crashing on opening the file.
 local env_main = MakeEnv()
 local shim = io.open(MOD .. 'main.lua', 'rb')
 if shim then
@@ -663,14 +641,14 @@ end
 check(asDefault, 'без настроек видны строки по умолчанию')
 check(anyOn, 'по умолчанию видна хотя бы одна строка')
 
--- «Поля нет» и «поле = false» - РАЗНЫЕ вещи. Первое значит «как по умолчанию».
+-- "No field" and "field = false" are DIFFERENT things. The first means "use the default".
 PROFILE['Overflow'] = { eOverflow = false }
 vis = ROWS.VisibleRows()
 check(vis.eOverflow == false, 'явно снятая строка скрыта')
 check(vis.eGo == def.eGo and vis.mGo == def.mGo and vis.total == def.total,
       'отсутствующие поля читаются как значение по умолчанию, а не как «скрыть»')
 
--- Запись не должна затирать чужие поля того же профиля: им пользуется UMT.
+-- A write must not overwrite other fields of the same profile entry: UMT uses it.
 PROFILE['Overflow'] = { preset = 'Все строки', eOverflow = true }
 vis = {}
 for i = 1, table.getn(BOXES) do vis[BOXES[i]] = (BOXES[i] == 'eGo') end
@@ -680,8 +658,8 @@ check(PROFILE['Overflow'].preset == 'Все строки',
 check(PROFILE['Overflow'].eGo == true and PROFILE['Overflow'].eOverflow == false,
       'SaveRows записал именно переданные флаги')
 
--- Подпись набора: панель сравнивает её со своей и перекладывает геометрию
--- только при изменении. Подпись обязана различать разные наборы.
+-- The signature of a set: the panel compares it with its own and re-applies the geometry
+-- only when it changes. It has to tell different sets apart.
 local sigAll = ROWS.RowsSignature({ eOverflow = true, eGo = true,
     eOwn = true, mOverflow = true, mGo = true, mOwn = true, total = true })
 local sigOne = ROWS.RowsSignature({ eOverflow = true, eGo = false,
@@ -691,7 +669,7 @@ check(ROWS.RowsSignature({ eOverflow = true, eGo = true, eOwn = true,
     mOverflow = true, mGo = true, mOwn = true, total = true }) == sigAll,
       'подпись одного и того же набора стабильна')
 
--- Все готовые наборы обязаны разворачиваться и сворачиваться без потерь.
+-- Every ready-made set has to expand and collapse without loss.
 local names = ROWS.PresetNames()
 local hasAllRows = false
 for i = 1, table.getn(names) do
@@ -713,25 +691,25 @@ end
 check(bad == '', 'каждый набор разворачивается и сворачивается сам в себя' ..
       (bad == '' and '' or (' НАРУШЕНО: ' .. bad)))
 
--- Служебный элемент не набор: разворачивать его нельзя, иначе щелчок по
--- нему снёс бы все галочки.
+-- The service item is not a set: it must not expand, otherwise a click on it would clear
+-- all check boxes.
 check(ROWS.PresetByName(ROWS.PresetOther()) == nil,
       'служебный «Другой набор» не разворачивается в набор')
 
--- Пустой набор обязан совпасть с «Ничего не показывать», а не со служебным.
+-- An empty set has to match "show nothing", not the service item.
 local empty = {}
 for i = 1, table.getn(BOXES) do empty[BOXES[i]] = false end
 check(ROWS.PresetFor(empty) == 'Ничего не показывать',
       'пустой набор опознан как «Ничего не показывать», а не как служебный')
 
--- Набор, которого нет в списке, обязан давать nil.
+-- A set that is not in the list has to give nil.
 local odd = { eOverflow = true, eGo = true, eOwn = false, mOverflow = false,
               mGo = false, mOwn = true, total = true }
 check(ROWS.PresetFor(odd) == nil,
       'нестандартная комбинация не опознана ни за один набор (nil)')
 
--- ПРАВИЛО: первый набор обязан совпадать со значением по умолчанию, иначе
--- UMT молча перепишет его и сохранит.
+-- RULE: the first set has to equal the default value, otherwise UMT silently rewrites it
+-- and saves the result.
 local first = ROWS.PresetNames()[1]
 local firstFlags = ROWS.PresetByName(first)
 local defMatch = true
@@ -742,8 +720,8 @@ for i = 1, table.getn(BOXES) do
 end
 check(defMatch, 'первый набор списка совпадает со значением по умолчанию')
 
--- Названия строк для окна настроек: у каждой строки должно быть своё,
--- иначе галочки окажутся безымянными или с чужой подписью.
+-- Row names for the settings window: each row needs its own, otherwise the check boxes
+-- would be unnamed or carry another row's caption.
 local noTitle = ''
 for i = 1, table.getn(BOXES) do
     local t = ROWS.RowTitleOf(BOXES[i])
@@ -770,8 +748,8 @@ end
 local BOXES = { 'eOverflow', 'eGo', 'eOwn', 'mOverflow', 'mGo', 'mOwn',
                 'total' }
 
--- Чистый профиль. Обнулять через Mods[] нельзя: __newindex срабатывает и на
--- nil, а LoadOptions(nil) упал бы. Только rawset.
+-- A clean profile. It cannot be cleared through Mods[]: __newindex fires for nil too, and
+-- LoadOptions(nil) would fail. Only rawset.
 PROFILE['Overflow'] = nil
 rawset(UMT.Options.Mods, 'Overflow', nil)
 IMPORTED = {}
@@ -781,9 +759,9 @@ check(okPage, 'Main() страницы отработал без исключе�
       (okPage and '' or (': ' .. tostring(errPage))))
 if not okPage then return fails end
 
--- ПОРЯДОК ЗАГРУЗКИ. Страница обязана НЕ импортировать ui.lua: неизвестно,
--- UMT ли загрузится раньше интерфейса игры или позже, и импорт поймал бы
--- ещё не до конца выполненный модуль.
+-- LOAD ORDER. The page must NOT import ui.lua: it is not known whether UMT loads before the
+-- game interface or after, and the import could catch a module that has not finished
+-- running.
 local touchedUi = false
 for i = 1, table.getn(IMPORTED) do
     if IMPORTED[i] == '/mods/Overflow/modules/ui.lua' then touchedUi = true end
@@ -806,8 +784,8 @@ check(boxesOk, 'все семь строк - OptionVar с методом Bind')
 check(opts.preset ~= nil and type(opts.preset.Bind) == 'function',
       'выпадающий список - OptionVar с методом Bind')
 
--- Каждая галочка обязана быть привязана к СВОЕМУ полю, иначе щелчок по ней
--- менял бы чужое.
+-- Each check box has to be bound to its OWN field, otherwise a click on it would change
+-- another one.
 local mismatched = ''
 local filters = 0
 local stringsLine = nil
@@ -819,27 +797,24 @@ for i = 1, table.getn(build) do
         local nm = line.optionVar:Option()
         if line.optionVar ~= opts[nm] then mismatched = nm .. ' ' end
     elseif line.type == 'strings' then
-        -- Списка теперь два: тема и наборы строк. Запоминаем ОБА, иначе
-        -- проверка привязки темы молча проходила бы, ни на что не глядя.
+        -- There are two lists: the theme and the row sets. Both are remembered, otherwise
+        -- the theme binding check would pass without looking at anything.
         --
-        -- Признак берём по themeLine, а не по stringsLine: в первую ветку мы
-        -- попадаем раньше, чем stringsLine успевает что-то получить, и
-        -- проверка `stringsLine == nil` оставалась бы верной навсегда.
+        -- The marker is themeLine, not stringsLine: the first branch is taken before
+        -- stringsLine gets anything, so a `stringsLine == nil` test would stay true
+        -- forever.
         if themeLine == nil then themeLine = line else stringsLine = line end
     end
 end
--- Галочек теперь ВОСЕМЬ, а не семь: семь строк панели плюс переключатель
--- мигания. Он сделан тем же типом Filter - это та же галочка, и проверка
--- привязки снизу автоматически накрывает и его.
--- Галочек теперь девять: семь строк, мигание и «только числа».
+-- The blink switch is the same Filter type as the row check boxes, so the binding check
+-- below covers it too.
 check(filters == 9, 'в окне девять галочек: семь строк, мигание и только числа (получено ' ..
       tostring(filters) .. ')')
 check(mismatched == '', 'каждая галочка привязана к своему полю' ..
       (mismatched == '' and '' or (': ' .. mismatched)))
--- Проверяем не только равенство, но и ЧТО ОНО ЕСТЬ. Иначе проверка
--- проходит как nil == nil: стоит выбросить из объявления полей строку
--- `theme = Opt(looks[1])`, и страница соберётся как ни в чём не бывало -
--- ровно так это и выглядит у игрока.
+-- Check not only equality but WHAT is equal. Otherwise the check passes as nil == nil: drop
+-- `theme = Opt(looks[1])` from the field declaration and the page still builds as usual,
+-- which is exactly how the player would see it.
 check(stringsLine ~= nil and stringsLine.optionVar ~= nil
       and stringsLine.optionVar == opts.preset,
       'выпадающий список привязан к полю preset')
@@ -853,9 +828,9 @@ check(stringsLine ~= nil and stringsLine.items ~= nil and
 check(opts.preset() == ROWS.PresetNames()[1],
       'значение списка по умолчанию - первый набор')
 
--- Имитируем игрока: выбираем «Только E ally overflow».
--- Set держит значение в памяти и в профиль НЕ пишет (OptionVar.lua:24-30),
--- поэтому если страница читает профиль - мод увидит старое.
+-- Simulate the player choosing the preset that shows only E ally overflow. Set keeps the
+-- value in memory and does NOT write the profile, so if the page reads the profile, the mod
+-- sees the old value.
 opts.preset:Set('Только E ally overflow')
 
 local prof = PROFILE['Overflow']
@@ -864,8 +839,8 @@ check(prof.eGo == false and prof.eOwn == false and prof.mOverflow == false
       and prof.mGo == false and prof.mOwn == false and prof.total == false,
       'остальные шесть строк сняты, как просил игрок')
 
--- Мод читает профиль, а страница обязана записать туда же, что показала
--- галочкам. Любое расхождение значит, что мод видит не то, что игрок.
+-- The mod reads the profile, and the page has to write there what it showed in the check
+-- boxes. Any mismatch means the mod sees something other than the player.
 local liveMismatch = ''
 for i = 1, table.getn(BOXES) do
     if (opts[BOXES[i]]() and true or false) ~= (prof[BOXES[i]] and true or false) then
@@ -876,13 +851,13 @@ check(liveMismatch == '',
       'профиль и живое значение OptionVar совпадают по всем семи строкам' ..
       (liveMismatch == '' and '' or (': расход ' .. liveMismatch)))
 
--- Теперь игрок ставит галочку руками. Список обязан перестать врать.
+-- Now the player sets a check box by hand. The preset list has to stop lying.
 opts.mGo:Set(true)
 check(opts.preset() == ROWS.PresetOther(),
       'после ручной правки список показывает «Другой набор», а не прежний')
 check(PROFILE['Overflow'].mGo == true, 'ручная галочка дошла до профиля')
 
--- Возврат к готовому набору.
+-- Back to a ready-made set.
 opts.preset:Set('Все строки')
 local raised = true
 for i = 1, table.getn(BOXES) do
@@ -911,8 +886,8 @@ local function check(cond, label)
     end
 end
 
--- Подписи, которые держит на экране Render: он зовётся из Update, то есть
--- из бита игры. Так мы узнаём, какие строки панель показывает.
+-- Captions that Render keeps on screen. It is called from Update, i.e. from the game beat.
+-- This is how we learn which rows the panel shows.
 local CAPTIONS = {
     eOverflow = 'E ally overflow: 100.0 E/s',
     eGo       = 'E to allies: 20.0 E/s',
@@ -936,7 +911,7 @@ local function shownCaptions()
     return out
 end
 
--- Сколько строк данных на экране: подписи данных минус надписи шапки.
+-- How many data rows are on screen: data captions minus the header captions.
 local function shownData()
     local n = 0
     for txt, _ in pairs(shownCaptions()) do
@@ -975,8 +950,7 @@ check(okUi, 'OnCreateUI отработал без исключения' ..
 if not okUi then return fails end
 check(SYNCSTUB.started, 'sync.lua получил команду Start')
 
--- Ищем ОКНО, а не группу: после перехода на класс Window панель строится
--- контейнером 'Window', а обычных групп в modе больше нет.
+-- Look for the WINDOW, not a group: the panel is built as a 'Window' container.
 local panel = nil
 for i = 1, table.getn(MADE) do
     if MADE[i]._kind == 'Window' then panel = MADE[i] end
@@ -997,7 +971,7 @@ check(hSeven > 0, 'при семи строках высота окна поло
 check(shownDividers() == 2, 'при всех строках на месте оба разделителя (' ..
       tostring(shownDividers()) .. ')')
 
--- ГЛАВНЫЙ СЛУЧАЙ ПОЖЕЛАНИЯ: оставлена одна строка.
+-- The main case: one row is left.
 setRows({ eOverflow = true })
 t = shownCaptions()
 check(t[CAPTIONS.eOverflow] ~= nil, 'при одной строке E ally overflow осталась')
@@ -1011,7 +985,7 @@ check(shownDividers() == 0,
       'над одиночной строкой не осталось разделителя (найдено: ' ..
       tostring(shownDividers()) .. ')')
 
--- Ничего не показывать: панель равна шапке.
+-- Show nothing: the panel is as tall as the header.
 setRows({})
 check(shownData() == 0,
       'при пустом наборе строк данных на экране нет (строк: ' ..
@@ -1021,7 +995,7 @@ check(hNone <= hOne,
       'при пустом наборе окно должно быть не выше окна с одной строкой: ' ..
       tostring(hNone) .. ' против ' .. tostring(hOne))
 
--- Возврат к полному набору и проверка координат.
+-- Back to the full set, then the coordinates.
 setRows({ eOverflow = true, eGo = true, eOwn = true, mOverflow = true,
           mGo = true, mOwn = true, total = true })
 t = shownCaptions()
@@ -1034,8 +1008,8 @@ check(panel._h == hSeven,
       'после возврата всех строк высота окна вернулась (' ..
       tostring(panel._h) .. ' против ' .. tostring(hSeven) .. ')')
 
--- Координата строки берётся ВЫЗОВОМ Top(): раскладка привязывает её
--- функцией к ClientGroup окна, поэтому за полем _y ничего не лежит.
+-- The row coordinate is taken by CALLING Top(): the layout binds it with a function to the
+-- ClientGroup of the window, so the _y field holds nothing.
 local function y(cap)
     local c = t[cap]
     if not c then return -1 end
@@ -1045,21 +1019,21 @@ end
 local ys = { y(CAPTIONS.eOverflow), y(CAPTIONS.eGo), y(CAPTIONS.eOwn),
              y(CAPTIONS.mOverflow), y(CAPTIONS.mGo), y(CAPTIONS.mOwn),
              y(CAPTIONS.total) }
--- Проверяем ШАГ и ПОРЯДОК, а не абсолютные координаты. Строки привязаны к
--- ClientGroup окна функциями, поэтому их Y зависит от положения окна на
--- экране и меняется вместе с ресайзом. Неизменны только порядок сверху вниз
--- и шаг между соседними строками (L.ROW_STEP = 14).
+-- Check the STEP and the ORDER, not absolute coordinates. The rows are bound to the
+-- ClientGroup of the window by functions, so their Y depends on the position of the window
+-- on the screen and changes with a resize. Only the top-to-bottom order and the step
+-- between neighbours stay fixed (L.ROW_STEP = 14).
 --
--- Шаг проверяется внутри ресурса: перед разделителем он всегда 14, а после
--- разделителя добавляется DIV_POST, поэтому шаг 18 там - так и задумано.
+-- The step is checked within a resource: before the divider it is always 14, and after the
+-- divider DIV_POST is added, so a step of 18 there is intended.
 local ROW_STEP = 14
 local coordOk = true
 local got = ''
 for i = 1, 7 do
     got = got .. ys[i] .. ' '
-    -- Порядок проверок важен: `ys[i] <= ys[i-1] and i > 1` упало бы на
-    -- первом элементе, потому что Lua вычисляет ОПЕРАНДЫ слева направо и
-    -- доходит до сравнения с nil раньше, чем до проверки i > 1.
+    -- `i > 1` comes first: `ys[i] <= ys[i-1] and i > 1` would fail on the first element,
+    -- because Lua evaluates the operands left to right and reaches the comparison with nil
+    -- before the i > 1 test.
     if i > 1 and ys[i] <= ys[i - 1] then coordOk = false end
 end
 check(coordOk, 'строки идут сверху вниз без наложений (' .. got .. ')')
@@ -1071,41 +1045,32 @@ end
 check(stepOk, 'шаг между строками внутри ресурса одинаковый (' ..
       (ys[2] - ys[1]) .. ', ' .. (ys[5] - ys[4]) .. ')')
 
--- Разделитель должен стоять между ресурсами и отодвигать вторую строку.
+-- The divider has to stand between the resources and push the second row away.
 check(ys[4] - ys[3] > ROW_STEP,
       'разделитель раздвигает второй ресурс (' .. (ys[4] - ys[3]) .. ')')
 
--- ШИРИНА ЧЕРЕЗ НАСТОЯЩУЮ ПРОТЯЖКУ.
---
--- Прямая запись panel._w ничего бы не проверяла: G.width в моде остался бы
--- nil, и ApplyLayout честно вернул бы 340. Идём путём игрока: жмём невидимый
--- край, сдвигаем Dragger, отпускаем.
---
--- Край находится по SetAlpha(0): ровно так он сделан в моде, чтобы остаться
--- кликабельным, но незаметным.
--- РЕСАЙЗ ПЕРЕШЁЛ К КЛАССУ WINDOW. Нашей невидимой зоны захвата больше нет,
--- и искать её нечего. Вместо этого проверяем, что окно собрано нужным
--- способом и что у него есть минимальный размер: без него ресайз утащил бы
--- окно в ноль вместе с подписями.
+-- Resize belongs to the Window class, so the checks are that the window is built as
+-- expected and handles resize and close. The minimum size, checked further below, keeps a
+-- resize from dragging the window down to zero together with its captions.
 check(panel ~= nil, 'окно на месте после всех проверок')
 check(panel ~= nil and panel.OnResize ~= nil,
       'у окна есть обработчик ресайза')
 check(panel ~= nil and panel.OnClose ~= nil,
       'у окна есть обработчик закрытия - он сворачивает панель')
 
--- ВЫСОТА, ПОДОБРАННАЯ ИГРОКОМ. Правило: потянул окно за край - высота
--- запомнилась и больше не срезается подгонкой под содержимое; перенос окна
--- высоту не меняет.
+-- HEIGHT SET BY THE PLAYER. Rule: once the player drags the window edge, the height is
+-- remembered and the fit to content no longer trims it; moving the window does not change
+-- the height.
 --
--- Проверяем ровно то, что произошло в игре: игрок растянул окно, затем что-то
--- сбило высоту, и после переноса она обязана вернуться.
+-- The sequence: the player stretches the window, then something knocks the height down, and
+-- after a move it has to come back.
 if panel ~= nil and panel.OnResizeSet and panel.OnMoveSet then
     panel._h = 250
     panel.OnResizeSet(panel)
     check(panel._h == 250,
           'после ресайза высота игрока запомнена (' .. tostring(panel._h) .. ')')
 
-    -- Имитируем то, что делал класс при переносе: сбросили высоту.
+    -- Simulate what the class does on a move: it resets the height.
     panel._h = 90
     check(panel._h == 90, 'сброс высоты действительно произошёл (проверка замкнута)')
 
@@ -1115,17 +1080,15 @@ if panel ~= nil and panel.OnResizeSet and panel.OnMoveSet then
           tostring(panel._h) .. ')')
 end
 
--- ПОЛОСА ЗАГОЛОВКА, КРЕСТИК И ПРЕДЕЛ РАЗМЕРА
+-- TITLE STRIP, CLOSE BUTTON AND SIZE LIMIT
 --
--- Что было сломано и что здесь проверяется:
+-- 1. The Window class ALWAYS creates an EMPTY 30 px title strip, even when no title is
+-- passed. The rows have to start at the top of the window, not below that strip: in a 52 px
+-- window thirty pixels would be empty, while three rows need 40, and the text would stick
+-- out of the frame.
 --
--- 1. Класс Window заводит ПУСТУЮ полосу заголовка в 30 px ВСЕГДА
---    (window.lua:219-226), даже когда название не передано. Строки же
---    начинались НИЖЕ неё (window.lua:288). На окне в 52 px тридцать
---    пикселей были пустыми, трём строкам нужно 40, и текст вылезал за рамку.
--- 2. Предел размера был жёстким числом 200 по ширине: панель не сжималась
---    дальше, хотя текст был заметно короче окна.
--- ============================================================================
+-- 2. The width limit has to follow the text, not be a fixed number such as 200: the panel
+-- has to shrink when the text is noticeably shorter than the window.
 
 check(panel.ClientGroup.Top() == panel.Top(),
       'строки начинаются от ВЕРХА окна, а не под пустой полосой заголовка (' ..
@@ -1137,9 +1100,9 @@ check(panel.TitleGroup ~= nil
       'полоса заголовка растянута на всё окно, иначе окно не сдвинуть (' ..
       tostring(panel.TitleGroup and panel.TitleGroup.Height()) .. ')')
 
--- КРЕСТИК ЗАКРЫТИЯ. Он висит в правом верхнем углу окна и перекрывает
--- ВЕРХНИЕ строки: пустой полосы, которая раньше их разводила, больше нет.
--- Поэтому строка под ним отступает вправо сильнее, чем нижние.
+-- CLOSE BUTTON. It hangs in the top-right corner of the window and overlaps the UPPER rows:
+-- no empty strip separates them. So the row under it is indented to the right more than the
+-- lower ones.
 local function ctrlFor(text)
     for i = 1, table.getn(MADE) do
         local c = MADE[i]
@@ -1161,12 +1124,12 @@ check(topRow ~= nil and lowRow ~= nil and topRow.Right() < lowRow.Right(),
       tostring(topRow and topRow.Right()) .. ', низ ' ..
       tostring(lowRow and lowRow.Right()) .. ')')
 
--- ПРЕДЕЛ РАЗМЕРА. Мод обязан сообщить окну предел ПО СОДЕРЖИМОМУ: без него
--- окно сжимается до 52 px и текст уезжает за рамку.
+-- SIZE LIMIT. The mod has to tell the window a limit based on the CONTENT: without it the
+-- window shrinks to 52 px and the text goes past the frame.
 --
--- MINSIZE сбрасываем перед каждым замером и МЕНЯЕМ НАБОР СТРОК между ними:
--- предел считается в LayoutRows при смене набора, поэтому замер после смены
--- честно показывает работу мода, а не оставшееся с прошлого раза значение.
+-- MINSIZE is reset before each measurement and the ROW SET is changed between them: the
+-- limit is computed in LayoutRows when the set changes, so the measurement shows the work
+-- of the mod, not a value left from the previous time.
 MINSIZE = nil
 setRows({ eGo = true })
 local one = MINSIZE
@@ -1177,8 +1140,8 @@ check(all ~= nil and all[1] > 0 and all[2] > 0,
       'мод сообщил окну предел размера (' .. tostring(all and all[1]) ..
       ' x ' .. tostring(all and all[2]) .. ')')
 
--- Семь строк - это 8 + 7*14 - 14 + 4 = 96 px под текст плюс 8 px нижней
--- рамки. Предел меньше 96 означал бы, что текст не поместится.
+-- Seven rows are 8 + 7*14 - 14 + 4 = 96 px for text plus 8 px of the bottom frame. A limit
+-- below 96 would mean the text does not fit.
 check(all ~= nil and all[2] >= 96,
       'предел высоты не меньше, чем нужно семи строкам (' ..
       tostring(all and all[2]) .. ')')
@@ -1186,35 +1149,34 @@ check(all ~= nil and all[2] >= 96,
 check(one ~= nil and all ~= nil and one[2] < all[2],
       'предел ВЫСОТЫ считается по числу строк: с одной строкой он ниже (' ..
       tostring(one and one[2]) .. ' против ' .. tostring(all and all[2]) .. ')')
--- Подпись 'E to allies: 20.0 E/s' КОРОЧЕ, чем 'E own production: 200.0 E/s',
--- поэтому и предел ширины обязан быть меньше. Жёсткое число этого не покажет:
--- с ним оба замера совпали бы.
+-- The caption 'E to allies: 20.0 E/s' is SHORTER than 'E own production: 200.0 E/s', so the
+-- width limit has to be smaller. A fixed number would not show this: both measurements
+-- would be equal.
 check(one ~= nil and all ~= nil and one[1] < all[1],
       'предел ШИРИНЫ считается ПО ТЕКСТУ, а не задан числом: с одной ' ..
       'короткой строкой он меньше (' .. tostring(one and one[1]) ..
       ' против ' .. tostring(all and all[1]) .. ')')
 
--- Возвращаем полный набор: за этим блоком идут проверки сворачивания.
+-- Back to the full set: the collapse checks follow.
 setAllSeven()
 
--- СТРОКИ РАЗЪЕЗЖАЮТСЯ ПО ВЫСОТЕ ПАНЕЛИ.
+-- ROWS SPREAD OVER THE PANEL HEIGHT.
 --
--- Игрок выбрал: больше панель - больше промежутки между строками. Промежутки
--- делят ОСТАТОК места поровну, поэтому нижняя строка всегда встаёт ровно по
--- нижнему полю, а верхняя остаётся у верхнего края.
+-- The taller the panel, the larger the gaps between the rows. The gaps share the REMAINING
+-- space equally, so the bottom row always sits exactly on the bottom margin and the top row
+-- stays at the top edge.
 --
--- Идём ПУТЁМ КЛАССА WINDOW: сначала задаётся новый размер, потом зовётся
--- OnResize (window.lua:324-326).
+-- The check follows the Window class: the new size is set first, then OnResize is called.
 --
--- ВЫСОТУ ЗАДАЁМ ЧИСЛОМ, а не через подгонку: к этому месту теста G.wantH уже
--- выставлен проверкой переноса выше, и «естественная» высота тут не
--- естественная. С числом раскладка предсказуема.
+-- The height is set as a NUMBER, not through the fit: by this point G.wantH has already
+-- been set by the move check above, and the "natural" height is not natural here. With a
+-- number the layout is predictable.
 setAllSeven()
 local row1 = ctrlFor(CAPTIONS.eOverflow)
 local rowN = ctrlFor(CAPTIONS.total)
 
--- Разделитель ищем по РОДИТЕЛЮ, а не по высоте: куски рамки окна - тоже
--- Bitmap, и по одному лишь Height их от разделителя не отличить.
+-- The divider is found by its PARENT, not by height: the frame pieces of the window are
+-- Bitmaps too, and Height alone does not tell them from the divider.
 local div1 = nil
 for i = 1, table.getn(MADE) do
     local c = MADE[i]
@@ -1227,8 +1189,8 @@ check(row1 ~= nil and rowN ~= nil,
       'строки нашлись для проверки растяжения')
 
 if row1 ~= nil and rowN ~= nil then
-    -- НИЖНЕЕ ПОЛЕ. Число своё у мода (PAD_BOTTOM), в тесте повторяется, чтобы
-    -- проверка была о РАСПРЕДЕЛЕНИИ, а не о самой себе.
+    -- BOTTOM MARGIN. The mod has its own number (PAD_BOTTOM); the test repeats it so that
+    -- the check is about the distribution, not about itself.
     local PAD_BOTTOM = 4
 
     local function bottomRow()
@@ -1256,8 +1218,8 @@ if row1 ~= nil and rowN ~= nil then
           'нижняя строка встаёт по нижнему полю панели (низ строки ' ..
           tostring(bottomRow()) .. ', поле ' .. tostring(byBottom()) .. ')')
 
-    -- РАСТЯНУЛИ ЕЩЁ - промежутки обязаны вырасти, а низ строки снова лечь по
-    -- полю. Это и отличает распределение от «сдвинуть весь блок вниз».
+    -- Stretch further: the gaps have to grow and the bottom of the row has to land on the
+    -- margin again. This tells a distribution from "shift the whole block down".
     local r1b, rNb = measure(400)
     local d1b = -1
     if div1 ~= nil then d1b = div1.Top() end
@@ -1275,18 +1237,17 @@ if row1 ~= nil and rowN ~= nil then
           'разделитель едет вместе со строками (' ..
           tostring(d1a) .. ' -> ' .. tostring(d1b) .. ')')
 
-    -- И обратно: прежняя высота обязана дать прежнюю раскладку, иначе панель
-    -- «помнит» растяжение и после того, как игрок её вернул.
+    -- And back: the previous height has to give the previous layout, otherwise the panel
+    -- "remembers" the stretch after the player has returned it.
     local r1c, rNc = measure(300)
     check(r1c == r1a and rNc == rNa,
           'при возврате прежней высоты раскладка возвращается (' ..
           tostring(rNc) .. ' против ' .. tostring(rNa) .. ')')
 
-    -- СМЕНА НАБОРА СТРОК МЕНЯЕТ И ВЫСОТУ ПАНЕЛИ, и делает это ПОСЛЕ раскладки
-    -- (FitHeight зовётся из ApplyLayout ниже). Позиции зависят от высоты,
-    -- поэтому их надо пересчитать и после подгонки: без второго прохода
-    -- короткий набор разъехался бы по прежней, большой высоте и строки уехали
-    -- бы за край панели.
+    -- CHANGING THE ROW SET ALSO CHANGES THE PANEL HEIGHT, and does it AFTER the layout
+    -- (FitHeight is called from ApplyLayout below). The positions depend on the height, so
+    -- they have to be recomputed after the fit too: without a second pass a short set would
+    -- be spread over the old, large height and the rows would go past the panel edge.
     setRows({ eOwn = true, mOverflow = true })
     local pair2 = ctrlFor(CAPTIONS.mOverflow)
     check(pair2 ~= nil,
@@ -1300,14 +1261,13 @@ if row1 ~= nil and rowN ~= nil then
     setAllSeven()
 end
 
--- СВОРАЧИВАНИЕ. Здесь жил старый баг: список BODY_KEYS не содержал
--- eGo и mGo, поэтому строки "to allies" не получали Hide() и оставались
--- висеть под свёрнутой шапкой - Group в игре детей не обрезает.
+-- COLLAPSING. BODY_KEYS has to contain eGo and mGo: otherwise the "to allies" rows do not
+-- get Hide() and hang under the collapsed header, because a Group in the game does not clip
+-- its children.
 --
--- Кнопки «-» больше нет: сворачивание стало закрытием окна, ровно как у
--- миникарты. Проверяем поэтому не кнопку, а РЕЗУЛЬТАТ - панель спряталась и
--- вернулась, и строки при этом убраны с экрана. Именно этот результат и
--- ловил этот баг.
+-- There is no "-" button: collapsing is closing the window, as with the minimap. So the
+-- check is on the RESULT: the panel hides and comes back, and the rows are taken off the
+-- screen.
 if panel ~= nil and panel.OnClose then
     local hiddenBefore = panel._hidden
     panel.OnClose(panel)
@@ -1318,7 +1278,7 @@ if panel ~= nil and panel.OnClose then
           tostring(shownData()) .. ' - их не должно быть видно, но Hide() ' ..
           'на самом окне скрывает всё дочернее')
 
-    -- Возврат: как у миникарты, панель открывает кнопка «Overflow».
+    -- Return: as with the minimap, the panel is reopened by the "Overflow" button.
     local reopen = nil
     for i = 1, table.getn(MADE) do
         if MADE[i]._kind == 'Bitmap' and MADE[i]._parent ~= panel
@@ -1356,10 +1316,9 @@ local function check(cond, label)
     end
 end
 
--- Если у модуля переименовать функцию и забыть вызов, обращение даёт nil:
--- цикл `for i = 1, nil` не выполняется ни разу, таблица остаётся пустой, и
--- страница падает уже на Opt(nil). Именно так ломалось Rows.Count() ->
--- Rows.HowMany() на прошлом шаге.
+-- If a function of a module is renamed and a call is forgotten, the access gives nil: the
+-- loop `for i = 1, nil` runs zero times, the table stays empty, and the page fails later,
+-- on Opt(nil).
 local NEEDS = {
   ROWS = { 'HowManyRows', 'RowKeyAt', 'RowTitleOf', 'RowDefaults',
            'PresetNames', 'PresetFor', 'PresetOther', 'PresetByName',
@@ -1378,8 +1337,7 @@ end
 check(absent == '', 'у модулей есть все функции, которые мод вызывает' ..
       (absent == '' and '' or (' НЕТ: ' .. absent)))
 
--- ЭКСПОРТ ГЛОБАЛАМИ. Значение return движок отбрасывает (import.lua:61,171),
--- поэтому у rows.lua в файле-примере не должно быть таблицы возврата.
+-- The engine discards the value of return, so exports go through globals.
 check(U.ReapplyRows == nil,
       'ui.lua никуда не экспортирует ReapplyRows: применение делает сам Update')
 
@@ -1398,9 +1356,9 @@ local function check(cond, label)
     end
 end
 
--- Настоящий порядок в игре: UML находит мод по флагу __umt и говорит UMT-у
--- Add, потом UMT ищет в папке мода Main.lua и зовёт его Main. Именно на этом
--- шаге всё и падало: без Main.lua до наших опций очередь не доходила.
+-- The order in the game: UML finds the mod by the __umt flag and tells UMT to Add it, then
+-- UMT looks for Main.lua in the mod folder and calls its Main. Without Main.lua the queue
+-- never reaches our options.
 UMT.Add('overflow')
 
 local nBefore = table.getn(msgs)
@@ -1415,20 +1373,17 @@ check(string.find(loaded, 'Loading options file') ~= nil
       or string.find(loaded, 'UMT options page') ~= nil,
       'наш Main дошёл до чтения UMT.Options.Mods и.options грузятся')
 
--- Главная проверка: страница РЕГИСТРИРУЕТСЯ. Всё остальное - детали.
+-- The main check: the page is REGISTERED. Everything else is detail.
 check(BUILDS['Overflow'] ~= nil,
       'страница зарегистрирована: AddOptions отработал без ошибки')
--- 15 строк: рамка, пресет, масштаб шрифта, только числа, мигание, два
--- заголовка, список наборов и семь галочек строк.
 check(BUILDS['Overflow'] ~= nil and table.getn(BUILDS['Overflow']) == 15,
       'в странице 15 строк: рамка, пресет, масштаб, два переключателя, два ' ..
       'заголовка, список наборов и семь галочек (получено ' ..
       tostring(BUILDS['Overflow'] and table.getn(BUILDS['Overflow']) or 0) .. ')')
 
--- ПОЛЗУНОК МАСШТАБА. Границы обязаны совпадать с themes.lua, иначе ползунок
--- даст значение, которое мод потом срежет по своим границам, и игрок будет
--- видеть ползунок на 200, а панель ведёт себя как на 200 ровно - или хуже,
--- если границы мод задаст уже.
+-- SCALE SLIDER. The bounds have to match themes.lua, otherwise the slider would give a
+-- value that the mod then clamps to its own bounds, and the slider position would not match
+-- how the panel behaves.
 local sliderFound = nil
 if BUILDS['Overflow'] then
     for i = 1, table.getn(BUILDS['Overflow']) do
@@ -1442,16 +1397,16 @@ check(sliderFound ~= nil and sliderFound.min == 70 and sliderFound.max == 200,
 check(sliderFound ~= nil and sliderFound.inc == 5,
       'шаг ползунка 5 процентов')
 
--- Шим обязан быть безопасным и без UMT: страница не должна рушить игру,
--- если мода UMT нет.
+-- The shim has to be safe without UMT too: the page must not crash the game when the UMT
+-- mod is absent.
 local savedUMT = UMT
 UMT = nil
 local okNoUmt = pcall(MODULES.main.Main, nil)
 UMT = savedUMT
 check(okNoUmt, 'шим не падает, когда UMT нет')
 
--- И обязан писать в лог, если опции не зарегистрировались: молчать об
--- этом нельзя - игрок будет искать причину не там.
+-- A failed registration has to be logged: staying silent would send the player looking for
+-- the cause in the wrong place.
 check(string.find(loaded, 'FAILED') == nil,
       'в логе загрузки цепочки нет ни одной строки FAILED')
 
@@ -1470,7 +1425,7 @@ local function check(cond, label)
     end
 end
 
--- Один отсчёт Sync.Score для армии. Порядок полей повторяет sim/score.lua.
+-- One Sync.Score sample for an army. The field order follows sim/score.lua.
 local function Army(ein, eout, eexc, estore, emax,
                    emin, mout, mexc, mstore, mmax)
     return { resources = {
@@ -1484,10 +1439,9 @@ local function Army(ein, eout, eexc, estore, emax,
 end
 
 local function Feed(myBase, myLater, allyBase, allyLater)
-    -- Сброс счётчика ошибок ОБЯЗАТЕЛЕН перед каждым сценарием. Иначе
-    -- ошибки предыдущего сценария накопятся, NERR_LIMIT = 3 перебьют, и
-    -- sync.lua снимет колбэк - сценарий упадёт по причине, не связанной
-    -- с проверяемым.
+    -- Resetting the error counter before each scenario is REQUIRED. Otherwise the errors of
+    -- the previous scenario accumulate, exceed NERR_LIMIT = 3, and sync.lua removes its
+    -- callback, so the scenario fails for a reason unrelated to the one under test.
     SYNC.ResetCounters()
     local before = table.concat(msgs, ' | ')
     check(string.find(before, 'ERROR') == nil,
@@ -1500,7 +1454,7 @@ local function Feed(myBase, myLater, allyBase, allyLater)
     return SYNC.GetResult()
 end
 
--- Start() сначала, потом проверка: до него колбэк и не должен существовать.
+-- Start() first, then the check: the callback must not exist before it.
 IMPORTED = {}
 SYNC.Start()
 check(SCORE_CB ~= nil, 'Start() зарегистрировал колбэк Sync.Score')
@@ -1510,13 +1464,13 @@ for i = 1, table.getn(IMPORTED) do
 end
 check(not reimported, 'UserSync.lua не выполняется второй раз')
 
--- СЦЕНАРИЙ A. Мой запас стоит на потолке все окно, союзник отдаёт.
+-- SCENARIO A. My storage sits at the ceiling for the whole window, the ally gives.
 --
---   я:     запас 1000 из 1000, произвёл 100, ничего не потратил
---   союзник: произвёл 100, запас 0 из 2000, ничего не потратил
+--   me: storage 1000 of 1000, produced 100, spent nothing
+--   ally: produced 100, storage 0 of 2000, spent nothing
 --
--- Мод без запрета показал бы входящий 10/с и исходящий 10/с одновременно.
--- Физически входящий невозможен: принимать некуда.
+-- Without the guard the mod would show incoming 10/s and outgoing 10/s at once. Incoming is
+-- physically impossible: there is nowhere to put it.
 local rA = Feed(
     Army(0, 0, 0, 1000, 1000, 0, 0, 0, 500, 500),
     Army(100, 0, 0, 1000, 1000, 0, 0, 0, 500, 500),
@@ -1536,7 +1490,7 @@ if rA ~= nil then
           'в лог записано, что запас признан полным')
 end
 
--- СЦЕНАРИЙ B. У меня есть место: 500 из 1000. Запрет неприменим.
+-- SCENARIO B. I have room: 500 of 1000. The guard does not apply.
 local rB = Feed(
     Army(0, 0, 0, 500, 1000, 0, 0, 0, 500, 500),
     Army(100, 0, 0, 500, 1000, 0, 0, 0, 500, 500),
@@ -1552,11 +1506,11 @@ if rB ~= nil then
           'GUARD не сработал там, где не должен')
 end
 
--- СЦЕНАРИЙ C. Потолок ВЫРОС в середине окна: в начале места не было,
--- в конце потолок 2000 при запасе 1000, то есть место появилось.
+-- SCENARIO C. The ceiling GREW in the middle of the window: at the start there was no room,
+-- at the end the ceiling is 2000 with 1000 stored, i.e. room appeared.
 --
--- Именно здесь грубая проверка «минимум запаса >= минимум потолка» ошибалась
--- и объявляла запас полным, обнуляя настоящий перелив.
+-- A crude check such as "minimum stored >= minimum ceiling" would be wrong here: it would
+-- call the storage full and zero a real overflow.
 local rC = Feed(
     Army(0, 0, 0, 1000, 1000, 0, 0, 0, 500, 500),
     Army(100, 0, 0, 1000, 2000, 0, 0, 0, 500, 500),
@@ -1572,8 +1526,8 @@ if rC ~= nil then
           'на растущем потолке GUARD не сработал')
 end
 
--- СЦЕНАРИЙ D. Запас МАССЫ стоит на потолке всё окно, союзник отдаёт.
--- Принимать некуда, поэтому входящий обязан обнулиться.
+-- SCENARIO D. The MASS storage sits at the ceiling for the whole window, the ally gives.
+-- There is nowhere to put it, so incoming has to be zeroed.
 local rD = Feed(
     Army(0, 0, 0, 500, 1000, 0, 0, 0, 500, 500),
     Army(100, 0, 0, 500, 1000, 100, 0, 0, 500, 500),
@@ -1589,8 +1543,8 @@ if rD ~= nil then
           'в лог записана строка GUARD M с сырыми числами')
 end
 
--- СЦЕНАРИЙ E. Общий приход массы за матч намного больше ёмкости, но в
--- хранилище есть место. Свободное место считается по запасу, а не по приходу.
+-- SCENARIO E. The total mass income over the match is much larger than the capacity, but
+-- the storage has room. Free space is computed from the stored amount, not from income.
 local rE = Feed(
     Army(0, 0, 0, 500, 1000, 5000, 0, 0, 100, 500),
     Army(100, 0, 0, 500, 1000, 5100, 0, 0, 100, 500),
@@ -1606,9 +1560,9 @@ if rE ~= nil then
           'при свободном месте GUARD не сработал')
 end
 
--- СЦЕНАРИЙ F. Доход движка включает реклейм, и "своё производство" считает его
--- своей добычей, хотя строка реклейма показывает его ещё и отдельно. Окно 10 с:
--- доход 50 и 30 в секунду, реклейм 20 и 10 в секунду.
+-- SCENARIO F. The engine income includes reclaim, and "own production" counts it as its
+-- own, although the reclaim row also shows it separately. Window 10 s: income 50 and 30 per
+-- second, reclaim 20 and 10 per second.
 INCOME_E = 5
 INCOME_M = 3
 local function Reclaimed(army, recE, recM)

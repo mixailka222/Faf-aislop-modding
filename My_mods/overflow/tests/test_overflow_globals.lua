@@ -1,45 +1,26 @@
--- Overflow - чтение глобалов, которых в ФАФ нет. Проверка.
+-- Overflow - scans every mod file for reads of globals that do not exist in FAF.
 --
--- ЗАЧЕМ ЭТА ПРОВЕРКА
--- Мод однажды не загрузился в игре: themes.lua содержал `local MathFloor =
--- MathFloor`, а глобала MathFloor в ФАФ не существует. Каждый файл игры
--- объявляет его сам - `local MathFloor = math.floor` (maui/layouthelpers.lua:20,
--- maui/statusbar.lua:3, defaultexplosions.lua:661, forms.lua:30 и другие).
--- LuaPlus на чтение несуществующего глобала падает ФАТАЛЬНО: файл не загружается
--- и рушится весь мод, а не одна его строка.
+-- Reading a nonexistent global is a fatal error in the game's Lua: the file does not load
+-- and the whole mod goes down with it, not one line. Game files declare their own aliases
+-- (`local MathFloor = math.floor`); there is no global MathFloor.
 --
--- ПОЧЕМУ ЭТО НЕ УВИДЕЛИ ТЕСТЫ
--- Заглушки объявляли `MathFloor = math.floor` ГЛОБАЛОМ - то есть сами создавали
--- тот самый глобал, которого в игре нет, и подсовывали его модулю. Мод был
--- зелёным на коде, который в игре обрывает загрузку.
--- Это ровно та ошибка, которую заглушки не должны допускать: заглушка обязана
--- повторять игру, а не подправлять её. Теперь MathFloor в заглушках нет.
+-- Each mod .lua is loaded with loadstring and setfenv into an environment whose __index
+-- records the name and returns the real value. The real value is required: with nil the
+-- chunk would stop at the first missing standard function instead of reaching the one we
+-- look for. setfenv is required too: without it loadstring compiles the chunk in the real
+-- _G, no names are recorded, and the scan reports no problems for any code.
 --
--- КАК РАБОТАЕТ
--- Каждый .lua мода грузится через loadstring + setfenv в окружение, у которого
--- __index ЗАПИСЫВАЕТ имя искомого глобала и возвращает настоящее значение.
--- Возвращать настоящее значение обязательно: если вернуть nil, чанк не
--- выполнится вообще - не будет даже pcall - и сканер сообщит о первой же
--- отсутствующей стандартной функции вместо интересующей нас.
+-- Limit: only the module body runs. A global read inside a function happens when the
+-- function is called, and nothing is called while loading, so the scan does not see it.
+-- Behaviour tests and LuaLS cover those.
 --
--- setfenv ТОЖЕ ОБЯЗАТЕЛЕН. Без него loadstring компилирует чанк в настоящем
--- _G, учёт имён не срабатывает, и сканер молча рапортует «проблем нет» на
--- любом коде. Такая проверка хуже её отсутствия, потому что снимает проверку
--- с автора.
+-- KNOWN lists only names confirmed in the game's own Lua files or its standard library. A
+-- name the scan rejects has to be found in the game before it is added.
 --
--- ГРАНИЦА. Сканер выполняет только ТЕЛО модуля. Чтения глобалов внутри функций
--- происходят в момент вызова, а функции во время загрузки не вызываются, поэтому
--- такой глобал сканер НЕ увидит. Их находят тесты поведения и LuaLS.
+-- FILES is written by hand because Lua cannot walk folders: a new mod file has to be added
+-- there.
 --
--- СПИСОК ГЛОБАЛОВ
--- Ниже только имена, подтверждённые первоисточником: файлы игры в references/fa
--- и стандартная библиотека Lua игры. Если сканер ругается на новое имя - его надо
--- найти в игре и только потом добавлять в список.
---
--- СПИСОК ФАЙЛОВ задан руками: в Lua нет обхода папок. Новый файл мода надо
--- дописать в FILES.
---
--- Запуск из папки tests:  lua test_overflow_globals.lua
+-- Run from the tests folder: lua test_overflow_globals.lua
 
 local MOD = '../Overflow/'
 
@@ -54,7 +35,7 @@ local FILES = {
     'modules/ui.lua',
 }
 
--- Стандартная библиотека Lua игры.
+-- Standard library of the game's Lua.
 local KNOWN = {}
 for _, name in {
     'assert', 'collectgarbage', 'dofile', 'error', 'getfenv', 'getmetatable', 'ipairs',
@@ -65,10 +46,10 @@ for _, name in {
     KNOWN[name] = true
 end
 
--- Глобалы движка, оболочки и клиента ФАФ. После каждого имени - файл игры,
--- где это имя встречается, чтобы список нельзя было пополнять по памяти.
+-- Globals of the engine, shell and FAF client. Each name is followed by a game file where
+-- it occurs, so the list is not extended from memory.
 for _, name in {
-    'LOG',                        -- журнал игры
+    'LOG',                        -- game log
     'import',                     -- lua/system/import.lua
     'GameTick',                   -- lua/userInit.lua
     'IsAlly',                     -- lua/shield.lua
@@ -79,15 +60,15 @@ for _, name in {
     'GetFocusArmy',               -- lua/AI/aibrain.lua
     'GetCursor',                  -- lua/ui/uiutil.lua
     'GetFrame',                   -- lua/debug/uidebug.lua
-    'ForkThread',                 -- потоки клиента
-    'WaitSeconds',                -- потоки клиента
-    'CreateUI',                   -- lua/ui/game/gamemain.lua, его перехватывает хук
+    'ForkThread',                 -- client threads
+    'WaitSeconds',                -- client threads
+    'CreateUI',                   -- lua/ui/game/gamemain.lua, hooked by the mod
 } do
     KNOWN[name] = true
 end
 
--- Минимальные заглушки: ровно те глобалы, которые есть в игре, и НИЧЕГО лишнего.
--- Лишний глобал здесь - это ровно та ошибка, которую эта проверка ищет.
+-- Minimal stubs: only globals that exist in the game. An extra global here would hide
+-- exactly the error this scan looks for.
 import = function(p) return {} end
 LOG = function(m) end
 

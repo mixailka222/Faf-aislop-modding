@@ -1,41 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Проверка самих тестов: тест обязан краснеть на сломанном коде.
+"""Checks the tests themselves: a test has to go red on broken code.
 
-Тест, который проходит всегда, хуже отсутствия теста: он даёт уверенность без
-основания. Здесь мод ломается разными способами, и каждый обязан быть пойман.
+A test that always passes is worse than no test: it gives confidence for no reason. Here the
+mod is broken in many ways (see CASES), and the Lua tests have to catch each one.
 
-Мод и тесты копируются во временную папку, все поломки делаются только в копии.
-Настоящие исходники скрипт не меняет, поэтому прерывание ничего не портит.
+The mod and the tests are copied into a temporary folder and every breakage is made in the
+copy only, so the real sources are never touched and an interrupted run damages nothing.
 
-Тесты выполняет Lua игры из .tools/faf-lua, его собирает bootstrap.py.
-
-1) rows.lua: отсутствующее поле читается как «скрыть» вместо значения по
-   умолчанию. Должен упасть тест совместимости - тот случай, когда после
-   обновления мода панель гаснет у всех.
-
-2) ui.lua: высота панели берётся из константы, а не считается по видимым
-   строкам. Должны упасть проверки высоты 38 и 24.
-
-3) ui.lua: возвращён старый баг. Список BODY_KEYS снова без eGo и mGo.
-   Должен упасть тест сворачивания. Это самая ценная проверка:
-   именно этот баг жил в modе незамеченным.
-
-4) Options.lua: значения берутся из профиля, а не из живого OptionVar.
-   Это ровно тот баг, который стоил матча мод ReclaimPause.
-
-5) Options.lua: страница импортирует ui.lua. Порядок загрузки неизвестен,
-   и такой импорт в одном из случаев поймал бы не до конца выполненный
-   модуль.
-
-6) themes.lua: цвет НЕ читается из скина, а зашит. Опечатка в таком числе
-   съела бы тему целиком, и заметить это можно было бы только в игре.
-
-7) ui.lua: тема применяется ПОСЛЕ создания панели. Цвет задаётся в
-   конструкторе, поэтому такой порядок оставил бы панель со старым цветом
-   навсегда - и молча.
-
-8) Options.lua: из объявления полей выброшено поле theme. Страница собралась
-   бы, но переключателя оформления на ней не оказалось бы.
+The tests run on the game's Lua from .tools/faf-lua, which bootstrap.py builds.
 """
 import atexit
 import io
@@ -50,9 +22,8 @@ SOURCE_MOD = os.path.abspath(os.path.join(os.path.dirname(HERE), "Overflow"))
 sys.path.insert(0, os.path.join(HERE, "..", "..", "..", "DOCUMENTATION", "tools"))
 sys.dont_write_bytecode = True
 import bootstrap
-# Гоняются ОБА теста: часть поломок видна только одному из них. Например,
-# тема не приехала в панель - rows-тест этого не замечает, а тест тем
-# замечает сразу.
+# Both tests run: some breakages are visible to only one of them. For example, a theme that
+# did not reach the panel is missed by the rows test and caught at once by the themes test.
 TESTS = ["test_overflow_rows.lua", "test_overflow_theme.lua"]
 
 FILES = ["rows.lua", "ui.lua", "Options.lua", "sync.lua", "themes.lua"]
@@ -107,26 +78,31 @@ code, out = run_test()
 print("ISKHODNO: kod %d, FAIL=%d, OK=%d"
       % (code, nfail(out), out.count("[OK  ]")))
 if code != 0:
-    print("!! ishodnyy kod uzhe krasnyy, idti besmyslennо".replace(
-        "о", "o"))
+    print("!! ishodnyy kod uzhe krasnyy, idti besmyslenno")
     for l in out.split("\n"):
         if "[FAIL]" in l:
             print("   " + l[:150])
     sys.exit(1)
 
 CASES = [
+    # A missing field is read as "hide" instead of the default value, so after a mod update
+    # the panel would disappear for everyone. The compatibility test has to fail.
     ("1: otsutstvuet pole -> schryto, a ne pokazano",
      "rows.lua",
      "            v = DEFAULTS[rowKey]\n        end",
      "            v = false\n        end",
      "без настроек видны строки по умолчанию"),
 
+    # The panel height comes from a constant instead of being computed from the visible
+    # rows. The height checks have to fail.
     ("2: raskladka ne schitaetsya po vidimym strokam",
      "ui.lua",
      "        if vis[rowKey] then",
      "        if true then",
      "больше на экране ничего нет"),
 
+    # BODY_KEYS lacks eGo and mGo, so the "to allies" rows are not hidden when the panel
+    # collapses. The collapse test has to fail.
     ("3: BAG VERSSII 17 - BODY_KEYS bez eGo i mGo",
      "ui.lua",
      "local BODY_KEYS = { 'eOverflow', 'eGo', 'eOwn', 'divider1',\n"
@@ -135,6 +111,8 @@ CASES = [
      "                    'mOverflow', 'mOwn', 'divider2', 'total' }",
      'больше на экране ничего нет'),
 
+    # Values come from the profile instead of the live OptionVar, which keeps the value in
+    # memory until the settings window is closed.
     ("4: znacheniya iz profilya, a ne iz OptionVar",
      "Options.lua",
      "            vis[rowKey] = options[rowKey]() and true or false\n"
@@ -143,6 +121,8 @@ CASES = [
      "        end\n        return vis\n    end",
      "профиль и живое значение OptionVar совпадают"),
 
+    # The page imports ui.lua. The load order is unknown, and in one of the orders such an
+    # import would catch a module that has not finished running.
     ("5: stranica importiruet ui.lua (poryadok zagruzki)",
      "Options.lua",
      "    local Rows = import('/mods/Overflow/modules/rows.lua')",
@@ -150,6 +130,8 @@ CASES = [
      "    import('/mods/Overflow/modules/ui.lua')",
      "страница НЕ импортирует ui.lua"),
 
+    # Case 7: the guard is switched off, so incoming is not zeroed for a full storage. Case
+    # 8: the guard is too strict and treats any sample as full.
     ("7: zapret vyklyuchen - polnoe hranilishche, a vhodyashchiy ne nul",
      "sync.lua",
      "    local peggedE = maxHeadE ~= nil and maxHeadE <= 0",
@@ -162,162 +144,148 @@ CASES = [
      "    local peggedE = maxHeadE ~= nil",
      "входящий остался"),
 
-    # ---- поломки оформления ----
+    # ---- appearance breakages ----
     #
-    # Проверка 6: цвет фракции зашит вместо чтения из скина. В игре такая
-    # ошибка выглядит как «панель не того оттенка», и заметить её можно
-    # только глазами - поэтому она и проверяется отдельно.
+    # A faction colour is hard-coded instead of being read from the skin. In the game this
+    # looks like a panel of a wrong shade and can be noticed only by eye, so it has its own
+    # check.
     ("9: cvet ne chitaetsya iz skina, a zashit",
      "themes.lua",
      "        out.NEUTRAL = SkinField('aeon', 'bodyColor', out.NEUTRAL)",
      "        out.NEUTRAL = 'FFbadbdb'",
      "Vanilla NEUTRAL читается из скина"),
 
-    # Проверка 7: самое дорогое место. ApplyTheme обязан вызываться ДО
-    # создания элементов, потому что цвет задаётся прямо в конструкторе.
-    # Переставим - и панель молча останется в старых цветах навсегда.
+    # ApplyTheme has to run BEFORE the elements are created, because the colour is set right
+    # in the constructor. Reordered, the panel silently keeps the old colours for good.
     ("10: tema primenyaetsya POSLE sozdaniya paneli",
      "ui.lua",
      "    ApplyTheme()\n    G.themeSig = ThemeSignatureNow()",
      "    G.themeSig = ThemeSignatureNow()",
      "цвет подписи пресета Minimal должен уйти в панель"),
 
-    # Проверка 8: страница собралась, а переключателя оформления нет.
+    # The page builds, but the appearance switch is missing.
     ("11: iz obyavleniya polyu vybrosheno pole theme",
      "Options.lua",
      "        theme     = Opt(looks[1]),\n",
      "",
      "выпадающий список оформления привязан к полю theme"),
 
-    # Перенос окна сбрасывает высоту, которую игрок подобрал ресайзом.
-    # Убираем перевыставку - и панель после первого же смещения сама
-    # возвращается к высоте содержимого. Именно это и было в игре.
+    # Moving the window resets the height the player set by resizing. Without the re-apply
+    # the panel returns to the content height after the first move.
     ("12: perenos okna sbivaet vysotu igroka",
      "ui.lua",
      "    win.OnMoveSet = function()\n        KeepHeight()\n    end",
      "    win.OnMoveSet = function()\n    end",
      "после переноса высота игрока вернулась, а не осталась сбитой"),
 
-    # Режим «только числа» объявлен, но не применяется: подписи остаются,
-    # и галочка в настройках делает вид, что работает.
+    # The "numbers only" mode is declared but not applied: the captions stay and the check
+    # box only pretends to work.
     ("13: rezhim 'tolko chisla' ne deystvuet",
      "ui.lua",
      "local function RowText(caption, amount, unit)\n    if NumbersOnlyOn then",
      "local function RowText(caption, amount, unit)\n    if false then",
      "в режиме чисел подписи строк убраны"),
 
-    # Плоская рамка объявлена, но куски окна не заливаются: игрок выбрал
-    # Minimal и получил игровое окно.
-    # Куски окна НЕ погашены: игрок выбрал Minimal, а сверху осталась
-    # игровая объёмная рамка - ровно тот вид, который игрок просил убрать.
+    # The window pieces are not blanked: with the Minimal frame chosen, the game's
+    # volumetric frame stays on top.
     ("14: kuski okna ne pogasheny",
      "ui.lua",
      "piece:SetSolidColor('00000000')",
      "piece:SetSolidColor('ffffffff')",
      "куски окна погашены прозрачным"),
 
-    # Чтение глобала, которого в ФАФ нет. Именно так мод уже не грузился:
-    # в themes.lua стояло `local MathFloor = MathFloor`. Глобала
-    # MathFloor в ФАФ нет - каждый файл игры пишет `local MathFloor =
-    # math.floor` (maui/layouthelpers.lua:20 и другие), а LuaPlus падает на
-    # чтении несуществующего глобала ФАТАЛЬНО: файл не грузится и рушится
-    # весь мод.
+    # Reading a global that does not exist in FAF. Game files write `local MathFloor =
+    # math.floor`; there is no global MathFloor, and the game's Lua fails fatally on reading
+    # a nonexistent global: the file does not load and the whole mod goes down.
     #
-    # Ошибка прошла мимо тестов только потому, что заглушки САМИ объявляли
-    # MathFloor глобалом. Теперь они этого не делают, и поломка обязана
-    # ломать тесты, если её снова внесут по незнанию.
+    # The test stubs must not declare MathFloor as a global, otherwise this breakage passes
+    # unnoticed.
     #
-    # Ожидаемое сообщение - не «themes.lua did not load», а причина: файл
-    # грузится (nil из несуществующего глобала - это nil, а не ошибка), и
-    # падает первым же вызовом MathFloor. В игре то же самое происходит
-    # раньше и жёстче: LuaPlus обрывает загрузку файла целиком.
+    # The expected message is not "themes.lua did not load" but the cause: here the file
+    # loads (a nonexistent global reads as nil in the test environment) and fails at the
+    # first MathFloor call. In the game this happens earlier and harder: the whole file load
+    # is aborted.
     ("15: chtenie globala, kotorogo v FAF net",
      "themes.lua",
      "local MathFloor    = math.floor",
      "local MathFloor    = MathFloor",
      "attempt to call a nil value"),
 
-    # Подложка рамки Minimal взята не с той текстуры. Сломается ровно так же,
-    # как в игре: панель останется рабочей, но рамка будет чужой - от панели
-    # фильтра, а не от Selection Cost UI. Настоящий файл
-    # filter-ping-panel01_c_bmp.dds в игре есть, то есть поломка
-    # правдоподобна, а не выдумана.
-    #
-    # ЯКОРЬ ДВУСТРОЧНЫЙ, а не одна строка с путём. Путь встречается в файле
-    # дважды: в комментарии, где цитируется чужой мод, и в самой константе.
-    # Правка заменяет ПЕРВОЕ вхождение, поэтому однострочный якорь молча
-    # правил бы комментарий, а код остался бы целым - и поломка прошла бы
-    # незамеченной.
-    # Полоса заголовка снова над строками: игрок увидит тридцать пикселей
-    # пустоты, а текст вылезет за нижнюю рамку.
+    # The title strip sits above the rows: thirty pixels of emptiness, and the text goes
+    # past the bottom frame.
     ("17: polosa zagolovka snova nad strokami",
      "ui.lua",
      "    client.Top:Set(win.Top)",
      "    -- client.Top:Set(win.Top)",
      "строки начинаются от ВЕРХА окна"),
 
-    # Предел ширины снова жёсткое число: панель перестаёт сжиматься там, где
-    # текст ещё цел, и справа остаётся пустое поле.
+    # The width limit is a fixed number: the panel stops shrinking where the text is still
+    # intact, and an empty margin is left on the right.
     ("18: predel shiriny zadano chislom",
      "ui.lua",
      "    if minW < L.MIN_W then minW = L.MIN_W end",
      "    minW = L.MIN_W",
      "предел ШИРИНЫ считается ПО ТЕКСТУ"),
 
-    # Предел высоты снова жёсткое число: окно сжимается ниже строк, и текст
-    # уезжает вниз за рамку.
-    # Встроенную линию текстуры снова тянут на всё окно: у игрока опять
-    # окажутся две линии - наша и та, что внутри текстуры.
+    # The built-in line of the texture is stretched over the whole window: there are two
+    # lines, ours and the one inside the texture.
     ("20: vstroennaya liniya tekstury ostanovlena v okne",
      "ui.lua",
      "        piece:SetUV(0, vFrom, 1, vTo)",
      "        piece:SetUV(0, 0, 1, 1)",
      "верхний кусок подложки обрезан по встроенной линии"),
 
-    # Подложка снова не гаснет при сворачивании: крестик уберёт значения, а
-    # пустая рамка останется висеть на экране.
+    # The backing is not hidden on collapse: the close button removes the values, but an
+    # empty frame stays on the screen.
     ("21: podlozhka ne gasnet pri svorachivanii",
      "ui.lua",
      "        ShowFrameBg(false)",
      "        -- ShowFrameBg(false)",
      "при сворачивании подложка гаснет вместе с окном"),
 
-    # Разъезжание отключено: промежутки остаются прежними, и панель снова
-    # выходит наполовину пустой - ровно то, на что жаловался игрок.
+    # The spreading of rows is switched off: the gaps stay the same and the panel is half
+    # empty.
     ("22: stroki ne razezzhayutsya po vysote",
      "ui.lua",
      "            gap = extra / (n - 1)",
      "            gap = 0",
      "нижняя строка встаёт по нижнему полю панели"),
 
-    # Обработчик протяжки не пересчитывает позиции: размер окна меняется, а
-    # строки остаются на прежних местах.
+    # The resize handler does not recompute the positions: the window size changes, but the
+    # rows stay where they were.
     ("23: resayz ne pereschityvaet stroki",
      "ui.lua",
      "    win.OnResize = function()\n        PlaceRows()\n    end",
      "    win.OnResize = function()\n    end",
      "нижняя строка встаёт по нижнему полю панели"),
 
-    # Высота подгоняется, а позиции не пересчитываются: короткий набор строк
-    # разъезжается по ПРЕЖНЕЙ, большой высоте и уезжает за край панели.
+    # The height is fitted but the positions are not recomputed: a short row set is spread
+    # over the OLD, large height and goes past the panel edge.
     ("24: podgonka vysoty bez vtorogo prohoda",
      "ui.lua",
      "        FitHeight(bodyH)\n"
      "\n"
-     "        -- ВЫСОТА ОКНА МЕНЯЕТСЯ ЗДЕСЬ, ПОСЛЕ РАСКЛАДКИ, а позиции строк от неё\n"
-     "        -- зависят (см. PlaceRows). Без второго прохода строки остались бы\n"
-     "        -- расставлены по ПРЕЖНЕЙ высоте: смена набора строк меняет и высоту\n"
-     "        -- панели, и новый, короткий набор разъехался бы по старой, большой.\n"
+     "        -- The height changed after the layout, and the row positions depend on it.\n"
      "        PlaceRows()",
      "        FitHeight(bodyH)",
      "после смены набора строк строки остаются ВНУТРИ панели"),
 
+    # The height limit is a fixed number: the window shrinks below the rows and the text
+    # goes down past the frame.
     ("19: predel vysoty zadano chislom",
      "ui.lua",
      "    if minH < L.MIN_H then minH = L.MIN_H end",
      "    minH = L.MIN_H",
      "предел ВЫСОТЫ считается по числу строк"),
 
+    # The backing of the Minimal frame is taken from the wrong texture. The panel still
+    # works, but the frame looks different. The replacement file
+    # filter-ping-panel01_c_bmp.dds exists in the game, so the breakage is plausible.
+    #
+    # The anchor has two lines, not one line with the path. The path occurs in the file
+    # twice: in a comment and in the constant itself. The edit replaces the FIRST
+    # occurrence, so a one-line anchor would silently edit the comment while the code stayed
+    # intact, and the breakage would go unnoticed.
     ("16: podlozhka ramki iz chuzhoy tekstury",
      "ui.lua",
      "local FRAME_BG_TEXTURE =\n"
@@ -327,9 +295,8 @@ CASES = [
      "подложка рамки Minimal собрана из двух кусков"),
 ]
 
-# Шестой случай особый: ломается не содержимое файла, а его ОТСУТСТВИЕ.
-# Именно так это и выглядело в игре - моду нет, мод работает, страницы нет.
-# Поэтому здесь файл удаляется, а не правится.
+# Case 6 is special: it breaks the ABSENCE of a file, not its content, so the file is
+# removed instead of edited. It runs after the loop below.
 SHIM = os.path.join(MOD, "modules", "main.lua")
 
 bad = 0
@@ -356,11 +323,10 @@ for label, fname, old, new, expect in CASES:
 
     restore(fname)
 
-# ---- случай 6: файла Main.lua просто нет ----
+# ---- case 6: Main.lua is missing ----
 #
-# Ломается не содержимое файла, а его ОТСУТСТВИЕ. Именно так это и выглядело
-# в игре: моду нет, мод работает, панель на месте, а страницы настроек нет.
-# Ровно этот случай проверка цепочки и ловит.
+# In the game this looks like a working mod with the panel in place but no settings page.
+# The chain check catches exactly this.
 os.remove(SHIM)
 code, out = run_test()
 caught = (code != 0) and ("страница зарегистрирована" in out) \
@@ -387,8 +353,7 @@ print("")
 if bad:
     print("!!! ne vse polomki poymany (%d)" % bad)
     sys.exit(1)
-# Случай 6 (отсутствие файла main.lua) реализован отдельным блоком и не
-# входит в CASES. Считаем явно: занижать покрытие в выводе нельзя, ради
-# этого скрипт и делается.
+# Case 6 (the missing main.lua) runs as a separate block and is not in CASES, so it is
+# counted explicitly: the printed total must not understate the coverage.
 TOTAL_CASES = len(CASES) + 1
 print("vse %d polomki poymany" % TOTAL_CASES)

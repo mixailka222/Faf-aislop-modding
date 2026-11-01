@@ -1,75 +1,22 @@
--- Overflow - чтение синхронизации.
+-- Overflow - reads the resource counters from the sync.
 --
--- ============================================================================
---  ПОЧЕМУ ОКНО ДЛИННОЕ (измерено в игре)
--- ============================================================================
+-- Sync.Score counters change once per sim second and the values arrive about every 1.8 s,
+-- so a single interval catches one or two steps of a counter: at a steady 20/s dIn jumps
+-- between +20 and +40. The counters are cumulative, so their differences add up and a
+-- longer window gives the true mean. The error of one window falls with its length: up to
+-- 55% at 1.8 s, 20% at 5 s, 10% at 10 s.
 --
---  Панель показывала "own production" то 11.1, то 22.2 вместо ровных 20.
---  Лог это однозначно объяснил:
+-- Deltas accumulate between publications, which happen every WINDOW_TICKS ticks.
 --
---      win=1.80s tick=85  prevTick=67 | own=22.2
---        #1 E dIn=+40 dOut=+0 dExc=+40 dSt=+0
---      win=1.80s tick=103 prevTick=85 | own=22.2
---        #1 E dIn=+40 ...
---      win=1.80s tick=121 prevTick=103 | own=11.1
---        #1 E dIn=+20 ...
+-- "Own production" does not come from dIn: own = income - incoming from allies. income is
+-- an engine value per tick, the number the player sees on the game resource panel. It
+-- includes overflow from allies (checked in the game), so the incoming part is subtracted
+-- once. Reclaim counts as own production.
 --
---  Окно ВСЕГДА 1.80 с (18 тиков). Прыгает dIn: +40 или +20.
---  Среднее при этом верное: (13*40 + 3*20)/16/1.8 = 20.1/с.
---  То есть неверны не данные и не усреднение, а ДЛИНА ОКНА.
+-- Outgoing and incoming come from the sync: dIn and dExc grow together, so the steps cancel
+-- out in dIn - dOut - dExc - dSt.
 --
---  ПОЧЕМУ ОКНО КОРОТКОЕ. Счётчики в Sync.Score обновляются раз в
---  sim-секунду - sim/score.lua:106, ScoreResourcesThread:
---
---      while not GameIsOver do
---          WaitSeconds(1)
---          ...Score.resources.energyin.total = brain:GetArmyStat(...)
---
---  То есть счётчик - "лестница" со ступенькой в 1 секунду, а значение
---  приходит примерно раз в 1.8 с (scoreInterval = 2, sim/score.lua:2).
---  Границы не совпадают, и окно в 1.8 с попадает то на одну ступеньку
---  (dIn=20), то на две (dIn=40).
---
---  Штатная панель ресурсов от этого свободна: economy.lua:376-391 меряет
---  ЗА ОДИН ТИК и вызывается каждый тик, то есть в масштабе 1 тика.
---
---  ПОЧЕМУ ДЛИННОЕ ОКНО ЛЕЧИТ. Все счётчики - накопительные, разности
---  телескопируются: сумма dIn за все окна равна общему приросту, и деление
---  на суммарное время даёт верную среднюю независимо от ступенек.
---  Ошибка отдельного окна обратно пропорциональна его длине:
---      окно 1.8 с -> до 55% ошибки
---      окно 5   с -> до 20%
---      окно 10  с -> до 10%
---
--- ============================================================================
---  КАК СЧИТАЕТСЯ
--- ============================================================================
---
---  1. Окно удлинено до WINDOW_TICKS. Дельты копятся между публикациями,
---     публикация происходит только когда набралось достаточно тиков.
---  2. "own production" больше НЕ берётся из dIn, а считается из движка:
---         own = income - входящий_от_союзников
---     income - величина ЗА ТИК (economy.lua:415 умножает её на simFreq),
---     поэтому масштабировать окно не нужно вовсе, и число точное
---     независимо от лестницы счётчиков. Это ровно то значение, которое
---     видит игрок на штатной панели ресурсов.
---
---     Почему так надёжнее: "own" равно income минус то, что пришло от
---     союзников. income включает и перелив ОТ союзников (проверено в игре),
---     поэтому входящий вычитается ровно один раз. Реклейм входит в "own":
---     по смыслу игры это тоже своя добыча.
---
---  3. Исходящий и входящий по-прежнему из синхронизации. Им лестница
---     НЕ мешает: dIn и dExc растут вместе, поэтому в разности
---     dIn - dOut - dExc - dSt ступеньки сокращаются. Проверено на данных
---     выше: dIn=+40 при dExc=+40 даёт ровный ноль, и при dIn=+20 при
---     dExc=+20 тоже ноль.
---
--- ============================================================================
---  ЭКСПОРТ: функциями, НЕ через return. Значение return отбрасывается,
---  см. import.lua:61 и 171, а у _G стоит метаметод config.lua:56-61,
---  падающий ошибкой на несуществующем глобале.
--- ============================================================================
+-- Functions are exported as globals: the game discards what a module returns.
 
 local PFX = 'OverflowSync'
 
@@ -86,66 +33,49 @@ local CB_ID = 'Overflow'
 
 local STARTUP_TICKS = 50
 
--- ДЛИНА ОКНА В ТИКАХ. Всё, что короче, ловит ступеньки счётчика.
--- 50 тиков = 5 с при simFreq 10: ошибка отдельного окна до 20%.
--- Больше - честнее, но медленнее реакция на постройки.
+-- Window length in ticks: 5 s at simFreq 10, an error of up to 20%. Longer is more accurate
+-- but reacts slower to new buildings.
 local WINDOW_TICKS = 50
 
--- Порог "это ноль".
+-- Anything below this counts as zero.
 local EPS = 0.5
 
 local NERR_LIMIT = 3
 local nErrors = 0
 
--- последний ВИДЕННЫЙ отсчёт по каждой армии (не публикованный)
+-- last sample seen for each army, published or not
 local lastRaw = {}
 
--- накопленные дельты с прошлой публикации
+-- deltas accumulated since the last publication
 local acc = {}
 
--- тиков накоплено с прошлой публикации
+-- ticks accumulated since the last publication
 local accTicks = 0
 
--- income - величина ЗА ТИК, поэтому усреднять её нужно так же, как всё
--- остальное: по времени, а не как одно мгновенное значение.
--- Накопленный доход за текущее окно.
+-- Income accumulated over the window: it is a per-tick value, so it is averaged over time
+-- like everything else.
 local accIncomeE = 0
 local accIncomeM = 0
 
--- границы запаса нашей армии за окно. Нужны для диагностики: если входящий
--- перелив ненулевой, а запас всё окно стоял на потолке, значит входящий
--- посчитан неверно. Если запас плавал - значит всё верно.
+-- Bounds of our storage over the window, for the log: non-zero incoming while the storage
+-- stayed at the ceiling means the incoming is miscounted.
 local minStoreE = nil
 local maxStoreE = nil
 local minStoreM = nil
 local maxStoreM = nil
 
--- ЗАПАС СВОБОДНОГО МЕСТА, максимум за окно.
---
--- Считаем по каждому отсчёту ceiling - stored и берём МАКСИМУМ. Ноль или
--- меньше значит: свободного места не было НИ РАЗУ за окно, то есть запас
--- стоял на потолке все окно и принимать перелив от союзников было некуда.
---
--- Именно максимум, а не минимум: «ни разу не было места» означает, что
--- самая большая из всех величин неположительна.
---
--- Раньше здесь стоял грубый признак minStore >= minCeil. Он ошибается в
--- сторону ложного срабатывания: если потолок вырос в середине окна (бонус
--- за соседство, достроенный генератор), то минимум потолка остаётся низким
--- и запас объявляется полным, хотя место во второй половине окна было.
+-- Free storage space, the maximum over the window. Zero or less means there was no room at
+-- any sample, so nothing could come in from allies.
 local maxHeadE = nil
 local maxHeadM = nil
 
--- тик последнего обработанного payload
+-- tick of the last processed payload
 local lastTick = nil
 
 local lastSignature = nil
 local lastArmy = nil
 local result = nil
 
---------------------------------------------------------------------------------
--- ВСПОМОГАТЕЛЬНОЕ
---------------------------------------------------------------------------------
 
 local function Num(t, a, b)
     if type(t) ~= 'table' then return nil end
@@ -179,9 +109,6 @@ local function r1(v)
     return string.format('%.1f', v)
 end
 
---------------------------------------------------------------------------------
--- СБРОС
---------------------------------------------------------------------------------
 
 function Reset()
     lastRaw = {}
@@ -200,11 +127,7 @@ function Reset()
     result = nil
 end
 
---------------------------------------------------------------------------------
--- ЧТЕНИЕ ВСЕХ АРМИЙ В ОТСЧЁТЫ
--- ----------------------------------------------------------------------------
---  возвращает подпись и заполняет fresh[armyIdx]
---------------------------------------------------------------------------------
+-- Reads every army into fresh[armyIdx] and adds its numbers to the signature parts.
 
 local function ReadAll(scoreData, fresh, parts)
     for armyIdx, s in pairs(scoreData) do
@@ -220,9 +143,7 @@ local function ReadAll(scoreData, fresh, parts)
                 mout   = Num(res, 'massout',   'total'),
                 mexc   = Num(res, 'massout',   'excess'),
                 mstore = Num(res, 'storage',   'storedMass'),
-                -- ПОТОЛОК ХРАНИЛИЩА. sim/score.lua:141-142 отдаёт его в
-                -- синхронизацию, мод его не читал, а без него нельзя
-                -- проверить, что запас стоял на полном.
+                -- Storage ceiling: without it a full storage cannot be detected.
                 emax   = Num(res, 'storage',   'maxEnergy'),
                 mmax   = Num(res, 'storage',   'maxMass'),
                 recE   = Num(res, 'energyin',  'reclaimed'),
@@ -243,26 +164,19 @@ local function ReadAll(scoreData, fresh, parts)
 end
 
 --------------------------------------------------------------------------------
--- РАСЧЁТ
--- ----------------------------------------------------------------------------
---  Возвращает true, если окно опубликовано.
+-- Computation
 --
---  КАК РАБОТАЕТ ОКНО. Каждый payload сравнивается с ПОСЛЕДНИМ ВИДЕННЫМ,
---  дельты копятся в acc, а публикуются только когда набралось
---  WINDOW_TICKS тиков. Сумма дельт телескопируется, поэтому среднее за
---  окно точное независимо от ступенек счётчика.
+-- Every payload is compared with the last one seen, the deltas go to acc and are published
+-- once WINDOW_TICKS ticks have gathered. Returns true if the window was published.
 --
---  БАЗА ИСХОДЯЩЕГО И ВХОДЯЩЕГО - тождество баланса:
---      dStor = dIn - dConsumed - dExcess - dGiven
---      => dGiven = dIn - dConsumed - dExcess - dStor
---
---  ЛОВУШКА, КОТОРОЙ НЕТ: складывать сюда I_in НЕЛЬЗЯ. dIn УЖЕ ВКЛЮЧАЕТ
---  перелив от союзников (проверено в игре), поэтому свой перелив здесь
---  уже сидит внутри dIn.
+-- Outgoing follows from the balance:
+--       dStor = dIn - dConsumed - dExcess - dGiven
+--       dGiven = dIn - dConsumed - dExcess - dStor
+-- dIn already includes overflow from allies (checked in the game), so it is not added here.
 --------------------------------------------------------------------------------
 
--- Есть ли накопленные дельты по своей армии. Пока их нет, публиковать
--- нечего: первый payload только заводит базу сравнения.
+-- Without accumulated deltas there is nothing to publish: the first payload only sets the
+-- base of the comparison.
 local function HaveMine(accTable, me)
     local a = accTable[me]
     if a == nil then return false end
@@ -280,11 +194,10 @@ local function Compute(scoreData, me, tickNow)
 
     local signature = table.concat(parts, '|')
     if signature == lastSignature then
-        -- данные те же: ни одна дельта не выросла
+        -- the same data: no delta has grown
         return false
     end
 
-    -- ---- шаг 1: копим дельты -------------------------------------------
     local logLines = {}
     local haveMine = false
 
@@ -328,7 +241,7 @@ local function Compute(scoreData, me, tickNow)
         lastRaw[armyIdx] = cur
     end
 
-    -- тики, прошедшие с прошлого обработанного payload
+    -- ticks since the last processed payload
     local dtSec = 0
     if lastTick ~= nil then
         local dtTicks = tickNow - lastTick
@@ -338,10 +251,8 @@ local function Compute(scoreData, me, tickNow)
     lastTick = tickNow
     lastSignature = signature
 
-    -- ДОХОД ИЗ ДВИЖКА усредняем по времени. Раньше здесь бралось мгновенное
-    -- значение income и вычиталось среднее за окно, то есть величины
-    -- описывали разные моменты. На практике это выглядело как "входящий
-    -- 546.7 при полном хранилище 24000/24000".
+    -- Income is averaged over time: an instant value minus a window average would describe
+    -- different moments.
     if dtSec > 0 then
         local okI, econI = pcall(GetEconomyTotals)
         if okI and type(econI) == 'table' then
@@ -351,7 +262,7 @@ local function Compute(scoreData, me, tickNow)
         end
     end
 
-    -- границы запаса нашей армии за окно
+    -- bounds of our storage over the window
     local mineNow = fresh[me]
     if mineNow and mineNow.estore and mineNow.mstore then
         if minStoreE == nil or mineNow.estore < minStoreE then minStoreE = mineNow.estore end
@@ -371,7 +282,7 @@ local function Compute(scoreData, me, tickNow)
     haveMine = HaveMine(acc, me)
     if not haveMine then return false end
 
-    -- ---- шаг 2: окно ещё не набрано -------------------------------------
+    -- the window is not complete yet
     if accTicks < WINDOW_TICKS then
         return false
     end
@@ -382,7 +293,6 @@ local function Compute(scoreData, me, tickNow)
         return false
     end
 
-    -- ---- шаг 3: считаем ------------------------------------------------
     local incE, incM = 0, 0
     local goE, goM = 0, 0
     local recE, recM = 0, 0
@@ -407,29 +317,9 @@ local function Compute(scoreData, me, tickNow)
     local incRateE = incE / sec
     local incRateM = incM / sec
 
-    ------------------------------------------------------------------
-    -- ФИЗИЧЕСКОЕ ОГРАНИЧЕНИЕ, КОТОРОЕ МОЖНО ПРОВЕРИТЬ
-    ------------------------------------------------------------------
-    --
-    -- Синхронизация отдаёт потолок хранилища: sim/score.lua:141-142,
-    -- storage.maxEnergy и storage.maxMass. Если свободного места не было НИ
-    -- РАЗУ за окно (maxHead <= 0), то физически нечего было принимать:
-    -- полное хранилище перелив от союзников не впускает. Значит входящий
-    -- обязан быть нулём, а ненулевое значение - ошибка расчёта, а не
-    -- реальность.
-    --
-    -- Именно это и наблюдалось в командной игре 2026-10-05: полное хранилище
-    -- с избытком, а мод показывает входящий и исходящий одновременно.
-    --
-    -- При нарушении входящий обнуляется, но сырое значение и все числа
-    -- пишутся в лог. Гасить ошибку молча нельзя: непонятно, что именно
-    -- не так, а лог для того и нужен.
-    --
-    -- Чего этот запрет НЕ доказывает: что формула исходящего неверна. Он
-    -- говорит только то, что входящий в такой ситуации физически невозможен.
-    -- Что в сумме остатков союзников перемешано «отдали» и «отдали мне» -
-    -- см. комментарий к gE выше; это отдельный вопрос, и он виден по
-    -- тому, что покажет этот лог.
+    -- A full storage takes no overflow from allies. If there was no free space at any
+    -- sample of the window, the incoming has to be zero, so anything else is a computation
+    -- error: it is zeroed and goes to the log with its numbers.
     local peggedE = maxHeadE ~= nil and maxHeadE <= 0
     local peggedM = maxHeadM ~= nil and maxHeadM <= 0
 
@@ -446,20 +336,13 @@ local function Compute(scoreData, me, tickNow)
         incRateM = 0
     end
 
-    -- ---- шаг 4: своё производство ИЗ ДВИЖКА ---------------------------
-    -- ВАЖНО: доход усреднён за ТО ЖЕ окно, что и входящий перелив.
-    -- Раньше здесь стояло econ.income * simFreq - incRateE, где первое было
-    -- мгновенным значением, а второе - средним за окно. Величины описывали
-    -- разные моменты, и результат получался неверным.
-    --
-    -- income ВКЛЮЧАЕТ перелив от союзников (проверено в игре), поэтому
-    -- входящий вычитается ровно один раз.
+    -- Income is averaged over the same window as the incoming overflow and includes it
+    -- (checked in the game), so the incoming is subtracted once.
     local incomeRateE = accIncomeE / sec
     local incomeRateM = accIncomeM / sec
     local ownE = incomeRateE - incRateE
     local ownM = incomeRateM - incRateM
 
-    -- ---- лог ------------------------------------------------------------
     LOG(PFX .. ': win=' .. string.format('%.2f', sec) .. 's tick=' ..
         tostring(tickNow) .. ' | income=' .. r1(incomeRateE) ..
         ' in=' .. r1(incRateE) .. ' out=' .. r1(goE / sec) ..
@@ -486,7 +369,7 @@ local function Compute(scoreData, me, tickNow)
         massReclaim  = Zero(NonNeg(recM) / sec),
     }
 
-    -- ---- шаг 5: окно закрыто, копим заново ------------------------------
+    -- the window is closed, start over
     acc = {}
     accTicks = 0
     accIncomeE = 0
@@ -500,12 +383,9 @@ local function Compute(scoreData, me, tickNow)
     return true
 end
 
---------------------------------------------------------------------------------
--- КОЛБЭК СИНХРОНИЗАЦИИ
---------------------------------------------------------------------------------
 
 local function OnScore(scoreData)
-    -- колбэк зовётся изнутри игры без pcall, ловим всё здесь
+    -- the game calls this callback without pcall
     local ok, err = pcall(function()
         if type(scoreData) ~= 'table' then return end
         if GameTick() <= STARTUP_TICKS then return end
@@ -537,9 +417,6 @@ local function OnScore(scoreData)
     end
 end
 
---------------------------------------------------------------------------------
--- ЗАПУСК
---------------------------------------------------------------------------------
 
 local started = false
 
