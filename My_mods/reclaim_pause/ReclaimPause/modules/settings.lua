@@ -29,7 +29,7 @@ local DEFAULTS = {
                          -- matters when its order cannot be read
 }
 
--- Текущие значения. Читаются из этого файла и из options.lua.
+-- Current values, read from this file and from options.lua.
 ReclaimPauseCfg = {
     enabled   = DEFAULTS.enabled,
     highMass  = DEFAULTS.highMass,
@@ -101,34 +101,14 @@ function ReclaimPauseLoadSettings()
     if ok and type(saved) == 'table' then
         ReclaimPauseApplyValues(saved)
     else
-        ReclaimPauseCfg.enabled   = DEFAULTS.enabled
-        ReclaimPauseCfg.highMass  = DEFAULTS.highMass
-        ReclaimPauseCfg.lowMass   = DEFAULTS.lowMass
-        ReclaimPauseCfg.energyMin = DEFAULTS.energyMin
-        ReclaimPauseCfg.minSec    = DEFAULTS.minSec
-        ReclaimPauseCfg.releaseHoldSec = DEFAULTS.releaseHoldSec
-        ReclaimPauseCfg.rescanSec = DEFAULTS.rescanSec
-        ReclaimPauseCfg.startGrace = DEFAULTS.startGrace
-        ReclaimPauseCfg.abortMove = DEFAULTS.abortMove
-        ReclaimPauseCfg.abortSec = DEFAULTS.abortSec
-        ReclaimPauseCfg.skipSec = DEFAULTS.skipSec
+        ReclaimPauseApplyValues(DEFAULTS)
     end
 end
 
 ---Reset the settings to their defaults. Called by a key assigned by the player and by the
 ---reset check box: UMT has no button element.
 function ReclaimPauseResetDefaults()
-    ReclaimPauseCfg.enabled   = DEFAULTS.enabled
-    ReclaimPauseCfg.highMass  = DEFAULTS.highMass
-    ReclaimPauseCfg.lowMass   = DEFAULTS.lowMass
-    ReclaimPauseCfg.energyMin = DEFAULTS.energyMin
-    ReclaimPauseCfg.minSec    = DEFAULTS.minSec
-    ReclaimPauseCfg.releaseHoldSec = DEFAULTS.releaseHoldSec
-    ReclaimPauseCfg.rescanSec = DEFAULTS.rescanSec
-    ReclaimPauseCfg.startGrace = DEFAULTS.startGrace
-    ReclaimPauseCfg.abortMove = DEFAULTS.abortMove
-    ReclaimPauseCfg.abortSec  = DEFAULTS.abortSec
-    ReclaimPauseCfg.skipSec   = DEFAULTS.skipSec
+    ReclaimPauseApplyValues(DEFAULTS)
     ReclaimPauseSaveSettings()
     ReclaimPausePushToWindow()
     LOG(PFX .. 'settings reset to defaults: mass=' ..
@@ -175,11 +155,6 @@ function ReclaimPauseSaveSettings()
     if not ok then
         LOG(PFX .. 'SaveSettings FAILED: ' .. tostring(err))
     end
-end
-
----The profile key is needed by the UMT page.
-function ReclaimPausePrefsKey()
-    return PREFS_KEY
 end
 
 ---The settings page needs the defaults.

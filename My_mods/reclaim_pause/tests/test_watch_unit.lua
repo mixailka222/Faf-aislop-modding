@@ -1,21 +1,20 @@
--- Юнит-тест мода ReclaimPause (settings.lua + watch.lua).
+-- Unit test of the ReclaimPause mod (settings.lua + watch.lua).
 --
--- ВАЖНО про окружение. У каждого файла мода в FAF своё окружение: присваивание
--- "глобального" имени попадает в таблицу модуля, а НЕ в общий _G. Тест обязан
--- это воспроизводить, иначе пропустит ошибку, из-за которой мод однажды не
--- стартовал в игре: settings.lua грузился, а watch.lua не видел его функций.
--- Поэтому каждый файл выполняется в отдельной таблице с __index = _G,
--- а import() возвращает именно её.
+-- Run from the tests folder: lua test_watch_unit.lua. The paths below are relative to it.
+-- check.py does that with the Lua of the game, so this code follows its dialect.
 --
--- Проверяем: гистерезис, правило энергии в обе стороны, минимальный интервал,
--- освобождение при смене приказа, уважение к ручному снятию паузы, отказ
--- трогать строителей/командиров/чужих/мёртвых, распознавание всех форм
--- приказа, применение настроек на ходу, и два требования безопасности:
--- - выделение возвращается;
--- - обход НЕ имеет права снимать паузу с живого инженера.
+-- Every file of a mod in FAF has its own environment: assigning a "global" name puts it
+-- into the module table, not into the shared _G. The test has to reproduce this, otherwise
+-- it misses the failure where settings.lua loaded but watch.lua did not see its functions.
+-- So each file runs in a separate table with __index = _G, and import() returns exactly
+-- that table.
+--
+-- Covered: hysteresis, the energy rule in both directions, the minimum interval, release
+-- when the order changes, respect for a pause lifted by hand, refusal to touch builders,
+-- commanders, foreign and dead units, recognition of all order forms, applying settings on
+-- the fly, and two safety requirements: the selection is restored, and a scan pass never
+-- lifts the pause of a live engineer.
 
--- Run from the tests folder: the paths below are relative to it. check.py does
--- that with the Lua of the game, so this code follows its dialect.
 local function ReadFile(path)
     local file = assert(io.open(path, 'rb'))
     local text = file:read('*a')
@@ -77,7 +76,7 @@ function CommandMode.CacheAndClearCommandMode()
 end
 function CommandMode.RestoreCommandMode(v) CMDMODE_CACHED = false end
 
--- import() возвращает таблицу модуля. Так же ведёт себя движок.
+-- import() returns the module table, as the engine does.
 function import(p)
   if MODULES['settings'] and p == '/mods/ReclaimPause/modules/settings.lua' then
     return MODULES['settings']
@@ -146,30 +145,8 @@ function SetPaused(list, paused)
   end
 end
 
-function GetIsPaused(list)
-  return PAUSED[list[1].id] == true
-end
-
--- Одиночные варианты движка. Их наличие в реальной сборке НЕ подтверждено,
--- поэтому мод обязан читать их через pcall. Здесь они есть, и рядом есть
--- отдельный сценарий, где их нет.
--- Одиночная функция движка. Её наличие в сборке НЕ подтверждено, поэтому
--- мод обязан читать её через pcall. Тут она ЕСТЬ; сценарии убирают её
--- целиком (GetIsPausedOfUnit = nil) или заменяют на бросающую.
-REAL_OF_UNIT = nil
 function GetIsPausedOfUnit(unit)
   return PAUSED[unit.id] == true
-end
-REAL_OF_UNIT = GetIsPausedOfUnit
-function SetOfUnitMode(mode)
-  -- 'yes' = обычная, 'nil' = функции нет вовсе, 'throw' = есть, но бросает
-  if mode == 'nil' then
-    GetIsPausedOfUnit = nil
-  elseif mode == 'throw' then
-    GetIsPausedOfUnit = function() error('boom', 2) end
-  else
-    GetIsPausedOfUnit = REAL_OF_UNIT
-  end
 end
 
 function ForkThread(f) THREAD = f end
@@ -191,7 +168,6 @@ function MakeUnit(id, opts)
   u.cats = opts.cats or {}
   u.queue = opts.queue or {}
   u.focus = opts.focus
-  u.cbs = {}
   function u:GetArmy() return self.army end
   function u:IsDead() return self.dead end
   function u:IsInCategory(c) return self.cats[c] == true end
@@ -199,18 +175,12 @@ function MakeUnit(id, opts)
   -- must not have it either, otherwise a call that fails in the game passes here.
   function u:GetFocus() return self.focus end
   function u:GetCommandQueue()
-    -- Воспроизводим реальное поведение движка: у юнита на паузе очередь
-    -- читается пустой, хотя приказ на месте.
+    -- Simulates a queue that reads empty while the unit is paused, for the code path that
+    -- handles an empty queue.
     if HIDE_QUEUE_WHEN_PAUSED and PAUSED[self.id] then return {} end
     return self.queue
   end
   function u:GetEntityId() return self.id end
-  -- sim/Unit.lua:4171. Bez etogo metoda pcall v mode poglotil by otkaz
-  -- i kolbek nikogda ne podnyalsya by - a imenno eto i nado proverit.
-  function u:AddUnitCallback(fn, kind)
-    self.cbs[kind] = self.cbs[kind] or {}
-    table.insert(self.cbs[kind], fn)
-  end
   return u
 end
 
@@ -240,15 +210,12 @@ function Reset(mass, energy)
   CMDMODE_ACTIVE = false
   CMDMODE_CACHE_CALLS = 0
   HIDE_QUEUE_WHEN_PAUSED = false
-  -- Наличие GetIsPausedOfUnit здесь НЕ задаётся: иначе проба успевает
-  -- пройти внутри ReclaimPauseStart и закэшировать положительный ответ.
-  -- Сценарии, которым это нужно, ставят режим ДО вызова Reset.
   CRASHES = 0
   msgs = {}
   THREAD = nil
   WATCH.ReclaimPauseStart()
-  -- ВАЖНО: настройки задаются ПОСЛЕ старта, потому что
-  -- ReclaimPauseStart() перечитывает их из профиля и затирает ручные.
+  -- The settings are set AFTER the start, because ReclaimPauseStart() rereads them from the
+  -- profile and overwrites the manual values.
   SET.ReclaimPauseCfg.startGrace = 0
   SET.ReclaimPauseCfg.rescanSec = 3
   SET.ReclaimPauseCfg.skipSec = 3
@@ -268,7 +235,7 @@ end
 
 MODULES = {}
 
--- порядок как в игре: settings грузится раньше watch
+-- same order as in the game: settings loads before watch
 local env_settings = MakeEnv()
 LoadInto(MOD .. 'settings.lua', env_settings)
 MODULES.settings = env_settings
@@ -281,12 +248,11 @@ WATCH = env_watch
 local fails = Run("=== сценарии ===", function()
 local ENGINEER  = { ENGINEER = true }
 local CMD       = { ENGINEER = true, COMMAND = true }
-local AM        = { { CommandType = 'AggressiveMove' } }
-local AM_SCRIPT = { { CommandType = 'Script', LuaParams = { TaskName = 'AttackMove' } } }
-local RECLAIM_N = { { CommandType = 19 } }
-local PATROL    = { { CommandType = 'Patrol' } }
-local ATTACK    = { { CommandType = 'Attack', Target = { Type = 'Unit' } } }
-local BUILDQ    = { { CommandType = 'Build' } }
+local AM        = { { type = 'AggressiveMove' } }
+local RECLAIM   = { { type = 'Reclaim' } }
+local PATROL    = { { type = 'Patrol' } }
+local ATTACK    = { { type = 'Attack' } }
+local BUILDQ    = { { type = 'Build' } }
 
 local fails = 0
 local function check(cond, label)
@@ -295,8 +261,7 @@ local function check(cond, label)
   else
     fails = fails + 1
     print('  [FAIL] ' .. label)
-    -- ПОСЛЕДНИЕ ЗАПИСИ ЛОГА. Без них провал бесполезен: приходится
-    -- гадать, что мод делал. Три хвоста показывают причину сразу.
+    -- The last log entries: without them a failure gives no hint of what the mod was doing.
     local n = table.getn(msgs)
     local from = n - 2
     if from < 1 then from = 1 end
@@ -336,8 +301,6 @@ check(isPaused(100), 'при массе 85% инженер остался на �
 
 print('')
 print('=== 3: расход массы -> пауза снята ===')
--- Пороги после измерения порога игры: 65..70 (было 80..90).
--- Снятие теперь только при 65% и ниже.
 MASSPCT = 0.60
 for _ = 1, 6 do RunOnce() end
 check(not isPaused(100),
@@ -349,7 +312,6 @@ Reset(0.95, 1.0)
 add(eng(100, AM))
 RunOnce()
 check(isPaused(100), 'поставили на паузу на первом же проходе')
--- minSec после правки равен 3 (было 5), поэтому и ждать три секунды.
 MASSPCT = 0.10
 RunOnce(); RunOnce()
 check(isPaused(100), 'через 2 с (меньше minSec=3) пауза ещё держится')
@@ -372,14 +334,14 @@ Reset(0.95, 1.0)
 add(eng(100, AM))
 RunOnce()
 check(isPaused(100), 'поставили на паузу')
-PAUSED[100] = false                 -- игрок снял паузу руками
+PAUSED[100] = false                 -- the player lifts the pause by hand
 RunOnce()
 check(isPaused(100),
       'мод вернул паузу: приказ на месте, хранилище полно')
 for _ = 1, 3 do RunOnce() end
 check(isPaused(100), 'и дальше держит: хранилище не опустело, отпускать не за что')
 
--- а отпускает мод по делу - когда хранилище действительно опустело
+-- and the mod releases for a real reason: when the storage has actually emptied
 Reset(0.95, 1.0)
 add(eng(104, AM))
 RunOnce()
@@ -393,7 +355,7 @@ print('=== 7: строителей и командиров не трогаем =
 Reset(0.95, 1.0)
 add(MakeUnit(200, { cats = ENGINEER, queue = PATROL, focus = MakeFocus(0.5) }))
 add(MakeUnit(201, { cats = CMD, queue = AM }))
-add(MakeUnit(202, { cats = ENGINEER, queue = RECLAIM_N, focus = MakeFocus(1.0) }))
+add(MakeUnit(202, { cats = ENGINEER, queue = RECLAIM, focus = MakeFocus(1.0) }))
 RunOnce()
 check(not isPaused(200), 'инженер с недостроенным юнитом в фокусе не тронут')
 check(not isPaused(201), 'командир не тронут')
@@ -463,18 +425,16 @@ check(not isPaused(300), 'инженер чужой армии не тронут
 check(not isPaused(301), 'мёртвый инженер не тронут')
 
 print('')
-print('=== 9: распознаются все формы приказа ===')
+print('=== 9: распознаются приказы мода ===')
 Reset(0.95, 1.0)
 add(eng(401, AM))
-add(eng(402, AM_SCRIPT))
-add(eng(403, RECLAIM_N))
+add(eng(403, RECLAIM))
 add(eng(404, PATROL))
 add(eng(405, ATTACK))
 RunOnce()
-check(isPaused(401), 'AggressiveMove (строка)')
-check(isPaused(402), 'Script + TaskName=AttackMove')
-check(isPaused(403), 'Reclaim (число 19)')
-check(isPaused(404), 'Patrol (строка)')
+check(isPaused(401), 'AggressiveMove')
+check(isPaused(403), 'Reclaim')
+check(isPaused(404), 'Patrol')
 check(not isPaused(405), 'обычная атака по юниту - не наш случай')
 
 print('')
@@ -626,7 +586,6 @@ for _ = 1, 6 do RunOnce() end
 check(not isPaused(100),
       'при падении массы до 60% отпущен')
 for _ = 1, 6 do RunOnce() end
--- При 60% с порогами 65..70 мод уже НЕ ставит паузу: 60 < highMass=70.
 check(not isPaused(100),
       'повторно не паузится: 60% ниже highMass=70')
 
@@ -637,11 +596,11 @@ local u22 = add(eng(100, AM))
 RunOnce()
 check(isPaused(100), 'поставили на паузу')
 check(u22.queue[1] ~= nil, 'очередь инженера не тронута модом')
-check(u22.queue[1].CommandType == 'AggressiveMove',
+check(u22.queue[1].type == 'AggressiveMove',
       'приказ атак-мув на месте после паузы')
 MASSPCT = 0.70
 for _ = 1, 6 do RunOnce() end
-check(u22.queue[1] ~= nil and u22.queue[1].CommandType == 'AggressiveMove',
+check(u22.queue[1] ~= nil and u22.queue[1].type == 'AggressiveMove',
       'приказ атак-мув цел и после снятия паузы')
 
 print('')
@@ -737,7 +696,7 @@ print('=== 30: обрыв маршрута не трогает очередь ==
 Reset(0.95, 1.0)
 local u30 = add(eng(100, AM))
 RunOnce()
-check(u30.queue[1] ~= nil and u30.queue[1].CommandType == 'AggressiveMove',
+check(u30.queue[1] ~= nil and u30.queue[1].type == 'AggressiveMove',
       'приказ атак-мув цел после паузы и обрыва маршрута')
 
 print('')
@@ -756,7 +715,7 @@ Reset(0.95, 1.0)
 add(eng(100, AM))
 RunOnce()
 check(isPaused(100), 'поставили на паузу')
-PAUSED[100] = false                 -- игрок снял паузу, но приказ оставил
+PAUSED[100] = false                 -- the player lifts the pause but keeps the order
 RunOnce()
 check(isPaused(100),
       'приказ на месте - мод вернул паузу, а не ушёл в игнорирование')
@@ -764,13 +723,13 @@ local j32 = table.concat(msgs, ' | ')
 check(string.find(j32, 'pause returned') ~= nil,
       'в логе сказано, что пауза возвращена, а не проигнорирована')
 
--- а если приказ сняли - инженер просто отпускается и не мучается
+-- and if the order is gone, the engineer is simply released and left alone
 Reset(0.95, 1.0)
 local u32 = add(eng(103, AM))
 RunOnce()
 check(isPaused(103), 'поставили на паузу')
 PAUSED[103] = false
-u32.queue = {}                     -- игрок снял паузу И приказ
+u32.queue = {}                     -- the player lifts the pause AND the order
 RunOnce()
 check(not isPaused(103), 'без приказа мод отпускает и не возвращает паузу')
 for _ = 1, 6 do RunOnce() end
@@ -791,8 +750,8 @@ for n = 1, 45 do
   RunOnce()
   if not isPaused(100) then releasedAt = n break end
 end
--- Срок 30 секунд при шаге цикла в 1 секунду: отпустить раньше 29 нельзя
--- (условие должно ПРОДЕРЖАТЬСЯ), позже 31 - уже сбилась счётка проходов.
+-- A hold of 30 seconds at a loop step of 1 second: releasing before 29 is not allowed (the
+-- condition has to HOLD), after 31 the count of passes has drifted.
 check(releasedAt >= 29 and releasedAt <= 31,
       'условие держалось все 30 секунд, отпуск на проходе ' .. tostring(releasedAt))
 local j33 = table.concat(msgs, ' | ')
@@ -807,8 +766,8 @@ add(eng(101, AM))
 RunOnce()
 check(isPaused(101), 'поставили на паузу')
 MASSPCT = 0.50
-for _ = 1, 4 do RunOnce() end     -- условие выполнено 4 секунды
-MASSPCT = 0.95                    -- провал был коротким
+for _ = 1, 4 do RunOnce() end     -- the condition has held for 4 seconds
+MASSPCT = 0.95                    -- the dip was short
 RunOnce()
 check(isPaused(101), 'короткий провал НЕ отпустил инженера')
 MASSPCT = 0.50
@@ -832,43 +791,17 @@ for n = 1, 20 do
   RunOnce()
   if not isPaused(102) then fast = n break end
 end
--- Единственный ограничитель - debounce minSec (5 секунд).
+-- The only limiter is the minSec debounce.
 check(fast > 0 and fast <= 6,
       'без удержания отпуск на проходе ' .. tostring(fast) ..
       ' - упёрлось только в minSec, а не в releaseHoldSec')
 
-print('')
-print('=== 38: GetIsPausedOfUnit, а если его нет в сборке движка ===')
-SetOfUnitMode('yes')
-Reset(0.95, 1.0)
-add(eng(105, AM))
-RunOnce()
-check(isPaused(105), 'с одиночной функцией пауза ставится')
-check(string.find(table.concat(msgs, ' | '), 'GetIsPausedOfUnit available') ~= nil,
-      'мод при старте сообщил, что одиночная функция доступна')
-
-SetOfUnitMode('nil')          -- движок такой функции не знает ВОВСЕ
-Reset(0.95, 1.0)
-add(eng(106, AM))
-RunOnce()
-check(isPaused(106), 'БЕЗ одиночной функции мод всё равно работает (откат)')
-check(string.find(table.concat(msgs, ' | '), 'NOT available') ~= nil,
-      'мод сообщил, что одиночной функции нет, и ушёл на общий путь')
-
--- и теперь убеждаемся, что мод НЕ падает, когда функция есть, но кидает
-SetOfUnitMode('throw')        -- функция есть, но бросает при вызове
-Reset(0.95, 1.0)
-add(eng(107, AM))
-RunOnce()
-check(isPaused(107), 'функция есть, но бросает - мод не падает, откат сработал')
-SetOfUnitMode('yes')
-
 print('=== 41: РАЗБОР "почему инженера не взяли" ===')
 Reset(0.95, 1.0)
-add(eng(112, AM))                              -- наш приказ, берём
+add(eng(112, AM))                              -- our order, taken
 add(MakeUnit(113, { cats = ENGINEER, queue = AM }))
-PAUSED[113] = true                             -- игрок поставил паузу руками
-add(MakeUnit(114, { cats = ENGINEER, queue = { { CommandType = 'Guard' } } }))
+PAUSED[113] = true                             -- the player paused it by hand
+add(MakeUnit(114, { cats = ENGINEER, queue = { { type = 'Guard' } } }))
 RunOnce()
 check(isPaused(112), 'инженер с нашим приказом взят под паузу')
 check(not isPaused(114), 'инженер с чужим приказом (Guard) не тронут')

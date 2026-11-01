@@ -544,9 +544,6 @@ function import(p)
     if p == '/mods/overflow/modules/Options.lua' then return MODULES.options end
     return {}
 end
-
--- Records that the result was collected after the last change of the row set.
-ROWS_APPLIED = 0
 end
 
 MODULES = {}

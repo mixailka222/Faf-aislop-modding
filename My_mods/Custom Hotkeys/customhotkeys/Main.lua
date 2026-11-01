@@ -292,14 +292,14 @@ function Main()
             CategoryAction()
                 :Match(AddsNearestBomber)
                 :Action(function()
-                    AddNearest("AIR BOMBER, AIR ANTIAIR TECH2", categories.ANTINAVY + categories.EXPERIMENTAL)
+                    AddNearest("AIR BOMBER, AIR ANTIAIR TECH2", bomberExcluded)
                 end),
             -- Bare press while nothing can build re-selects the nearest bomber,
             -- so a selected fighter does not swallow this hotkey.
             CategoryAction()
                 :Match(SelectionCannotBuild)
                 :Action(function()
-                    SelectNearest("AIR BOMBER, AIR ANTIAIR TECH2", categories.ANTINAVY + categories.EXPERIMENTAL)
+                    SelectNearest("AIR BOMBER, AIR ANTIAIR TECH2", bomberExcluded)
                 end),
             CategoryAction()
                 :Match(AlwaysMatches)
@@ -308,12 +308,11 @@ function Main()
                 end),
         }
 
-        -- AKA's own hotkey "Select nearest air scout / build sensors" has the
-        -- same dead end this mod was fixed for: its last branch always runs
-        -- Hotbuild "Sensors", which only does something for engineers and
-        -- factories, so with a fighter selected the press did nothing. AKA is a
-        -- third-party mod and is not patched here, so the same hotkey is offered
-        -- with the rule above.
+        -- The last branch of AKA's own hotkey "Select nearest air scout / build
+        -- sensors" always runs Hotbuild "Sensors", which only does something for
+        -- engineers and factories, so with a fighter selected the press does
+        -- nothing. AKA is a third-party mod and is not patched here, so the same
+        -- hotkey is offered with the rule above.
         -- The description differs on purpose: ReUI.Actions keeps actions by
         -- name, and two equal names would overwrite each other in whatever
         -- order the mods happen to load.

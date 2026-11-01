@@ -69,14 +69,10 @@ end
 -- Font colour of a faction, with the same check as in the game.
 local function FontColorFor(skinName)
     local plain = SkinField('default', 'fontColor', 'FFbadbdb')
-    local wantFaction = false
     local okOpt, resOpt = pcall(function()
         return Prefs.GetOption('faction_font_color')
     end)
     if okOpt and resOpt then
-        wantFaction = true
-    end
-    if wantFaction then
         return SkinField(skinName, 'fontColor', plain)
     end
     return plain

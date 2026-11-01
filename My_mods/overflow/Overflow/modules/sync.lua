@@ -78,9 +78,7 @@ local result = nil
 
 
 local function Num(t, a, b)
-    if type(t) ~= 'table' then return nil end
     local v = t[a]
-    if b == nil then return v end
     if type(v) ~= 'table' then return nil end
     v = v[b]
     if type(v) ~= 'number' then return nil end
@@ -88,13 +86,11 @@ local function Num(t, a, b)
 end
 
 local function NonNeg(v)
-    if type(v) ~= 'number' then return 0 end
     if v < 0 then return 0 end
     return v
 end
 
 local function Zero(v)
-    if type(v) ~= 'number' then return 0 end
     if v < EPS then return 0 end
     return v
 end
@@ -199,11 +195,10 @@ local function Compute(scoreData, me, tickNow)
     end
 
     local logLines = {}
-    local haveMine = false
 
     for armyIdx, cur in pairs(fresh) do
         local prv = lastRaw[armyIdx]
-        if prv and cur
+        if prv
             and prv.ein and cur.ein
             and prv.eout and cur.eout
             and prv.eexc and cur.eexc
@@ -269,7 +264,7 @@ local function Compute(scoreData, me, tickNow)
         if maxStoreE == nil or mineNow.estore > maxStoreE then maxStoreE = mineNow.estore end
         if minStoreM == nil or mineNow.mstore < minStoreM then minStoreM = mineNow.mstore end
         if maxStoreM == nil or mineNow.mstore > maxStoreM then maxStoreM = mineNow.mstore end
-        if mineNow.emax ~= nil and mineNow.estore ~= nil then
+        if mineNow.emax ~= nil then
             local headE = mineNow.emax - mineNow.estore
             if maxHeadE == nil or headE > maxHeadE then maxHeadE = headE end
         end
@@ -279,8 +274,7 @@ local function Compute(scoreData, me, tickNow)
         end
     end
 
-    haveMine = HaveMine(acc, me)
-    if not haveMine then return false end
+    if not HaveMine(acc, me) then return false end
 
     -- the window is not complete yet
     if accTicks < WINDOW_TICKS then
@@ -423,11 +417,6 @@ local started = false
 function Start()
     if started then return end
     started = true
-
-    if type(AddOnSyncHashedCallback) ~= 'function' then
-        LOG(PFX .. ': START FAILED - AddOnSyncHashedCallback missing')
-        return
-    end
 
     AddOnSyncHashedCallback(OnScore, 'Score', CB_ID)
     LOG(PFX .. ': watching Sync.Score, no unit scan, window=' ..

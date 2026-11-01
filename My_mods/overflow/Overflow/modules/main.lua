@@ -18,17 +18,17 @@ function Main(isReplay)
 
     -- This read makes UMT find modules/Options.lua and call its Main(). UMT searches the
     -- whole folder of the mod.
-    local ok, err = pcall(function()
+    local ok, seen = pcall(function()
         return UMT.Options.Mods["Overflow"]
     end)
 
     if not ok then
-        LOG('Overflow: UMT options FAILED: ' .. tostring(err))
+        LOG('Overflow: UMT options FAILED: ' .. tostring(seen))
         return
     end
 
     -- nil means Options.lua was not found or failed, and the player gets no page.
-    if err == nil then
+    if seen == nil then
         LOG('Overflow: FAILED - UMT did not find modules/Options.lua')
     else
         LOG('Overflow: UMT options page requested, 7 rows')

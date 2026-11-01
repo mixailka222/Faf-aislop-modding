@@ -23,7 +23,6 @@ function Main()
     local Options = UMT.Options
     local Opt = Options.Opt
     local PFX = 'Overflow: '
-    local TableGetn = table.getn
 
     local Rows = import('/mods/Overflow/modules/rows.lua')
 
@@ -59,8 +58,6 @@ function Main()
         return
     end
 
-    local BOXES = { 'eOverflow', 'eGo', 'eOwn', 'mOverflow', 'mGo',
-                    'mOwn', 'total' }
     local defaults = RowDefault()
     local items = PresetList()
     -- The first item of each list is the default: UMT falls back to items[1].
@@ -157,8 +154,8 @@ function Main()
         Apply(vis, true)
     end
 
-    for i = 1, TableGetn(BOXES) do
-        options[BOXES[i]]:Bind(OnBoxChange)
+    for i = 1, RowHowMany() do
+        options[RowIdAt(i)]:Bind(OnBoxChange)
     end
     options.preset:Bind(OnPresetChange)
 

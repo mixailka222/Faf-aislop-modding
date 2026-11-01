@@ -15,12 +15,12 @@ function Main(isReplay)
     end
 
     -- Reading this one field makes UMT find and run options.lua.
-    local ok, err = pcall(function() return UMT.Options.Mods["ReclaimPause"] end)
+    local ok, seen = pcall(function() return UMT.Options.Mods["ReclaimPause"] end)
     if not ok then
-        LOG('ReclaimPause: UMT options FAILED: ' .. tostring(err))
+        LOG('ReclaimPause: UMT options FAILED: ' .. tostring(seen))
         return
     end
-    if err == nil then
+    if seen == nil then
         LOG('ReclaimPause: UMT did not register our options page')
     end
 end

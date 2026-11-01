@@ -19,27 +19,16 @@
 local GameMain = import('/lua/ui/game/gamemain.lua')
 local CommandMode = import('/lua/ui/game/commandmode.lua')
 
-local okSet, Settings = pcall(import, '/mods/ReclaimPause/modules/settings.lua')
+local Settings = import('/mods/ReclaimPause/modules/settings.lua')
 
 local PFX = 'ReclaimPause: '
 local SCAN_SEC = 1        -- how often the storages and engineers are checked
 -- The scan period comes from the setting rescanSec.
 local rescanSec = 3
 
--- Числовые коды приказов, sim/commands/shared.lua:280-360. Сверены со
--- справочником референс-мода, расхождений нет.
-local BY_ID = {
-    [19] = 'Reclaim',
-    [16] = 'Patrol',
-    [18] = 'FormPatrol',
-    [35] = 'AggressiveMove',
-    [36] = 'FormAggressiveMove',
-}
-
--- Приказы, которые мод ведёт.
+-- Orders the mod manages, by the `type` string of a UI command queue entry.
 local MANAGED = {
     Reclaim = true,
-    reclaim = true,
     AggressiveMove = true,
     FormAggressiveMove = true,
     Patrol = true,
@@ -73,56 +62,11 @@ local why = {
 }
 
 --------------------------------------------------------------------------------
--- ЧТЕНИЕ ПРИКАЗА
---
--- Собственный код игры читает очередь как unit:GetCommandQueue()[1].type
--- (ui/game/construction.lua:1183, ui/notify/enhancementqueue.lua:60).
--- Поле типа бывает числом или строкой - учитываем оба случая, как это
--- делает референс-мод (queue.lua:21-31).
+-- Reading the order
 --------------------------------------------------------------------------------
 
-local function OrderKind(entry)
-    if type(entry) ~= 'table' then
-        return nil
-    end
-    local raw = entry.commandType or entry.CommandType or entry.type or entry.Type
-    if type(raw) == 'number' then
-        return BY_ID[raw]
-    end
-    if type(raw) == 'string' then
-        return raw
-    end
-    return nil
-end
-
--- Атак-мув часто приходит не как отдельный тип, а как Script-приказ с
--- именем задачи внутри: так делает FAF (core.lua:3784-3798 референс-мода).
-local function EntryIsManaged(entry)
-    local kind = OrderKind(entry)
-    if not kind then
-        return false
-    end
-    if MANAGED[kind] then
-        return true
-    end
-    if kind == 'Script' then
-        local params = entry.LuaParams or entry.luaParams or entry.params
-        if type(params) == 'table' then
-            local task = params.TaskName or params.taskName
-            local ability = params.AbilityName or params.abilityName
-            if task == 'AttackMove' or ability == 'AttackMove' then
-                return true
-            end
-            if task == 'Patrol' or ability == 'Patrol' then
-                return true
-            end
-        end
-    end
-    return false
-end
-
--- Возвращает вид приказа и признак "мод им интересуется". Вид приказа
--- нужен для лога: без него невозможно понять, почему инженера отпустили.
+-- Returns the type of the current order and whether the mod manages it. The type also
+-- goes to the log, which shows why an engineer was released.
 local function FrontKind(unit)
     local ok, queue = pcall(function() return unit:GetCommandQueue() end)
     if not ok or type(queue) ~= 'table' then
@@ -132,16 +76,7 @@ local function FrontKind(unit)
     if first == nil then
         return 'empty', false
     end
-    local kind = OrderKind(first)
-    if not kind then
-        return 'unknown-type', false
-    end
-    return kind, EntryIsManaged(first)
-end
-
-local function FrontIsManaged(unit)
-    local _, managed = FrontKind(unit)
-    return managed
+    return first.type, MANAGED[first.type] == true
 end
 
 --------------------------------------------------------------------------------
@@ -187,58 +122,14 @@ local function IsBuilding(unit)
     return res
 end
 
--- GetIsPaused принимает СПИСОК юнитов, не один юнит.
--- ЧТЕНИЕ СОСТОЯНИЯ ПАУЗЫ.
---
--- GetIsPaused(list) отвечает на вопрос "хотя бы один в списке на паузе".
--- Для проверки одного юнита это неудобно: таблица { unit } создаётся
--- заново для КАЖДОГО удерживаемого юнита КАЖДУЮ секунду. Движок же имеет
--- одиночный вариант - GetIsPausedOfUnit(unit), и он применяется на UI
--- буквально в игре, ui/game/orders.lua:323:
---
---   if not GetIsPausedOfUnit(silo) then
---
--- ПОЧЕМУ ЧЕРЕЗ pcall. Обращаться к имени, которого нет в сборке движка,
--- нельзя: поиск глобала идёт через метаметод таблицы модуля
--- (lua/system/import.lua:24-26, __index = _G), а на _G висит метаметод,
--- вызывающий error() (lua/system/config.lua:56-61). То есть упоминание
--- отсутствующей функции - это ИСКЛЮЧЕНИЕ, а не nil. Поэтому проверка
--- существования сама идёт через pcall, результат кэшируется.
---
--- Если одиночной функции нет - молча уходим на старый путь, мод работает
--- как раньше. Ошибка невозможна: всё под pcall.
-local hasPausedOfUnit = nil   -- nil = ещё не проверяли
-
-local function ProbePausedOfUnit()
-    local ok, fn = pcall(function() return GetIsPausedOfUnit end)
-    hasPausedOfUnit = (ok and type(fn) == 'function') and true or false
-    LOG(PFX .. 'GetIsPausedOfUnit ' ..
-        (hasPausedOfUnit and 'available' or 'NOT available, using GetIsPaused'))
-end
-
+-- An unreadable unit counts as paused, so that pause orders do not repeat.
 local function IsCurrentlyPaused(unit)
-    if hasPausedOfUnit == nil then
-        ProbePausedOfUnit()
-    end
-
-    if hasPausedOfUnit then
-        local okU, resU = pcall(function() return GetIsPausedOfUnit(unit) end)
-        if okU and resU ~= nil then
-            return resU and true or false
-        end
-        -- функция есть, но не сработала: один раз откатываемся назад
-        hasPausedOfUnit = false
-        LOG(PFX .. 'GetIsPausedOfUnit failed, falling back to GetIsPaused')
-    end
-
-    local box = { unit }
-    local ok, res = pcall(function() return GetIsPaused(box) end)
-    if not ok or res == nil then
-        -- не смогли прочитать: считаем, что пауза есть, чтобы не слать
-        -- повторные команды паузы подряд
+    local ok, res = pcall(GetIsPausedOfUnit, unit)
+    if not ok then
+        LOG(PFX .. 'GetIsPausedOfUnit FAILED: ' .. tostring(res))
         return true
     end
-    return res and true or false
+    return res
 end
 
 --------------------------------------------------------------------------------
@@ -263,9 +154,8 @@ end
 local function CollectEngineers(picked)
     local found = {}
     local n = 0
-    local list = picked or {}
-    for i = 1, table.getn(list) do
-        local unit = list[i]
+    for i = 1, table.getn(picked) do
+        local unit = picked[i]
         if IsMine(unit) and IsAlive(unit) and not IsBuilding(unit) then
             if HasCategory(unit, 'ENGINEER') and not HasCategory(unit, 'COMMAND') then
                 local id = unit:GetEntityId()
@@ -444,10 +334,10 @@ end
 -- Releasing everyone
 --------------------------------------------------------------------------------
 
-local function ReleaseAll(why)
+local function ReleaseAll(reason)
     local list = {}
     local n = 0
-    for id, unit in pairs(held) do
+    for _, unit in pairs(held) do
         if IsCurrentlyPaused(unit) then
             list[n + 1] = unit
             n = n + 1
@@ -458,7 +348,7 @@ local function ReleaseAll(why)
     held = {}
     skipUntil = {}
     if wasN > 0 then
-        LOG(PFX .. 'released ' .. tostring(wasN) .. ' engineer(s): ' .. tostring(why))
+        LOG(PFX .. 'released ' .. tostring(wasN) .. ' engineer(s): ' .. tostring(reason))
     end
 end
 
@@ -589,10 +479,6 @@ local function TickOnce()
     -- releaseHoldSec seconds: a short dip below lowMass changes nothing, and engineers do
     -- not flicker at the border.
     local holdSec = 0
-    local holdCfg = cfg.releaseHoldSec
-    if holdCfg == nil or holdCfg < 0 then
-        holdCfg = 0
-    end
     local want = holding
     if holding then
         if massFill <= cfg.lowMass / 100 then
@@ -600,7 +486,7 @@ local function TickOnce()
                 lowSinceIter = iterNo
             end
             holdSec = (iterNo - lowSinceIter) * SCAN_SEC
-            if holdSec >= holdCfg then
+            if holdSec >= cfg.releaseHoldSec then
                 want = false
             end
         else
@@ -622,12 +508,8 @@ local function TickOnce()
     end
 
     -- no switch sooner than minSec
-    local minSec = cfg.minSec
-    if minSec < 0 then
-        minSec = 0
-    end
     local sinceSec = (iterNo - switchIter) * SCAN_SEC
-    if want ~= holding and sinceSec < minSec then
+    if want ~= holding and sinceSec < cfg.minSec then
         want = holding
     end
 
@@ -665,7 +547,6 @@ local function TickOnce()
     else
         -- No scan: -1 means "not searched" and is logged as "?", because zero and no data
         -- differ.
-        foundN = -1
         engineerCount = -1
     end
 
@@ -728,8 +609,7 @@ local function TickOnce()
                         if HeldSecs(id) <= 1 then
                             LOG(PFX .. 'unit ' .. tostring(id) ..
                                 ' check after pause +' .. tostring(HeldSecs(id)) ..
-                                's, order=' .. tostring(kind) ..
-                                ' (empty is normal for a paused unit)')
+                                's, order=' .. tostring(kind))
                         end
                     else
                         skipUntil[id] = iterNo + cfg.skipSec
@@ -756,35 +636,25 @@ local function TickOnce()
         -- 2. New candidates come only from a fresh scan.
         if fresh then
             for id, unit in pairs(fresh) do
-                -- уже стоящих на паузе (например, поставил игрок) трогать
-                -- нельзя: SetPaused идемпотентна, но смысла в повторе нет
+                -- An engineer without a managed order has nothing worth pausing, and one
+                -- already paused may be the doing of the player.
                 local alreadyPaused = IsCurrentlyPaused(unit)
-                -- Инженер без приказа модом НЕ трогается. Раньше для
-                -- такого был флаг pauseIdle - он удалён по требованию
-                -- игрока. Обоснование простое: без приказа инженер и так
-                -- ничего не делает, а ставить его на паузу бессмысленно -
-                -- он уже стоит, и мод только засоряет лог.
-                --
-                -- Берём только тех, у кого приказ наш: реклейм, атак-мув,
-                -- патруль и то же через Script-задачу.
-                local kindC, managedC = FrontKind(unit)
-                local worth = managedC
-                if held[id] == nil and IsSkipped(id) then
-                    why.skip = why.skip + 1
-                elseif held[id] == nil and alreadyPaused then
-                    why.player = why.player + 1
-                elseif held[id] == nil and not worth then
-                    why.other = why.other + 1
-                end
-                if held[id] == nil and not IsSkipped(id) and not alreadyPaused
-                    and worth then
-                    local kind = kindC
-                    topause[pauseN + 1] = unit
-                    pauseN = pauseN + 1
-                    held[id] = unit
-                    heldAt[id] = iterNo
-                    LOG(PFX .. 'unit ' .. tostring(id) ..
-                        ' PAUSE issued, order=' .. tostring(kind))
+                local kind, managed = FrontKind(unit)
+                if held[id] == nil then
+                    if IsSkipped(id) then
+                        why.skip = why.skip + 1
+                    elseif alreadyPaused then
+                        why.player = why.player + 1
+                    elseif not managed then
+                        why.other = why.other + 1
+                    else
+                        topause[pauseN + 1] = unit
+                        pauseN = pauseN + 1
+                        held[id] = unit
+                        heldAt[id] = iterNo
+                        LOG(PFX .. 'unit ' .. tostring(id) ..
+                            ' PAUSE issued, order=' .. tostring(kind))
+                    end
                 end
             end
         end
@@ -869,15 +739,9 @@ function ReclaimPauseStart()
     if running then
         return
     end
-    if not okSet or type(Settings) ~= 'table'
-        or type(Settings.ReclaimPauseLoadSettings) ~= 'function' then
-        LOG(PFX .. 'settings module unusable: ' .. tostring(Settings))
-        return
-    end
     Settings.ReclaimPauseLoadSettings()
     running = true
     iterNo = 0
-    ProbePausedOfUnit()
     -- The last switch counts as long ago, otherwise the first one would wait for minSec.
     switchIter = -(Settings.ReclaimPauseCfg.minSec)
     rescanIter = 0 - Settings.ReclaimPauseCfg.rescanSec

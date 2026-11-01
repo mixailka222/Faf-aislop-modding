@@ -67,13 +67,9 @@ local ThemeFont    = rawget(ThemesModule, 'StyleFontSize')
 local ThemeMinimal = rawget(ThemesModule, 'FrameMinimal')
 local ThemeNumbers = rawget(ThemesModule, 'NumbersOnly')
 
-local GetCursor    = GetCursor
 local GetFrame     = GetFrame
 local StringFormat = string.format
-local MathAbs      = math.abs
 local MathMax      = math.max
-local MathMin      = math.min
-local MathFloor    = math.floor
 local TableGetn    = table.getn
 local LOG          = LOG
 
@@ -265,17 +261,6 @@ local ROW_ORDER   = { 'eOverflow', 'eGo', 'eOwn', 'mOverflow', 'mGo',
 
 -- which divider goes before which row
 local ROW_DIVIDER = { mOverflow = 'divider1', total = 'divider2' }
-
--- размер шрифта каждой строки. Строки перелива крупнее: их читают чаще.
-local ROW_FONT = {
-    eOverflow = 12,
-    eGo       = 11,
-    eOwn      = 11,
-    mOverflow = 12,
-    mGo       = 11,
-    mOwn      = 11,
-    total     = 11,
-}
 
 -- Everything in the panel body. LayoutRows hides what is switched off, so the list needs
 -- every row.
@@ -1226,9 +1211,7 @@ function OnCreateUI()
 
         -- The wait stays outside pcall: WaitSeconds cannot yield through a C function. The
         -- interface is built already, the second lets it finish.
-        local ok, err = pcall(function()
-            CreatePanel()
-        end)
+        local ok, err = pcall(CreatePanel)
         if not ok then
             LOG('Overflow: init FAILED: ' .. tostring(err))
             return
