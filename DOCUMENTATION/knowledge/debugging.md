@@ -255,6 +255,12 @@ table.insert(path, { dir = '<путь к моду>', mountpoint = '/mods/имя'
 Источник: fa:lua/SinglePlayerLaunch.lua#sessionInfo.createReplay = true
 Наблюдение: строка `Saving replay to` в логе запуска и файл на этом пути.
 
+### Время в матче через `/map` идёт неравномерно
+
+`WaitSeconds` в интерфейсе не равен десяти тикам симуляции на секунду, и отношение меняется по ходу матча. Сценарий, которому важен порядок событий, считает сами события: проверка «за 3 секунды» здесь случайно проходила на сломанном коде.
+
+Наблюдение: за `WaitSeconds(10)` прошло 167 тиков, а 16 проходов цикла мода с `WaitSeconds(1)` заняли 213 тиков.
+
 ### `SimLua` отвергается в матче через `/map`
 
 `SessionGetScenarioInfo().Options.CheatsEnabled` там равно `'true'`, но `ConExecute('SimLua ...')` не выполняется, а в логе появляется `<игрок> is trying to cheat!`. Действия в sim в таком матче делают своим обработчиком: мод с `ui_only = false` хукает `/lua/SimCallbacks.lua`, а обработчик вызывают через `SimCallback`.
