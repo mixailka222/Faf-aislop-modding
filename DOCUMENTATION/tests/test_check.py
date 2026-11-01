@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -271,6 +273,32 @@ class RunTestsTests(RepoCase):
     def test_project_without_tests_is_fine(self):
         self.project.mkdir(parents=True)
         self.assertEqual(check.run_tests(self.project), [])
+
+
+class TestsLineTests(RepoCase):
+    def output(self, mod):
+        buffer = io.StringIO()
+        with mock.patch.object(check, "check_luac", return_value=[]), \
+                contextlib.redirect_stdout(buffer):
+            check.check_mod(mod, {}, False)
+        return buffer.getvalue()
+
+    def test_mod_without_tests_is_not_reported_as_tested(self):
+        output = self.output(self.mod("My_mods/one/Mod"))
+        self.assertIn("[SKIP] тесты Mod", output)
+        self.assertNotIn("[OK] тесты", output)
+
+    def test_tests_folder_without_test_scripts_counts_as_no_tests(self):
+        mod = self.mod("My_mods/one/Mod")
+        write(self.root / "My_mods/one/tests/negative_mod.py", "")
+        self.assertIn("[SKIP] тесты Mod", self.output(mod))
+
+    def test_mod_with_tests_is_reported_as_tested(self):
+        mod = self.mod("My_mods/one/Mod")
+        # The stand-in interpreter is Python, so the script is Python too.
+        write(self.root / "My_mods/one/tests/test_ok.lua", "print('ok')\n")
+        with mock.patch.object(bootstrap, "lua_path", lambda: Path(sys.executable)):
+            self.assertIn("[OK] тесты Mod", self.output(mod))
 
 
 class ChangedModsTests(RepoCase):

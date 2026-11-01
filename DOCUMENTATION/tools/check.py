@@ -259,6 +259,10 @@ def check_readme(mod: Path) -> list[str]:
     return [] if readme.exists() else [f"нет файла {readme.name} в {project_dir(mod).name}"]
 
 
+def has_tests(project: Path) -> bool:
+    return any((project / "tests").glob("test_*.lua"))
+
+
 def run_tests(project: Path) -> list[str]:
     """Only test_*.lua, run from tests/ by the Lua of the game.
 
@@ -335,6 +339,8 @@ def check_mod(mod: Path, luals: dict, no_luac: bool) -> bool:
     project = tests_project(mod)
     if project and no_luac:
         print(f"[SKIP] тесты {mod.name}: в CI их выполняет отдельное задание")
+    elif project and not has_tests(project):
+        print(f"[SKIP] тесты {mod.name}: в проекте их нет")
     elif project:
         results.append(report(f"тесты {mod.name}", run_tests(project)))
     return all(results)
