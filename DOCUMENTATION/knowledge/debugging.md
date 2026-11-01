@@ -227,6 +227,67 @@
 Источник: fa:lua/sim/score.lua#if ArmyIsCivilian(index) then
 Наблюдение: запуск без `/noAi`, `SetAlliance` из обработчика в sim, панель Overflow показала перелив союзника.
 
+### Матч нескольких клиентов запускается из командной строки
+
+`/hostgame <протокол> <порт> <имя игрока> <название игры> <файл карты>` и `/joingame <протокол> <адрес:порт> <имя игрока>` вместе с `/players <число>` открывают автолобби: матч начинается сам, как только подключились все клиенты. Клиент FAF и сервер не нужны. Протокол `udp`, файл карты вида `/maps/SCMP_009/SCMP_009_scenario.lua`. Автолобби читает `/team`, `/startspot`, фракцию вида `/uef` и опции `/gameoptions Имя:Значение`. Армии с одним `/team` больше 1 становятся союзниками. Хост и второй клиент можно запустить одновременно, матч начинается примерно через 15 секунд.
+
+Источник: fa:lua/ui/uimain.lua#--- Called by the engine with the command line argument `/hostgame <protocol> <port> <playerName> <gameName> <mapFile>`
+Источник: fa:lua/ui/uimain.lua#--- Called by the engine with the command line argument `/joingame <protocol> <address> <playerName>`
+Источник: fa:lua/ui/lobby/autolobby/AutolobbyController.lua#info.Team = self:GetCommandLineArgumentNumber("/team", -1)
+Источник: fa:lua/ui/lobby/autolobby/AutolobbyController.lua#for name, value in self:GetCommandLineArgumentArray("/gameoptions") do
+Источник: fa:lua/simInit.lua#if army.Team > 1 then
+Источник: https://github.com/FAForever/fa/blob/develop/scripts/LaunchFAInstances.ps1
+Наблюдение: стенд, карта SCMP_009, два клиента на одном компьютере, порт из свободных: `/players 2`, `/team 2`, `/startspot 1` и `2`. В логах `Session time: 00:00:15` при `Game time: 00:00:00`, `SessionIsMultiplayer()` и `IsAlly` вернули `true`, в `GetSessionClients()` две записи, оба процесса завершились с кодом 0.
+Не подтверждено: матч трёх и более клиентов на одном компьютере не запускался.
+
+### Второй экземпляр игры останавливается окном `already running`
+
+Движок создаёт мьютекс `SupComMutex`. Если он уже есть, новый запуск показывает окно `Supreme commander is already running` и дальше не идёт, а окно забирает фокус. Настройка `debug = { enable_debug_facilities = true }` в файле из `/prefs` пропускает эту проверку, поэтому для нескольких клиентов её пишут в их временные настройки. Заодно она отключает сброс `Options.Log` в начале матча и оставляет отладочные клавиши.
+
+Источник: fa:lua/ui/game/gamemain.lua#if not GetPreference('debug.enable_debug_facilities') then
+Источник: fa:lua/ui/uimain.lua#if not DebugFacilitiesEnabled() then
+Наблюдение: два запуска без настройки: окно с этим текстом, в логе второго клиента нет строк лобби, хост пишет `Missing local peers`. С настройкой во временных файлах обоих клиентов матч начался, окна не было.
+Наблюдение: дизассемблирование `bin/ForgedAlliance.exe` версии 3840: перед вызовом со строкой `SupComMutex` и сравнением `GetLastError` с `0xB7` стоит функция, читающая `debug.enable_debug_facilities`, её `true` обходит проверку.
+Не подтверждено: движок вызывает эту функцию ещё в двух местах и записывает результат в поле объекта, что это поле меняет, неизвестно.
+
+### Автолобби запускает матч без sim-модов
+
+Список `GameMods` у него всегда пустой, ключа запуска для него нет. UI-моды работают как обычно: они приходят из `active_mods` в настройках каждого клиента. Поэтому sim-мод из настроек в такой матч не попадает, и действия в sim здесь делают настоящими приказами.
+
+Источник: fa:lua/ui/lobby/autolobby/AutolobbyController.lua#self.GameMods = {}
+Источник: fa:lua/SessionInit.lua#for i, m in ipairs(import("/lua/mods.lua").GetUiMods()) do
+Наблюдение: матч через автолобби: в `__active_mods` интерфейса есть только UI-моды из настроек.
+
+### Опции автолобби рассчитаны на матч с противником
+
+По умолчанию `Victory = 'demoralization'`, а матч, где все оставшиеся армии союзники, игра завершает. Союзникам нужен `/gameoptions Victory:sandbox`. `TeamShareOverflow` уже `enabled`.
+
+Источник: fa:lua/ui/lobby/autolobby/AutolobbyController.lua#Victory = 'demoralization',
+Источник: fa:lua/ui/lobby/autolobby/AutolobbyController.lua#TeamShareOverflow = "enabled",
+Источник: fa:lua/sim/victorycondition/UnitCondition.lua#if self:RemainingBrainsAreAllied(aliveBrains) then
+Наблюдение: с `Victory:sandbox` матч двух союзников шёл больше 20 секунд игрового времени.
+
+### Клиенты с одним `/profile` делят файл реплея
+
+Первый клиент пишет `Saving replay to`, второй пишет в лог `Can't create replay file` на тот же путь и играет дальше. Файл остаётся в папке реплеев профиля, как после матча через `/map`.
+
+Наблюдение: логи двух клиентов с `/profile modtest`.
+
+### Сообщение другому клиенту идёт мимо sim
+
+`SessionSendChatMessage({ Identifier = "Имя" })` доходит до других клиентов, если у них есть `import("/lua/ui/game/gamemain.lua").RegisterChatFunc(функция, "Имя")`. Sim-мод для этого не нужен.
+
+Источник: fa:lua/ui/game/gamemain.lua#local func = chatFuncs[data.Identifier]
+Наблюдение: второй клиент стенда вышел по такому сообщению хоста, отправленному за 0,5 с до `ExitApplication`.
+
+### `bad argument #1 to 'find'` в `construction.lua` после приказа на улучшение
+
+Панель постройки заполняет поля `ID` и `UnitID` улучшения в чертеже, когда игрок открывает её вкладку улучшений, а очередь панели их читает. Приказ `IssueCommand("UNITCOMMAND_Script", { TaskName = "EnhanceTask", Enhancement = "Имя" }, false)` без открытой вкладки сам по себе выполняется, но `IntegrateEnhancements` падает со стеком в логе. Выделение юнита эти поля не заполняет. Такой приказ код без игрока отдаёт, заполнив их сам.
+
+Источник: fa:lua/ui/game/construction.lua#enhTable.ID = enhName
+Источник: fa:lua/ui/game/construction.lua#if not found[enhancement.ID] and not string.find(enhancement.ID, 'Remove') then
+Наблюдение: приказ из сценария: улучшение пошло, в логе `bad argument #1 to `find' (string expected, got nil)`. За 5 секунд после `SelectUnits` поле `ID` не заполнилось. С полями, заданными до приказа, ошибки нет.
+
 ### Клавишу и курсор в игру можно передать программно
 
 `PostMessage` с `WM_KEYDOWN` и `WM_KEYUP` в дочернее окно класса `wxWindowClass` срабатывает как нажатие: идёт через карту клавиш движка и запускает привязанное действие. Главное окно такие сообщения игнорирует. Окно не обязано быть активным, поэтому клавиша не попадёт в другую программу.
