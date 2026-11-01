@@ -427,6 +427,33 @@ for _ = 1, 3 do RunOnce() end
 check(table.getn(ABORTED) > 0, 'режим команд закончился - обрыв маршрута продолжился')
 
 print('')
+print('=== 7b: обрыв, пропущенный из-за режима команд, не ждёт новый abortSec ===')
+Reset(0.95, 1.0)
+SET.ReclaimPauseCfg.abortSec = 5
+add(eng(205, AM))
+for _ = 1, 5 do RunOnce() end       -- the pause with the first abort, the next one is due
+ABORTED = {}
+CMDMODE_ACTIVE = true
+RunOnce()
+check(table.getn(ABORTED) == 0, 'срок повторного обрыва выпал на режим команд')
+CMDMODE_ACTIVE = false
+RunOnce()
+check(table.getn(ABORTED) == 1, 'повторный обрыв идёт на первом проходе после режима команд')
+
+Reset(0.95, 1.0)
+SET.ReclaimPauseCfg.abortSec = 5
+add(eng(206, AM))
+RunOnce()
+PAUSED[206] = false                 -- the player lifts the pause, the order stays
+ABORTED = {}
+CMDMODE_ACTIVE = true
+RunOnce()
+check(isPaused(206) and table.getn(ABORTED) == 0, 'пауза вернулась, обрыв отложен режимом команд')
+CMDMODE_ACTIVE = false
+RunOnce()
+check(table.getn(ABORTED) == 1, 'обрыв вернувшейся паузы идёт на первом проходе после режима команд')
+
+print('')
 print('=== 8: чужие и мёртвые не тронуты ===')
 Reset(0.95, 1.0)
 add(MakeUnit(300, { cats = ENGINEER, queue = AM, army = 2 }))

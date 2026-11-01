@@ -468,8 +468,11 @@ local function AbortMove(list, n)
         return
     end
     if PlayerInCommandMode() then
+        -- Due again at once, or the engineer walks on for another abortSec.
+        abortIter = iterNo - Settings.ReclaimPauseCfg.abortSec
         return
     end
+    abortIter = iterNo
     local saved = nil
     local beforeN = 0
     local ok, err = pcall(function()
@@ -943,13 +946,11 @@ local function TickOnce()
     if pauseN > 0 then
         PauseUnits(topause, pauseN)
         AbortMove(topause, pauseN)
-        abortIter = iterNo
     elseif cfg.abortMove and holding then
         -- Обрыв маршрута ОДНОРАЗОВЫЙ: прерванный атак-мув снова находит путь
         -- и юнит идёт дальше. Поэтому пока хранилище полно, обрыв повторяется
         -- каждые abortSec секунд - иначе инженер дойдёт до точки.
         if (iterNo - abortIter) * SCAN_SEC >= cfg.abortSec then
-            abortIter = iterNo
             local alist = {}
             local an = 0
             for _id, aunit in pairs(held) do
