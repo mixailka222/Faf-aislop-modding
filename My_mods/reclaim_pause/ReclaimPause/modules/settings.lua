@@ -98,7 +98,8 @@ function ReclaimPauseLoadSettings()
         ReclaimPauseCfg.releaseHoldSec =
             SaneInt(saved.releaseHoldSec, DEFAULTS.releaseHoldSec, 0, 300)
         ReclaimPauseCfg.rescanSec = SaneInt(saved.rescanSec, DEFAULTS.rescanSec, 1, 60)
-        ReclaimPauseCfg.startGrace = SaneInt(saved.startGrace, DEFAULTS.startGrace, 0, 300)
+        -- Below 5 the first pass meets the game selecting the commander, and his selection is lost.
+        ReclaimPauseCfg.startGrace = SaneInt(saved.startGrace, DEFAULTS.startGrace, 5, 300)
         ReclaimPauseCfg.abortMove = SaneBool(saved.abortMove, DEFAULTS.abortMove)
         ReclaimPauseCfg.abortSec = SaneInt(saved.abortSec, DEFAULTS.abortSec, 1, 30)
         ReclaimPauseCfg.skipSec = SaneInt(saved.skipSec, DEFAULTS.skipSec, 0, 600)

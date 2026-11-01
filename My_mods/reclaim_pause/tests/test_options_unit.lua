@@ -278,7 +278,7 @@ check(uses >= 12, 'в окне ' .. tostring(uses) .. ' полей, и все н
 local sane = {
   highMass = { 50, 100 }, lowMass = { 0, 100 }, energyMin = { 0, 100 },
   minSec = { 0, 120 }, releaseHoldSec = { 0, 300 },
-  rescanSec = { 1, 60 }, startGrace = { 0, 300 }, abortSec = { 1, 30 },
+  rescanSec = { 1, 60 }, startGrace = { 5, 300 }, abortSec = { 1, 30 },
   skipSec = { 0, 600 },
 }
 local badRange = ''
@@ -337,6 +337,15 @@ opts.highMass:Set(60)
 opts.lowMass:Set(90)
 check(SET.ReclaimPauseCfg.lowMass <= SET.ReclaimPauseCfg.highMass,
       'lowMass > highMax опущен до highMass, мод не залипнет')
+
+-- Значение, сохранённое до подъёма минимума, поднимается до него.
+PROFILE['ReclaimPause'].startGrace = 0
+SET.ReclaimPauseLoadSettings()
+check(SET.ReclaimPauseCfg.startGrace == 5,
+      'сохранённый startGrace=0 поднят до минимума (было ' ..
+      tostring(SET.ReclaimPauseCfg.startGrace) .. ')')
+PROFILE['ReclaimPause'].startGrace = 15
+SET.ReclaimPauseLoadSettings()
 
 -- возвращаем как было, чтобы следующие проверки считались от известного
 opts.highMass:Set(90)
