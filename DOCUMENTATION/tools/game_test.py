@@ -13,18 +13,25 @@ the mods are mounted from their folders and the installed ones are left out of t
 The smoke run has UI mods only, as for a player. A scenario also needs ModTestSim, because a UI
 mod cannot create units, and the run fails if anything else gets into the sim.
 
+A scenario with the line "players" is a real match of several clients on this PC over LAN, each with
+its own settings and log. The auto lobby of the game starts it without sim mods, so ModTestSim
+stays out. The first client hosts and runs the scenario, the others play their armies until it ends.
+The verdict needs the scenario to pass on the host, and an error line in any log fails the run.
+
 Lines at the top of a scenario file change its run:
 
     -- stand: ai                           the other armies of the map are played by the AI
     -- stand: profile options = { ... }    this text goes into the profile of the temporary settings
     -- stand: expect text                  the log has to contain this text
     -- stand: mod name                     this library from references/ui-libs/mods is active as well
+    -- stand: players 2                    this many clients play on one team, see above
 """
 import argparse
 import ctypes
 import ntpath
 import os
 import re
+import socket
 import subprocess
 import sys
 import tempfile
@@ -45,6 +52,12 @@ NO_TARGET = "none"
 PROFILE = "modtest"
 SMOKE = "smoke"
 MAP = "SCMP_009"
+MAP_FILE = f"/maps/{MAP}/{MAP}_scenario.lua"
+MAP_PLAYERS = 8
+LAN_PROTOCOL = "udp"
+LAN_HOST = "127.0.0.1"
+LAN_TEAM = "2"
+LAN_OPTIONS = "Victory:sandbox"
 TIMEOUT = 120
 
 UID = re.compile(r"""^uid\s*=\s*["']([^"']+)""", re.M)
@@ -89,6 +102,19 @@ class ScenarioSetup:
     profile: list[str] = field(default_factory=list)
     expected: list[str] = field(default_factory=list)
     mods: list[str] = field(default_factory=list)
+    players: int = 1
+
+
+@dataclass
+class Client:
+    args: list[str]
+    log_path: Path
+    prefs: Path
+    process: subprocess.Popen | None = None
+    code: int | None = None
+    views: list[int] = field(default_factory=list)
+    cursor: tuple[int, int] | None = None
+    sent: int = 0
 
 
 def read_mod_info(mod: Path) -> ModInfo:
@@ -123,16 +149,27 @@ def read_setup(mod: Path, scenario: str) -> ScenarioSetup:
             setup.expected.append(value)
         elif name == "mod":
             setup.mods.append(value)
+        elif name == "players":
+            if not value.isdigit() or not 2 <= int(value) <= MAP_PLAYERS:
+                raise GameTestError(f"В сценарии {scenario} число игроков не от 2 до {MAP_PLAYERS}: {value}")
+            setup.players = int(value)
         else:
             raise GameTestError(f"В сценарии {scenario} неизвестная строка стенда: {name}")
+    if setup.ai and setup.players > 1:
+        raise GameTestError(f"В сценарии {scenario} строка ai не работает вместе с players: в автолобби нет ИИ")
     return setup
 
 
-def active_uids(info: ModInfo, library_uids: list[str], scenario: str, without_mod: bool) -> list[str]:
+def uses_sim_helper(scenario: str, setup: ScenarioSetup) -> bool:
+    """The auto lobby starts a match with an empty list of sim mods."""
+    return scenario != SMOKE and setup.players == 1
+
+
+def active_uids(info: ModInfo, library_uids: list[str], sim_helper: bool, without_mod: bool) -> list[str]:
     uids = [TEST_MOD_UID, *library_uids]
     if not without_mod:
         uids.append(info.uid)
-    if scenario != SMOKE:
+    if sim_helper:
         uids.append(SIM_HELPER_UID)
     return uids
 
@@ -145,11 +182,14 @@ def prefs_argument(prefs: str | Path, prefs_dir: str | Path) -> str:
         raise GameTestError(f"Временная папка на другом диске, чем настройки игры: {prefs}") from error
 
 
-def prefs_text(uids: list[str], profile: list[str]) -> str:
+def prefs_text(uids: list[str], profile: list[str], several_clients: bool = False) -> str:
+    """With enable_debug_facilities the engine skips its check for a running game, which otherwise stops
+    every client after the first at a dialog."""
     mods = "".join(f"    ['{uid}'] = true,\n" for uid in uids)
     fields = "".join(f"            {line},\n" for line in [f"Name = '{PROFILE}'", *profile])
+    debug = "debug = {\n    enable_debug_facilities = true,\n}\n" if several_clients else ""
     return (f"profile = {{\n    current = 1,\n    profiles = {{\n        {{\n{fields}"
-            f"        }},\n    }},\n}}\nversion = {{\n    major = 1,\n}}\nactive_mods = {{\n{mods}}}\n")
+            f"        }},\n    }},\n}}\nversion = {{\n    major = 1,\n}}\nactive_mods = {{\n{mods}}}\n{debug}")
 
 
 def init_text(bin_dir: Path, prefs_folder: Path, mounts: dict[str, Path]) -> str:
@@ -174,14 +214,17 @@ def init_text(bin_dir: Path, prefs_folder: Path, mounts: dict[str, Path]) -> str
     return "\n".join(lines) + "\n"
 
 
-def problems_in_log(log: str, scenario: str, expected: list[str]) -> list[str]:
+def errors_in_log(log: str) -> list[str]:
+    return [line.strip() for line in log.splitlines() if "[MODTEST] FAIL" in line or ERROR_LINE.search(line)]
+
+
+def problems_in_log(log: str, sim_helper: bool, expected: list[str]) -> list[str]:
     """The verdict comes from the log: a mod that failed to load does not stop the test mod."""
-    lines = log.splitlines()
-    problems = [line.strip() for line in lines if "[MODTEST] FAIL" in line or ERROR_LINE.search(line)]
-    if not any("[MODTEST] PASS" in line for line in lines):
+    problems = errors_in_log(log)
+    if "[MODTEST] PASS" not in log:
         problems.append("В логе нет строки [MODTEST] PASS")
     problems += [f"В логе нет строки: {text}" for text in expected if text not in log]
-    if scenario != SMOKE:
+    if sim_helper:
         found = SIM_MODS.search(log)
         if not found:
             problems.append("В логе нет списка модов в sim")
@@ -280,11 +323,11 @@ def move_mouse(views: list[int], x: int, y: int) -> None:
         user32.PostMessageW(hwnd, WM_MOUSEMOVE, 0, y << 16 | x)
 
 
-def game_has_focus(pid: int) -> bool:
+def game_has_focus(pids: list[int]) -> bool:
     user32 = ctypes.windll.user32
     owner = wintypes.DWORD()
     user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), ctypes.byref(owner))
-    return owner.value == pid
+    return owner.value in pids
 
 
 def give_focus_back(window: int) -> None:
@@ -300,57 +343,110 @@ def system_cursor() -> tuple[int, int]:
     return point.x, point.y
 
 
-def run_game(args: list[str], cwd: Path, log_path: Path) -> tuple[int | None, bool]:
-    """Returns the exit code and whether a person at the PC could disturb the run. The window opens behind
-    the others.
+def send_input(client: Client) -> None:
+    if not client.log_path.exists():
+        return
+    commands = INPUT.findall(client.log_path.read_text(encoding="utf-8", errors="replace"))
+    for command in commands[client.sent:]:
+        client.views = client.views or view_windows(client.process.pid)
+        kind, *values = command.split()
+        if kind == "MOUSE":
+            client.cursor = int(values[0]), int(values[1])
+        else:
+            press_key(client.views, values[0])
+    client.sent = len(commands)
+
+
+def run_game(clients: list[Client], cwd: Path) -> bool:
+    """Waits for all clients and returns whether a person at the PC could disturb the run. A client that has
+    not exited in time is killed and keeps code None. The windows open behind the others.
 
     The game soon replaces the position of a mouse message with the cursor of the system, so the message
     is repeated until the next one, and a moving cursor of the system can still win. The game can take
     the focus while it starts. With the focus it ignores such a message and gets the keys of the person,
-    so the focus goes back at once.
+    so the focus goes back at once, whichever client took it.
     """
     user32 = ctypes.windll.user32
     outer = user32.GetForegroundWindow() or user32.GetShellWindow()
     startup = subprocess.STARTUPINFO()
     startup.dwFlags = subprocess.STARTF_USESHOWWINDOW
     startup.wShowWindow = SW_SHOWNOACTIVATE
-    process = subprocess.Popen(args, cwd=cwd, startupinfo=startup)
+    for client in clients:
+        client.process = subprocess.Popen(client.args, cwd=cwd, startupinfo=startup)
     deadline = time.monotonic() + TIMEOUT
     next_read = 0.0
-    sent = 0
-    views = []
-    cursor = None
     disturbed = False
     person_cursor = system_cursor()
     try:
         while time.monotonic() < deadline:
-            if process.poll() is not None:
-                return process.returncode, disturbed
+            running = [client for client in clients if client.process.poll() is None]
+            if not running:
+                break
             time.sleep(MOUSE_REPEAT_SECONDS)
-            if game_has_focus(process.pid):
+            if game_has_focus([client.process.pid for client in running]):
                 disturbed = True
                 give_focus_back(outer)
-            if cursor:
-                move_mouse(views, *cursor)
-                disturbed = disturbed or system_cursor() != person_cursor
+            for client in running:
+                if client.cursor:
+                    move_mouse(client.views, *client.cursor)
+                    disturbed = disturbed or system_cursor() != person_cursor
             person_cursor = system_cursor()
-            if time.monotonic() < next_read or not log_path.exists():
+            if time.monotonic() < next_read:
                 continue
             next_read = time.monotonic() + POLL_SECONDS
-            commands = INPUT.findall(log_path.read_text(encoding="utf-8", errors="replace"))
-            for command in commands[sent:]:
-                views = views or view_windows(process.pid)
-                kind, *values = command.split()
-                if kind == "MOUSE":
-                    cursor = int(values[0]), int(values[1])
-                else:
-                    press_key(views, values[0])
-            sent = len(commands)
-        return None, disturbed
+            for client in running:
+                send_input(client)
+        return disturbed
     finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait()
+        for client in clients:
+            client.code = client.process.poll()
+            if client.code is None:
+                client.process.kill()
+                client.process.wait()
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        probe.bind((LAN_HOST, 0))
+        return probe.getsockname()[1]
+
+
+def match_args(index: int, port: int, setup: ScenarioSetup) -> list[str]:
+    """/players turns on the auto lobby, which launches the match as soon as all clients are connected.
+
+    The clients share a team, and the game ends a match of allies only, unless it is a sandbox.
+    """
+    if setup.players == 1:
+        return ["/map", MAP, *([] if setup.ai else ["/noAi"]), "/seed", "1", "/faction", "1"]
+    if index == 0:
+        role = ["/hostgame", LAN_PROTOCOL, str(port), "Player1", PROFILE, MAP_FILE]
+    else:
+        role = ["/joingame", LAN_PROTOCOL, f"{LAN_HOST}:{port}", f"Player{index + 1}"]
+    return [*role, "/players", str(setup.players), "/team", LAN_TEAM, "/startspot", str(index + 1), "/uef",
+            "/gameoptions", LAN_OPTIONS]
+
+
+def log_name(mod: Path, scenario: str, index: int) -> str:
+    return f"{mod.name}-{scenario}.log" if index == 0 else f"{mod.name}-{scenario}-{index + 1}.log"
+
+
+def problems_of_clients(clients: list[Client], sim_helper: bool, expected: list[str]) -> list[str]:
+    """Only the first client runs the scenario, the others can only add errors."""
+    problems = []
+    for index, client in enumerate(clients):
+        tag = f"Клиент {index + 1}: " if index else ""
+        if client.code is None:
+            problems.append(f"{tag}Игра не завершилась за {TIMEOUT} с")
+        elif client.code != 0:
+            problems.append(f"{tag}Код выхода игры {client.code}")
+        if not client.log_path.exists():
+            problems.append(f"{tag}Игра не создала лог")
+            continue
+        log = client.log_path.read_text(encoding="utf-8", errors="replace")
+        remove_replay(log)
+        found = errors_in_log(log) if index else problems_in_log(log, sim_helper, expected)
+        problems += [f"{tag}{problem}" for problem in found]
+    return problems
 
 
 def run_scenario(mod: Path, info: ModInfo, scenario: str, faf: Path, without_mod: bool) -> tuple[list[str], bool]:
@@ -361,37 +457,36 @@ def run_scenario(mod: Path, info: ModInfo, scenario: str, faf: Path, without_mod
               for folder in [mod, *libraries, TEST_MODS / "ModTest", TEST_MODS / "ModTestSim"]}
     mounts["/mods/modtestscenarios"] = mod.parent / "tests" / "game"
     library_uids = [read_mod_info(folder).uid for folder in libraries]
-    uids = active_uids(info, library_uids, scenario, without_mod)
+    sim_helper = uses_sim_helper(scenario, setup)
+    uids = active_uids(info, library_uids, sim_helper, without_mod)
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    log_path = LOG_DIR / f"{mod.name}-{scenario}.log"
-    log_path.unlink(missing_ok=True)
     prefs_dir = Path(os.environ["LOCALAPPDATA"]) / "Gas Powered Games" / "Supreme Commander Forged Alliance"
+    port = free_port()
 
     with tempfile.TemporaryDirectory(prefix="modtest") as temp:
-        prefs = Path(temp) / "Game.prefs"
-        prefs.write_text(prefs_text(uids, setup.profile), encoding="utf-8")
-        init = Path(temp) / "init_modtest.lua"
-        init.write_text(init_text(bin_dir, Path(temp), mounts), encoding="utf-8")
-        code, disturbed = run_game([str(bin_dir / "ForgedAlliance.exe"), "/init", init.as_posix(),
-                                     "/prefs", prefs_argument(prefs, prefs_dir), "/profile", PROFILE,
-                                     "/log", str(log_path), "/map", MAP, *([] if setup.ai else ["/noAi"]),
-                                     "/seed", "1", "/faction", "1", "/windowed", "1024", "768", "/nomovie",
-                                     "/nosound", "/nomusic", "/nobugreport", "/novalidate", "/modtest", scenario,
-                                     NO_TARGET if without_mod else info.uid], bin_dir, log_path)
+        clients = []
+        for index in range(setup.players):
+            folder = Path(temp) / str(index + 1)
+            folder.mkdir()
+            prefs = folder / "Game.prefs"
+            prefs.write_text(prefs_text(uids, setup.profile, setup.players > 1), encoding="utf-8")
+            init = folder / "init_modtest.lua"
+            init.write_text(init_text(bin_dir, folder, mounts), encoding="utf-8")
+            log_path = LOG_DIR / log_name(mod, scenario, index)
+            log_path.unlink(missing_ok=True)
+            clients.append(Client([str(bin_dir / "ForgedAlliance.exe"), "/init", init.as_posix(),
+                                   "/prefs", prefs_argument(prefs, prefs_dir), "/profile", PROFILE,
+                                   "/log", str(log_path), *match_args(index, port, setup),
+                                   "/windowed", "1024", "768", "/nomovie", "/nosound", "/nomusic", "/nobugreport",
+                                   "/novalidate", "/modtest", scenario, NO_TARGET if without_mod else info.uid],
+                                  log_path, prefs))
+        disturbed = run_game(clients, bin_dir)
         problems = []
-        if prefs.with_name("Game.prefs.bad").exists():
+        if any(client.prefs.with_name("Game.prefs.bad").exists() for client in clients):
             problems.append("Игра отвергла временные настройки")
 
-    if code is None:
-        problems.append(f"Игра не завершилась за {TIMEOUT} с")
-    elif code != 0:
-        problems.append(f"Код выхода игры {code}")
-    if not log_path.exists():
-        return [*problems, "Игра не создала лог"], disturbed
-    log = log_path.read_text(encoding="utf-8", errors="replace")
-    remove_replay(log)
-    return [*problems, *problems_in_log(log, scenario, setup.expected)], disturbed
+    return [*problems, *problems_of_clients(clients, sim_helper, setup.expected)], disturbed
 
 
 def main() -> int:

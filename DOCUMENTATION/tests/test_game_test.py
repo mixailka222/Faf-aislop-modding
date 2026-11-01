@@ -2,6 +2,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 TOOLS = ROOT / "DOCUMENTATION" / "tools"
@@ -30,8 +31,8 @@ class TempCase(unittest.TestCase):
 
 
 class ProblemsInLogTests(unittest.TestCase):
-    def problems(self, log, scenario="smoke", expected=()):
-        return game_test.problems_in_log(log, scenario, list(expected))
+    def problems(self, log, sim_helper=False, expected=()):
+        return game_test.problems_in_log(log, sim_helper, list(expected))
 
     def test_clean_smoke_has_no_problems(self):
         self.assertEqual(self.problems(PASS), [])
@@ -60,18 +61,150 @@ class ProblemsInLogTests(unittest.TestCase):
         self.assertEqual(len(self.problems(PASS, expected=["mod: installed"])), 1)
 
     def test_scenario_needs_the_list_of_sim_mods(self):
-        self.assertEqual(len(self.problems(PASS, "pause")), 1)
+        self.assertEqual(len(self.problems(PASS, True)), 1)
 
     def test_scenario_with_only_the_sim_helper_in_sim_passes(self):
-        self.assertEqual(self.problems(SIM_MODS + PASS, "pause"), [])
+        self.assertEqual(self.problems(SIM_MODS + PASS, True), [])
 
     def test_target_inside_sim_is_a_problem(self):
         log = f"info: [MODTEST] sim mods: {game_test.SIM_HELPER_UID} {TARGET}\n" + PASS
-        self.assertEqual(len(self.problems(log, "pause")), 1)
+        self.assertEqual(len(self.problems(log, True)), 1)
 
     def test_another_sim_mod_is_a_problem(self):
         log = f"info: [MODTEST] sim mods: {game_test.SIM_HELPER_UID} stranger\n" + PASS
-        self.assertEqual(len(self.problems(log, "pause")), 1)
+        self.assertEqual(len(self.problems(log, True)), 1)
+
+
+class SeveralClientsTests(TempCase):
+    SETUP = game_test.ScenarioSetup(players=2)
+
+    def clients(self, *logs, codes=None):
+        clients = []
+        for index, log in enumerate(logs):
+            path = self.root / f"{index}.log"
+            if log is not None:
+                path.write_text(log, encoding="utf-8")
+            code = codes[index] if codes else 0
+            clients.append(game_test.Client([], path, self.root / "Game.prefs", code=code))
+        return clients
+
+    def problems(self, *logs, codes=None):
+        return game_test.problems_of_clients(self.clients(*logs, codes=codes), False, [])
+
+    def test_host_pass_and_a_clean_client_pass_the_run(self):
+        self.assertEqual(self.problems(PASS, "info: played\n"), [])
+
+    def test_host_has_to_pass(self):
+        self.assertEqual(len(self.problems("info: played\n", PASS)), 1)
+
+    def test_error_in_the_log_of_any_client_fails_the_run(self):
+        self.assertEqual(len(self.problems("warning: Error running lua script: x\n" + PASS, PASS)), 1)
+        problems = self.problems(PASS, "warning: Error running lua script: x\n")
+        self.assertEqual(len(problems), 1)
+        self.assertTrue(problems[0].startswith("Клиент 2"))
+
+    def test_failed_check_on_a_client_fails_the_run(self):
+        self.assertEqual(len(self.problems(PASS, "info: [MODTEST] FAIL x\n" + PASS)), 1)
+
+    def test_client_without_a_log_fails_the_run(self):
+        self.assertEqual(len(self.problems(PASS, None)), 1)
+
+    def test_client_that_did_not_exit_fails_the_run(self):
+        self.assertEqual(len(self.problems(PASS, PASS, codes=[0, None])), 1)
+
+    def test_client_with_a_bad_exit_code_fails_the_run(self):
+        self.assertEqual(len(self.problems(PASS, PASS, codes=[0, 3])), 1)
+
+    def test_expected_lines_are_read_from_the_host_only(self):
+        clients = self.clients("info: only here\n" + PASS, PASS)
+        self.assertEqual(game_test.problems_of_clients(clients, False, ["only here"]), [])
+        clients = self.clients(PASS, "info: only here\n")
+        self.assertEqual(len(game_test.problems_of_clients(clients, False, ["only here"])), 1)
+
+    def test_first_client_hosts_the_map_of_the_stand(self):
+        args = game_test.match_args(0, 15000, self.SETUP)
+        self.assertEqual(args[:6], ["/hostgame", "udp", "15000", "Player1", game_test.PROFILE, game_test.MAP_FILE])
+
+    def test_other_clients_join_the_port_of_the_host(self):
+        args = game_test.match_args(1, 15000, self.SETUP)
+        self.assertEqual(args[:4], ["/joingame", "udp", "127.0.0.1:15000", "Player2"])
+
+    def test_clients_share_a_team_and_take_their_own_start_spots(self):
+        host, client = (game_test.match_args(index, 15000, self.SETUP) for index in range(2))
+        for args in (host, client):
+            self.assertEqual(args[args.index("/players") + 1], "2")
+            self.assertEqual(args[args.index("/team") + 1], "2")
+        self.assertEqual(host[host.index("/startspot") + 1], "1")
+        self.assertEqual(client[client.index("/startspot") + 1], "2")
+
+    def test_match_of_one_team_is_a_sandbox_or_it_ends_at_once(self):
+        args = game_test.match_args(0, 15000, self.SETUP)
+        self.assertEqual(args[args.index("/gameoptions") + 1], "Victory:sandbox")
+
+    def test_single_match_stays_on_the_map_switch(self):
+        self.assertEqual(game_test.match_args(0, 15000, game_test.ScenarioSetup())[:3], ["/map", game_test.MAP, "/noAi"])
+        self.assertNotIn("/noAi", game_test.match_args(0, 15000, game_test.ScenarioSetup(ai=True)))
+
+    def test_every_client_has_its_own_log(self):
+        names = {game_test.log_name(Path("Overflow"), "scenario", index) for index in range(2)}
+        self.assertEqual(names, {"Overflow-scenario.log", "Overflow-scenario-2.log"})
+
+    def test_only_several_clients_skip_the_check_for_a_running_game(self):
+        self.assertIn("enable_debug_facilities = true", game_test.prefs_text([], [], True))
+        self.assertNotIn("enable_debug_facilities", game_test.prefs_text([], []))
+
+    def test_free_port_is_a_port(self):
+        self.assertGreater(game_test.free_port(), 0)
+
+
+@unittest.skipUnless(sys.platform == "win32", "the windows API of the stand")
+class FocusTests(TempCase):
+    """Real processes stand in for the game: run_game does not care what it starts."""
+
+    def clients(self, *seconds):
+        return [game_test.Client([sys.executable, "-c", f"import time; time.sleep({value})"],
+                                 self.root / f"{index}.log", self.root / "Game.prefs")
+                for index, value in enumerate(seconds)]
+
+    def test_focus_goes_back_from_every_client(self):
+        clients = self.clients(0, 1)
+        seen = []
+
+        def has_focus(pids):
+            seen.append(sorted(pids))
+            return pids[-1] == clients[1].process.pid and len(seen) == 3
+
+        with mock.patch.object(game_test, "game_has_focus", has_focus), \
+                mock.patch.object(game_test, "give_focus_back") as give_back:
+            disturbed = game_test.run_game(clients, self.root)
+        self.assertTrue(disturbed)
+        self.assertEqual(give_back.call_count, 1)
+        self.assertIn(clients[1].process.pid, seen[0])
+
+    def test_run_goes_on_until_the_last_client_exits(self):
+        clients = self.clients(0, 1)
+        with mock.patch.object(game_test, "game_has_focus", return_value=False):
+            self.assertFalse(game_test.run_game(clients, self.root))
+        self.assertEqual([client.code for client in clients], [0, 0])
+
+    def test_client_that_does_not_exit_is_killed_and_keeps_no_code(self):
+        clients = self.clients(0, 60)
+        with mock.patch.object(game_test, "game_has_focus", return_value=False), \
+                mock.patch.object(game_test, "TIMEOUT", 1):
+            game_test.run_game(clients, self.root)
+        self.assertEqual(clients[0].code, 0)
+        self.assertIsNone(clients[1].code)
+        self.assertIsNotNone(clients[1].process.returncode)
+
+    def test_lines_of_a_log_reach_only_the_game_of_that_client(self):
+        clients = self.clients(0, 0)
+        write(clients[1].log_path, "info: [MODTEST] MOUSE 300 200\n")
+        clients[1].process = mock.Mock(pid=1)
+        with mock.patch.object(game_test, "view_windows", return_value=[7]):
+            game_test.send_input(clients[0])
+            game_test.send_input(clients[1])
+        self.assertIsNone(clients[0].cursor)
+        self.assertEqual(clients[1].cursor, (300, 200))
 
 
 class ModInfoTests(TempCase):
@@ -154,18 +287,23 @@ class InitTests(unittest.TestCase):
 class ActiveModsTests(unittest.TestCase):
     INFO = game_test.ModInfo(uid=TARGET, ui_only=True, libraries=["UMT"])
 
-    def test_smoke_runs_without_any_sim_mod(self):
-        uids = game_test.active_uids(self.INFO, ["lib"], "smoke", without_mod=False)
+    def test_without_the_helper_there_is_no_sim_mod(self):
+        uids = game_test.active_uids(self.INFO, ["lib"], False, without_mod=False)
         self.assertEqual(sorted(uids), sorted([TARGET, "lib", game_test.TEST_MOD_UID]))
 
-    def test_scenario_adds_the_sim_helper(self):
-        uids = game_test.active_uids(self.INFO, [], "pause", without_mod=False)
+    def test_helper_is_added_on_request(self):
+        uids = game_test.active_uids(self.INFO, [], True, without_mod=False)
         self.assertIn(game_test.SIM_HELPER_UID, uids)
 
     def test_control_run_leaves_the_target_out(self):
-        uids = game_test.active_uids(self.INFO, ["lib"], "pause", without_mod=True)
+        uids = game_test.active_uids(self.INFO, ["lib"], True, without_mod=True)
         self.assertNotIn(TARGET, uids)
         self.assertIn("lib", uids)
+
+    def test_only_a_scenario_of_one_client_uses_the_helper(self):
+        self.assertFalse(game_test.uses_sim_helper(game_test.SMOKE, game_test.ScenarioSetup()))
+        self.assertTrue(game_test.uses_sim_helper("pause", game_test.ScenarioSetup()))
+        self.assertFalse(game_test.uses_sim_helper("pause", game_test.ScenarioSetup(players=2)))
 
 
 class InputTests(unittest.TestCase):
@@ -189,6 +327,19 @@ class SetupTests(TempCase):
         self.assertEqual(setup.profile, [])
         self.assertEqual(setup.expected, [])
         self.assertEqual(setup.mods, [])
+        self.assertEqual(setup.players, 1)
+
+    def test_number_of_players_is_read(self):
+        self.assertEqual(self.setup_of("-- stand: players 2\n").players, 2)
+
+    def test_wrong_number_of_players_stops_the_run(self):
+        for value in ("1", "9", "two", ""):
+            with self.subTest(value), self.assertRaises(game_test.GameTestError):
+                self.setup_of(f"-- stand: players {value}\n")
+
+    def test_auto_lobby_has_no_ai_to_ask_for(self):
+        with self.assertRaises(game_test.GameTestError):
+            self.setup_of("-- stand: ai\n-- stand: players 2\n")
 
     def test_lines_of_the_stand_are_read(self):
         setup = self.setup_of("-- stand: ai\n-- stand: profile options = { a = 1 }\n-- stand: expect mod: ready\n"

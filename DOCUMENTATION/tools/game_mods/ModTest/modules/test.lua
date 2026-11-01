@@ -9,6 +9,7 @@ local MOUSE_SECONDS = 8
 -- The game shows the position of a mouse message only for a moment, see run_game in game_test.py.
 local MOUSE_STEP_SECONDS = 0.02
 local MOUSE_MARGIN = 2
+local END_MESSAGE = "ModTestEnd"
 
 local failures = 0
 
@@ -199,15 +200,33 @@ local function CheckActiveMods(targetUid)
     end
 end
 
+--- A client that joined a match of several clients plays its army until the host ends the match. If the
+--- host never does, game_test.py gives up on this client.
+local function WaitForHost()
+    local ended = false
+    import("/lua/ui/game/gamemain.lua").RegisterChatFunc(function() ended = true end, END_MESSAGE)
+    while not ended do
+        WaitSeconds(0.1)
+    end
+end
+
 function Run(scenario, targetUid)
     Step("start scenario=" .. scenario)
     CheckActiveMods(targetUid)
     if scenario == "smoke" then
         WaitSeconds(3)
         Check(GameTick() > 0, "the match is running")
+    elseif HasCommandLineArg("/joingame") then
+        WaitForHost()
     else
-        SimCallback({ Func = "ModTestLogSimMods", Args = {} })
+        -- The auto lobby leaves the sim helper out of the match, see game_test.py.
+        if not HasCommandLineArg("/hostgame") then
+            SimCallback({ Func = "ModTestLogSimMods", Args = {} })
+        end
         import("/mods/ModTestScenarios/" .. scenario .. ".lua").Run()
+        if HasCommandLineArg("/hostgame") then
+            SessionSendChatMessage({ Identifier = END_MESSAGE })
+        end
     end
     if failures == 0 then
         Step("PASS")
