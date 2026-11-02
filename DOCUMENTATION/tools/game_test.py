@@ -88,6 +88,10 @@ WM_KEYUP = 0x0101
 WM_MOUSEMOVE = 0x0200
 SW_SHOWNOACTIVATE = 4
 MOUSEEVENTF_MOVE = 0x0001
+LSFW_LOCK = 1
+LSFW_UNLOCK = 2
+MONITORINFOF_PRIMARY = 1
+WINDOW_SIZE = (1024, 768)
 KF_ALTDOWN = 1 << 29
 KEY_DOWN = 0x80
 HELD_KEYS = {"Ctrl": (0x11, 0xA2), "Shift": (0x10, 0xA0)}
@@ -95,6 +99,11 @@ HELD_KEYS = {"Ctrl": (0x11, 0xA2), "Shift": (0x10, 0xA0)}
 
 class GameTestError(Exception):
     pass
+
+
+class MonitorInfo(ctypes.Structure):
+    _fields_ = [("size", wintypes.DWORD), ("monitor", wintypes.RECT), ("work", wintypes.RECT),
+                ("flags", wintypes.DWORD)]
 
 
 @dataclass
@@ -111,6 +120,7 @@ class ScenarioSetup:
     expected: list[str] = field(default_factory=list)
     mods: list[str] = field(default_factory=list)
     players: int = 1
+    mouse: bool = False
 
 
 @dataclass
@@ -149,6 +159,7 @@ def read_setup(mod: Path, scenario: str) -> ScenarioSetup:
     if scenario == SMOKE:
         return setup
     text = (mod.parent / "tests" / "game" / f"{scenario}.lua").read_text(encoding="utf-8")
+    setup.mouse = "MoveMouseTo" in text
     for name, value in DIRECTIVE.findall(text):
         if name == "ai":
             setup.ai = True
@@ -191,14 +202,20 @@ def prefs_argument(prefs: str | Path, prefs_dir: str | Path) -> str:
         raise GameTestError(f"Временная папка на другом диске, чем настройки игры: {prefs}") from error
 
 
-def prefs_text(uids: list[str], profile: list[str], several_clients: bool = False) -> str:
+def prefs_text(uids: list[str], profile: list[str], several_clients: bool = False,
+               window: tuple[int, int] | None = None) -> str:
     """With enable_debug_facilities the engine skips its check for a running game, which otherwise stops
-    every client after the first at a dialog."""
+    every client after the first at a dialog. Windows.Main places the window before it first appears."""
     mods = "".join(f"    ['{uid}'] = true,\n" for uid in uids)
     fields = "".join(f"            {line},\n" for line in [f"Name = '{PROFILE}'", *profile])
     debug = "debug = {\n    enable_debug_facilities = true,\n}\n" if several_clients else ""
+    place = ""
+    if window:
+        place = (f"Windows = {{\n    Main = {{\n        maximized = false,\n        x = {window[0]},\n"
+                 f"        y = {window[1]},\n        width = {WINDOW_SIZE[0]},\n"
+                 f"        height = {WINDOW_SIZE[1]},\n    }},\n}}\n")
     return (f"profile = {{\n    current = 1,\n    profiles = {{\n        {{\n{fields}"
-            f"        }},\n    }},\n}}\nversion = {{\n    major = 1,\n}}\nactive_mods = {{\n{mods}}}\n{debug}")
+            f"        }},\n    }},\n}}\nversion = {{\n    major = 1,\n}}\nactive_mods = {{\n{mods}}}\n{debug}{place}")
 
 
 def init_text(bin_dir: Path, prefs_folder: Path, mounts: dict[str, Path]) -> str:
@@ -346,6 +363,38 @@ def give_focus_back(window: int) -> None:
     user32.SetForegroundWindow(window)
 
 
+def lock_focus() -> None:
+    """Keeps the game from taking the focus as its window appears. Windows lets lock only the program that
+    made the last input, a zero move counts. A click or Alt of a person lifts the lock by itself."""
+    user32 = ctypes.windll.user32
+    user32.mouse_event(MOUSEEVENTF_MOVE, 0, 0, 0, 0)
+    if not user32.LockSetForegroundWindow(LSFW_LOCK):
+        print("[..] Windows не дал закрепить фокус, игра может его забрать")
+
+
+def unlock_focus() -> None:
+    ctypes.windll.user32.LockSetForegroundWindow(LSFW_UNLOCK)
+
+
+def second_monitor() -> tuple[int, int] | None:
+    """The corner of the work area of a monitor other than the primary one, the person works on the primary."""
+    user32 = ctypes.windll.user32
+    callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HMONITOR, wintypes.HDC,
+                                       ctypes.POINTER(wintypes.RECT), wintypes.LPARAM)
+    corners = []
+
+    def on_monitor(monitor, _dc, _rect, _data):
+        info = MonitorInfo(size=ctypes.sizeof(MonitorInfo))
+        if not user32.GetMonitorInfoW(wintypes.HMONITOR(monitor), ctypes.byref(info)):
+            print(f"[..] Windows не описал монитор {monitor}, он пропущен")
+        elif not info.flags & MONITORINFOF_PRIMARY:
+            corners.append((info.work.left, info.work.top))
+        return True
+
+    user32.EnumDisplayMonitors(None, None, callback_type(on_monitor), 0)
+    return corners[0] if corners else None
+
+
 def system_cursor() -> tuple[int, int]:
     point = wintypes.POINT()
     ctypes.windll.user32.GetCursorPos(ctypes.byref(point))
@@ -374,15 +423,17 @@ def run_game(clients: list[Client], cwd: Path) -> bool:
 
     The game soon replaces the position of a mouse message with the cursor of the system, so the message
     is repeated until the next one, and a moving cursor of the system can still win. The game can take
-    the focus while it starts. With the focus it ignores such a message and gets the keys of the person,
-    so the focus goes back at once, whichever client took it. Before a scenario starts there is nothing
-    to disturb, so only the focus taken after that counts.
+    the focus as its window appears, the lock stops that until a person clicks or presses Alt. With the
+    focus the game ignores such a message and gets the keys of the person, so the focus goes back at once,
+    whichever client took it. Before a scenario starts there is nothing to disturb, so only the focus taken
+    after that counts.
     """
     user32 = ctypes.windll.user32
     outer = user32.GetForegroundWindow() or user32.GetShellWindow()
     startup = subprocess.STARTUPINFO()
     startup.dwFlags = subprocess.STARTF_USESHOWWINDOW
     startup.wShowWindow = SW_SHOWNOACTIVATE
+    lock_focus()
     for client in clients:
         client.process = subprocess.Popen(client.args, cwd=cwd, startupinfo=startup)
     deadline = time.monotonic() + TIMEOUT
@@ -410,6 +461,7 @@ def run_game(clients: list[Client], cwd: Path) -> bool:
                 send_input(client)
         return disturbed
     finally:
+        unlock_focus()
         for client in clients:
             client.code = client.process.poll()
             if client.code is None:
@@ -499,6 +551,8 @@ def run_scenario(mod: Path, info: ModInfo, scenario: str, faf: Path, without_mod
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     prefs_dir = Path(os.environ["LOCALAPPDATA"]) / "Gas Powered Games" / "Supreme Commander Forged Alliance"
     port = free_port()
+    # A window on the second monitor ignores WM_MOUSEMOVE, so a scenario with the mouse stays on the primary one.
+    window = None if setup.mouse else second_monitor()
 
     with tempfile.TemporaryDirectory(prefix="modtest") as temp:
         clients = []
@@ -506,7 +560,7 @@ def run_scenario(mod: Path, info: ModInfo, scenario: str, faf: Path, without_mod
             folder = Path(temp) / str(index + 1)
             folder.mkdir()
             prefs = folder / "Game.prefs"
-            prefs.write_text(prefs_text(uids, setup.profile, setup.players > 1), encoding="utf-8")
+            prefs.write_text(prefs_text(uids, setup.profile, setup.players > 1, window), encoding="utf-8")
             init = folder / "init_modtest.lua"
             init.write_text(init_text(bin_dir, folder, mounts), encoding="utf-8")
             log_path = LOG_DIR / log_name(mod, scenario, index)
@@ -514,8 +568,9 @@ def run_scenario(mod: Path, info: ModInfo, scenario: str, faf: Path, without_mod
             clients.append(Client([str(bin_dir / "ForgedAlliance.exe"), "/init", init.as_posix(),
                                    "/prefs", prefs_argument(prefs, prefs_dir), "/profile", PROFILE,
                                    "/log", str(log_path), *match_args(index, port, setup),
-                                   "/windowed", "1024", "768", "/nomovie", "/nosound", "/nomusic", "/nobugreport",
-                                   "/novalidate", "/modtest", scenario, NO_TARGET if without_mod else info.uid],
+                                   "/windowed", *map(str, WINDOW_SIZE), "/nomovie", "/nosound", "/nomusic",
+                                   "/nobugreport", "/novalidate", "/modtest", scenario,
+                                   NO_TARGET if without_mod else info.uid],
                                   log_path, prefs))
         disturbed = run_game(clients, bin_dir)
         problems = []

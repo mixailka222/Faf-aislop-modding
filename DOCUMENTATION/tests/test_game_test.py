@@ -202,6 +202,13 @@ class ControlRunTests(SeveralClientsTests):
 class FocusTests(TempCase):
     """Real processes stand in for the game: run_game does not care what it starts."""
 
+    def setUp(self):
+        super().setUp()
+        for name in ("lock_focus", "unlock_focus"):
+            patcher = mock.patch.object(game_test, name)
+            setattr(self, name, patcher.start())
+            self.addCleanup(patcher.stop)
+
     def clients(self, *seconds):
         return [game_test.Client([sys.executable, "-c", f"import time; time.sleep({value})"],
                                  self.root / f"{index}.log", self.root / "Game.prefs")
@@ -230,6 +237,22 @@ class FocusTests(TempCase):
             disturbed = game_test.run_game(clients, self.root)
         self.assertFalse(disturbed)
         self.assertGreater(give_back.call_count, 0)
+
+    def test_focus_is_locked_before_the_game_starts_and_unlocked_after_it(self):
+        clients = self.clients(0)
+        started = []
+        self.lock_focus.side_effect = lambda: started.append(clients[0].process)
+        with mock.patch.object(game_test, "game_has_focus", return_value=False):
+            game_test.run_game(clients, self.root)
+        self.assertEqual(started, [None])
+        self.unlock_focus.assert_called_once_with()
+
+    def test_focus_is_unlocked_when_the_run_fails(self):
+        clients = self.clients(0)
+        with mock.patch.object(game_test, "game_has_focus", side_effect=RuntimeError), \
+                self.assertRaises(RuntimeError):
+            game_test.run_game(clients, self.root)
+        self.unlock_focus.assert_called_once_with()
 
     def test_run_goes_on_until_the_last_client_exits(self):
         clients = self.clients(0, 1)
@@ -299,6 +322,15 @@ class PrefsTests(unittest.TestCase):
         self.assertIn("['one'] = true", text)
         self.assertIn("['two'] = true", text)
         self.assertEqual(text.count("= true"), 2)
+
+    def test_the_window_position_goes_into_the_prefs(self):
+        text = game_test.prefs_text([], [], window=(-1920, 8))
+        self.assertIn("maximized = false", text)
+        self.assertIn("x = -1920", text)
+        self.assertIn("y = 8", text)
+
+    def test_without_a_position_the_game_places_the_window_itself(self):
+        self.assertNotIn("Windows", game_test.prefs_text([], []))
 
     def test_scenario_text_goes_into_the_profile(self):
         text = game_test.prefs_text([], ["options = { ui_scale = 1.5 }"])
@@ -378,6 +410,10 @@ class SetupTests(TempCase):
         self.assertEqual(setup.expected, [])
         self.assertEqual(setup.mods, [])
         self.assertEqual(setup.players, 1)
+        self.assertFalse(setup.mouse)
+
+    def test_scenario_that_moves_the_mouse_is_marked(self):
+        self.assertTrue(self.setup_of('Test.MoveMouseTo(unit:GetPosition())\n').mouse)
 
     def test_number_of_players_is_read(self):
         self.assertEqual(self.setup_of("-- stand: players 2\n").players, 2)
