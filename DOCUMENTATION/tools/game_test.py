@@ -6,8 +6,9 @@
     python DOCUMENTATION/tools/game_test.py "My_mods/project/Mod" --all
 
 Without --only or --all the game does not start: the command shows the scenarios and the cost of a
-full run. One start of the game takes from 15 seconds to 2 minutes, so --all is a run for the end of
-the work and needs the permission of the developer.
+full run. Any run that starts the game needs the consent of the developer: someone may be playing on
+this PC. One start of the game takes from 15 seconds to 2 minutes, so --all is a run for the end of
+the work.
 
 --without-mod is the control run of a new scenario: without the mod the scenario has to start and fail.
 
@@ -612,7 +613,8 @@ def main() -> int:
         if not options.only and not options.all:
             minutes = math.ceil(len(known) * ROUGH_RUN_SECONDS / 60)
             print(f"[FAIL] Игра не запускалась. Сценарии: {', '.join(known)}")
-            print("    Для текущей работы выбери нужные: --only <сценарий>, ключ можно повторять")
+            print("    Для текущей работы выбери нужные: --only <сценарий>, ключ можно повторять, "
+                  "только с согласия разработчика")
             print(f"    Весь мод, запусков: {len(known)}, около {minutes} мин: --all, "
                   "только с разрешения разработчика")
             return 1
