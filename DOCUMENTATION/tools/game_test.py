@@ -528,7 +528,8 @@ def run_scenario(mod: Path, info: ModInfo, scenario: str, faf: Path, without_mod
 
 
 def main() -> int:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    # Line by line: through a pipe the results would otherwise appear only when the stand exits.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("mod", help="папка мода, в ней лежит mod_info.lua")
     choice = parser.add_mutually_exclusive_group()
@@ -563,7 +564,8 @@ def main() -> int:
         unknown = [name for name in options.only or [] if name not in known]
         if unknown:
             raise GameTestError(f"Нет сценария {', '.join(unknown)}, есть: {', '.join(known)}")
-        for scenario in options.only or known:
+        scenarios = options.only or known
+        for done, scenario in enumerate(scenarios, 1):
             started = time.monotonic()
             for attempt in range(1, ATTEMPTS + 1):
                 problems, disturbed = run_scenario(mod, info, scenario, options.faf, options.without_mod)
@@ -574,7 +576,8 @@ def main() -> int:
                     break
                 print(f"[..] {scenario}: за компьютером работал человек, его ввод мог попасть в игру, повторяю")
             label = f"{scenario}, контроль без мода" if options.without_mod else scenario
-            print(f"[{'FAIL' if problems else 'OK'}] {mod.name}: {label}, {time.monotonic() - started:.0f} с")
+            print(f"[{'FAIL' if problems else 'OK'}] {mod.name}: {label}, {time.monotonic() - started:.0f} с, "
+                  f"готово {done} из {len(scenarios)}, осталось {len(scenarios) - done}")
             for problem in problems[:8]:
                 print(f"    {problem}")
             results.append(not problems)

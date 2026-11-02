@@ -467,6 +467,14 @@ class ChoiceTests(TempCase):
         code, ran, _ = self.run_stand("--all")
         self.assertEqual((code, ran), (0, ["smoke", "a", "b"]))
 
+    def test_every_result_shows_how_many_runs_are_done_and_left(self):
+        _, _, output = self.run_stand("--all", outcomes=[([], False), (["failed"], False)])
+        lines = [line for line in output.splitlines() if line.startswith("[")]
+        self.assertIn("готово 1 из 3, осталось 2", lines[0])
+        self.assertIn("готово 2 из 3, осталось 1", lines[1])
+        self.assertTrue(lines[1].startswith("[FAIL]"))
+        self.assertIn("готово 3 из 3, осталось 0", lines[2])
+
     def test_unknown_scenario_stops_before_the_game_starts(self):
         code, ran, output = self.run_stand("--only", "a", "--only", "gone")
         self.assertEqual((code, ran), (1, []))
