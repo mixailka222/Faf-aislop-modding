@@ -269,11 +269,31 @@ X лежит в `[1]`, Y в `[2]`, Z в `[3]`. Пару значений сох�
 
 Источник: fa:lua/sim/AdjacencyBuffs.lua#adj.Hydrocarbon = adj.T2PowerGenerator
 
+### Игровой Lua не читает поля соседства из `Economy`
+
+`AdjacentStructureEnergyMod` стоит у генераторов: -2 у T1, -4 у гидро и T2, -5 у T3. `AdjacentEnergyProductionMod` равен 2 у T1-хранилищ энергии `xxb1105`. Настоящие бонусы задаёт поле `Adjacency` блюпринта и таблицы `AdjacencyBuffs.lua`.
+
+Источник: fa:lua/tests/DumpProperties.lua#Adjacent Structure Energy Mod:
+Источник: fa:lua/sim/units/StructureUnit.lua#for k, v in AdjacencyBuffs[adjBuffs] do
+Наблюдение: файлы `units/*/*_unit.bp` из `gamedata/units.nx2`, сборка от 2026-10-31.
+
 ### ID энергетических зданий
 
 T1 `xxb1101`, гидро `xxb1102`, T2 `xxb1201`, T3 `xxb1301`. Префиксы фракций: `ueb` UEF, `uab` Aeon, `urb` Cybran, `xsb` Seraphim.
 
 Источник: fa:lua/BuildingTemplates.lua#'T1HydroCarbon',
+
+### Выработка генераторов одинакова у всех фракций
+
+T1 даёт 20 энергии в секунду, гидро 100, T2 500, T3 2500. В коде значение читают из `bp.Economy.ProductionPerSecondEnergy`: другой мод может его изменить.
+
+Наблюдение: файлы `units/*/*_unit.bp` из `gamedata/units.nx2`, сборка от 2026-10-31, все четыре фракции.
+
+### Гидро входит в `TECH1`
+
+Категории гидро: `ENERGYPRODUCTION`, `HYDROCARBON`, `TECH1`. Фильтр `ENERGYPRODUCTION TECH1` захватывает и гидро, поэтому `HYDROCARBON` проверяют первым.
+
+Наблюдение: файлы `xxb1102_unit.bp` из `gamedata/units.nx2`, сборка от 2026-10-31, все четыре фракции.
 
 ### `GetFocusArmy()` равен `-1` у наблюдателя
 
