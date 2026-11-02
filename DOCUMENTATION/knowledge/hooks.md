@@ -107,6 +107,18 @@ end
 
 Источник: lua-lang:HISTORY#skip BOM and unix style # comments when reading files
 
+### BOM в файле хука ломает склейку
+
+Хук попадает в середину склеенного текста, а компилятор пропускает BOM только в самом начале. Посреди текста он выдаёт `unexpected symbol near`. Отдельный файл при этом компилируется, поэтому BOM в файлах `hook` запрещает `validate_mod.py`.
+
+Наблюдение: `.tools/faf-lua/luac.exe -p`: файл с BOM в начале прошёл, файл с BOM в начале второй строки дал `unexpected symbol near`.
+
+### `return` верхнего уровня в хуке ломает склейку
+
+Компилятор требует, чтобы `return` был последним в блоке, а после хука идёт код следующего хука. Такая склейка даёт `<eof> expected near`, хотя каждый файл по отдельности компилируется. `do return end` компилируется и посреди текста.
+
+Наблюдение: `.tools/faf-lua/luac.exe -p`: `return a` и следом `local b = 2` дали `<eof> expected near`, `do return end` перед тем же кодом прошёл.
+
 ### Хук `defaultKeyMap.lua` действует не всегда
 
 `GetCurrentKeyMap` берёт `GetUserKeyMap() or GetDefaultKeyMap()`, поэтому своя карта игрока целиком заменяет карту по умолчанию: это замена, а не слияние. Первая правка клавиши копирует текущую карту в `UserKeyMap` целиком, поэтому клавиши мода, подключённого позже, туда не попадают. Файл карты по умолчанию выбирает `GetDefaultKeyMapName` по настройке `UserKeyMapName`: при другом пресете читается другой файл со своей таблицей `defaultKeyMap`, и хук файла `defaultKeyMap.lua` к нему не относится. Надёжный путь: действие из `keyActions` остаётся, а клавишу игрок назначает в меню вручную.
@@ -121,6 +133,7 @@ end
 Источник: fa:lua/ui/lobby/lobby.lua#IN_AddKeyMapTable(import("/lua/keymap/keymapper.lua").GetKeyMappings(
 Источник: fa:lua/SessionInit.lua#table.insert(__active_mods, m)
 Источник: ui-libs:mods/ReUI/Actions/Actions.lua#SetUserKeyAction(
+Наблюдение: запуск через `/map` с клавишами мода в профиле, сценарий `keys_new_match`: `Keybindings cannot find action` в логе стоит раньше `Active mods in session` и строки `Hooked` для `keyactions.lua`. Без лобби карта клавиш тоже строится до хуков UI-модов.
 
 ### Клавиша `pause_unit` зависит от раскладки
 
