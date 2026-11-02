@@ -47,7 +47,6 @@ class ExpectedVersionsTests(unittest.TestCase):
         "lua-lang": {"repo": "o/lua", "ref": "v1"},
         "lua-language-server": "3.0",
         "ziglang": "0.1",
-        "lupa": "2.0",
     }
 
     def test_repository_is_expected_at_its_ref(self):
@@ -151,6 +150,24 @@ class InstallStepTests(RootInTemp):
         self.assertEqual(calls, ["run", "run"])
 
 
+class InstallTests(RootInTemp):
+    VERSIONS = {
+        "ui-libs": {"repo": "o/mods", "ref": "aaa"},
+        "lua-lang": {"repo": "o/lua", "ref": "v1"},
+        "lua-language-server": "3.0",
+        "ziglang": "0.1",
+    }
+
+    def test_new_sparse_folder_repeats_the_repository_step(self):
+        (self.root / "references/ui-libs/mods/old").mkdir(parents=True)
+        bootstrap.mark_installed("ui-libs", "aaa")
+        with mock.patch.object(bootstrap, "SPARSE", {"ui-libs": ["mods/old", "mods/new"]}), \
+                mock.patch.object(bootstrap, "ensure_repo") as ensure_repo, \
+                mock.patch.object(bootstrap, "install_luals"):
+            bootstrap.install(self.VERSIONS, build_luac=False)
+        ensure_repo.assert_called_once_with("ui-libs", self.VERSIONS["ui-libs"], ["mods/old", "mods/new"])
+
+
 class EnsureRepoTests(RootInTemp):
     def setUp(self):
         super().setUp()
@@ -191,6 +208,11 @@ class EnsureRepoTests(RootInTemp):
     def test_only_sparse_folders_are_checked_out(self):
         bootstrap.ensure_repo("fa", self.spec(self.first), ["lua"])
         self.assertFalse((self.root / "references/fa/other/y.lua").exists())
+
+    def test_new_sparse_folder_reaches_an_existing_clone(self):
+        bootstrap.ensure_repo("fa", self.spec(self.first), ["lua"])
+        bootstrap.ensure_repo("fa", self.spec(self.first), ["lua", "other"])
+        self.assertTrue((self.root / "references/fa/other/y.lua").exists())
 
     def test_existing_clone_moves_to_new_commit(self):
         bootstrap.ensure_repo("fa", self.spec(self.first), ["lua"])
@@ -282,7 +304,6 @@ class LatestVersionsTests(unittest.TestCase):
         "lua-lang": {"repo": "o/lua", "ref": "v1"},
         "lua-language-server": "3.0",
         "ziglang": "0.1",
-        "lupa": "2.0",
     }
 
     def fetch(self, folder_commits=None, lua_tag="v1", luals_tag="3.0"):

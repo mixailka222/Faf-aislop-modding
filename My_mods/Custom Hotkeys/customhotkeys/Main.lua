@@ -35,21 +35,26 @@ local function CollectMatchingUnits(expression)
         units = GetSelectedUnits()
     end
 
-    local Selection = import("/lua/ui/game/selection.lua")
-    if Selection and Selection.Hidden then
-        Selection.Hidden(collect)
+    -- rawget: a plain read of a missing module field reaches the strict _G and fails.
+    local Hidden = rawget(import("/lua/ui/game/selection.lua"), "Hidden")
+    if Hidden then
+        Hidden(collect)
     else
+        WARN("Custom Hotkeys: selection.lua has no Hidden, ASE may undo the selection")
         collect()
     end
 
     return units
 end
 
---- ASE is optional, so its lock list is asked for once and only if it is
---- installed: importing a missing file fails, pcall keeps that quiet.
+--- ASE is optional, so its lock list is asked for once and only if its file
+--- exists: import of a missing file writes an error and a stack to the log even
+--- under pcall. The field is read plainly, not with rawget: if ASE imported the
+--- file lazily, only a field read loads it.
 --- Shared state works because FAF caches imported modules per path, and ASE
 --- itself reaches the same file as "/mods/ASE/modules/Lock.lua".
-local AseLocks
+local ASE_LOCK_FILE = "/mods/ASE/modules/Lock.lua"
+local AseIsLocked
 local aseLocksProbed = false
 
 --- @param unit UserUnit
@@ -58,13 +63,19 @@ local function IsLocked(unit)
     if not aseLocksProbed then
         aseLocksProbed = true
 
-        local ok, imported = pcall(import, "/mods/ASE/modules/Lock.lua")
-        if ok and imported and imported.IsLocked then
-            AseLocks = imported
+        if DiskGetFileInfo(ASE_LOCK_FILE) then
+            local ok, isLocked = pcall(function()
+                return import(ASE_LOCK_FILE).IsLocked
+            end)
+            if ok then
+                AseIsLocked = isLocked
+            else
+                WARN("Custom Hotkeys: ASE locks are not available: " .. tostring(isLocked))
+            end
         end
     end
 
-    return AseLocks ~= nil and AseLocks.IsLocked(unit)
+    return AseIsLocked ~= nil and AseIsLocked(unit)
 end
 
 --- Selects everything the category expression matches, removes the excluded
@@ -175,8 +186,7 @@ local function UnitsBelongTo(selection, included, excluded)
 end
 
 --- True when at least one selected unit can build something: an engineer,
---- commander or Megalith (the same test hotbuild itself uses, see
---- gamefiles\lua\keymap\hotbuild.lua:367) or a factory.
+--- commander or Megalith (the same test hotbuild itself uses) or a factory.
 --- @param selection UserUnit[]?
 --- @return boolean
 local function SelectionCanBuild(selection)
@@ -282,14 +292,14 @@ function Main()
             CategoryAction()
                 :Match(AddsNearestBomber)
                 :Action(function()
-                    AddNearest("AIR BOMBER, AIR ANTIAIR TECH2", categories.ANTINAVY + categories.EXPERIMENTAL)
+                    AddNearest("AIR BOMBER, AIR ANTIAIR TECH2", bomberExcluded)
                 end),
             -- Bare press while nothing can build re-selects the nearest bomber,
             -- so a selected fighter does not swallow this hotkey.
             CategoryAction()
                 :Match(SelectionCannotBuild)
                 :Action(function()
-                    SelectNearest("AIR BOMBER, AIR ANTIAIR TECH2", categories.ANTINAVY + categories.EXPERIMENTAL)
+                    SelectNearest("AIR BOMBER, AIR ANTIAIR TECH2", bomberExcluded)
                 end),
             CategoryAction()
                 :Match(AlwaysMatches)
@@ -298,12 +308,11 @@ function Main()
                 end),
         }
 
-        -- AKA's own hotkey "Select nearest air scout / build sensors" has the
-        -- same dead end this mod was fixed for: its last branch always runs
-        -- Hotbuild "Sensors", which only does something for engineers and
-        -- factories, so with a fighter selected the press did nothing
-        -- (references/AKA/Main.lua:388-400). AKA is a third-party mod and is
-        -- not patched here, so the same hotkey is offered with the rule above.
+        -- The last branch of AKA's own hotkey "Select nearest air scout / build
+        -- sensors" always runs Hotbuild "Sensors", which only does something for
+        -- engineers and factories, so with a fighter selected the press does
+        -- nothing. AKA is a third-party mod and is not patched here, so the same
+        -- hotkey is offered with the rule above.
         -- The description differs on purpose: ReUI.Actions keeps actions by
         -- name, and two equal names would overwrite each other in whatever
         -- order the mods happen to load.

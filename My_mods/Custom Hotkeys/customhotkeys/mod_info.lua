@@ -1,10 +1,10 @@
 name = "Custom Hotkeys"
-version = 8
-copyright = ""
+version = 9
+copyright = "2026 ExtraMassBlocker"
 description = "Three hotkeys: when nothing in the selection can build, the key selects the nearest fighter (or bomber, or air scout); otherwise it runs the Hotbuild Shields (or TMD, or Sensors) group. Requires ReUI."
-author = ""
+author = "ExtraMassBlocker, Puffskein"
 url = ""
-uid = "9c5416e1-f9e9-4bc4-a871-5075a233a902"
+uid = "87ca5ac2-b457-40e5-8522-583dc1835183"
 selectable = true
 enabled = true
 exclusive = false

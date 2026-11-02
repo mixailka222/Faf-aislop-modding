@@ -1,75 +1,24 @@
--- ============================================================================
---  Overflow Testing - ДИАГНОСТИЧЕСКИЙ мод. Только лог, никакой математики.
---  Версия 2. Правка: math.huge в LuaPlus не существует.
--- ============================================================================
+-- Overflow Testing - diagnostic mod: only the log, no math.
 --
---  ЗАЧЕМ
+-- Establishes that the game syncs the full economy of your army and allies, and the meaning
+-- of three things:
+--   1) energyout.excess / massout.excess - is it filled at all
+--   2) energyin.total - does it include overflow from allies
+--   3) excess - does it grow when an ally has run out of room
 --
---  Проверяем, что игра синхронизирует на клиент полную экономику своей
---  армии и союзников, и устанавливаем смысл трёх вещей:
+-- The mod computes and draws nothing. It writes raw values and the counter differences of
+-- the last sync.
 --
---    1) energyout.excess / massout.excess - заполняется ли вообще
---    2) energyin.total - входит ли туда перелив ОТ союзников
---    3) excess - растёт ли, когда у союзника кончилось место
+-- Data comes from AddOnSyncHashedCallback at the moment Sync.Score arrives, not from
+-- currentScores: the score beat of the game clears that right after drawing and runs before
+-- ours.
 --
---  Мод ничего не вычисляет и ничего не рисует. Только пишет в лог сырые
---  значения и разности счётчиков за последнюю синхронизацию.
---
---  ОТКУДА БЕРЁМ ДАННЫЕ
---
---  Не из currentScores! Штатный код /lua/ui/game/score.lua:712 обнуляет его
---  сразу после отрисовки, а штатный beat зарегистрирован на score.lua:137,
---  то есть раньше нашего OnCreateUI, и выполняется первым.
---
---  Используем штатный API синхронизации, /lua/UserSync.lua:39:
---
---      AddOnSyncHashedCallback(cb, 'Score', 'OverflowTest')
---
---  Вызывается на UserSync.lua:155-162, в цикле `for k, data in Sync`,
---  то есть РОВНО в момент прихода Sync.Score, и получает data = Sync.Score.
---  Это строка 155, а присваивание currentScores - строка 376.
---
---  Совместимость: SupremeScoreBoard2 перехватывает OnSync и читает
---  Sync.Score ПОСЛЕ оригинального OnSync (его hook/lua/UserSync.lua:13-15),
---  а наш колбэк срабатывает ВНУТРИ оригинала. Конфликта нет, отключать
---  SSB2 не нужно.
---
---  ВАЖНО: этот колбэк зовётся НАПРЯМУЮ, без pcall (UserSync.lua:158).
---  Ошибка внутри него сломает синхронизацию всей игры. Поэтому всё тело
---  обёрнуто в pcall. Отдельные ошибки не роняют мод сразу: первые три
---  печатаются с трассировкой, потом колбэк снимает сам себя.
---
---  ЗАПРЕЩЁННО В ЭТОМ ФАЙЛЕ (движок FAF):
---
---    * оператор #      - длина таблицы. Вместо него table.insert / pairs
---    * оператор %      - остаток от деления
---    * continue        - в Lua 5.1 нет такого слова
---    * math.huge       - НЕ СУЩЕСТВУЕТ, см. ниже
---    * локальные имена tag, name, index, count, value, type, end
---    * WaitSeconds внутри pcall - pcall это C-функция
---
---  ПРО math.huge - ровно то, на что упала версия 1:
---
---      main.lua(101): attempt to perform arithmetic on field `huge' (a nil value)
---
---  math.huge == nil, поэтому `-math.huge` это `-nil`. Подтверждено
---  комментарием разработчиков в самой игре,
---  nx2/lua/Projectile.lua:975:
---
---      Since `math.huge` does not exist (and does not cover the #IND case)
---
---  math.floor, math.abs, math.pi в игре используются сотни раз - а вот
---  math.huge нигде. Проверки бесконечности здесь просто убраны: счётчики
---  экономики бесконечными не бывают.
--- ============================================================================
+-- The game calls the callback without pcall and an error would break the sync of the whole
+-- game, so the body is under pcall. The first three errors are logged with a trace, then
+-- the callback removes itself.
 
--- Префикс строк лога. Не называем TAG - tag служебный идентификатор.
 local PFX = 'OverflowTest'
 
--- Локализуем глобалы. Проверены по исходникам игры:
---   IsAlly, GetGameTimeSeconds       - sim/score.lua:298, ui/game/score.lua:197
---   AddOnSyncHashedCallback          - UserSync.lua:39
---   RemoveOnSyncHashedCallback       - UserSync.lua:47
 local LOG                        = LOG
 local GameTick                   = GameTick
 local GetFocusArmy               = GetFocusArmy
@@ -79,36 +28,32 @@ local GetGameTimeSeconds         = GetGameTimeSeconds
 local AddOnSyncHashedCallback    = AddOnSyncHashedCallback
 local RemoveOnSyncHashedCallback = RemoveOnSyncHashedCallback
 
--- Идентификатор колбэка. Должен быть уникальным, иначе мод затрёт чужой.
+-- Callback id. It has to be unique, otherwise the mod overwrites another callback.
 local CB_ID = 'OverflowTest'
 
--- Первый ли вывод. В первый раз разностей ещё нет.
+-- First output: there are no differences yet.
 local firstSample = true
 
--- Сколько раз данные реально обновились.
+-- How many times the data really changed.
 local nSyncSamples = 0
 
--- Сколько ошибок подряд было в колбэке. После NERR_LIMIT отключаемся.
+-- Errors in a row in the callback. After NERR_LIMIT the mod switches off.
 local nErrors = 0
 local NERR_LIMIT = 3
 
--- Подпись последнего выведенного Sync.Score. Синхронизация приходит каждый
--- бит, а данные пересобираются примерно раз в 2 секунды (sim/score.lua:2).
--- Чтобы в лог не сыпалось по 60 одинаковых строк в секунду, пишем только
--- когда содержимое реально изменилось.
+-- Signature of the last Sync.Score written. The sync comes every beat while the data is
+-- rebuilt about every 2 seconds, so only a real change is logged.
 local lastSignature = nil
 
--- Предыдущие значения счётчиков, по индексу армии, для разностей.
+-- Previous counters by army index, for the differences.
 local prevCounters = {}
 
--- ---------------------------------------------------------------------------
---  ФОРМАТИРОВАНИЕ
--- ---------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+-- Formatting
+--------------------------------------------------------------------------------
 
--- Отличаем nil (поля нет) от 0 (поле есть и равно нулю). Для excess это
--- принципиально: "всегда ноль" и "поля не существует" - разные выводы.
---
--- Спецификаторы в string.format разрешены, это не оператор остатка.
+-- Tells nil (no field) from 0 (a field equal to zero). For excess that matters: "always
+-- zero" and "no such field" are different conclusions.
 local function num(v)
     if v == nil then
         return 'nil'
@@ -129,8 +74,8 @@ local function delta(newVal, oldVal)
     return string.format('%+.1f', newVal - oldVal)
 end
 
--- Безопасное чтение вложенного поля: t.a.b -> nil, если уровня нет.
--- Один уровень: field(t, 'energyin') ; два: field(t, 'energyin', 'total')
+-- Reads a nested field, nil if a level is absent: field(t, 'energyin') or field(t,
+-- 'energyin', 'total').
 local function field(t, a, b)
     if type(t) ~= 'table' then return nil end
     local v = t[a]
@@ -139,9 +84,9 @@ local function field(t, a, b)
     return v[b]
 end
 
--- ---------------------------------------------------------------------------
---  СЧЁТЧИКИ ДЛЯ РАЗНОСТЕЙ
--- ---------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+-- Counters for the differences
+--------------------------------------------------------------------------------
 
 local function saveCounters(armyIdx, res)
     local c = {
@@ -158,15 +103,12 @@ local function saveCounters(armyIdx, res)
     return c
 end
 
--- ---------------------------------------------------------------------------
---  ОДНА АРМИЯ
--- ---------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+-- One army
+--------------------------------------------------------------------------------
 
--- Отношение армии к нам: ME / ALLY / ENEM.
--- Направление аргументов как в игре: IsAlly(мояАрмия, проверяемая).
--- Сверяется с sim/score.lua:298.
--- pcall на всякий случай: если IsAlly споткнётся о нестандартный индекс,
--- потеряется одна метка в шапке, а не весь мод.
+-- Relation of an army to us: ME / ALLY / ENEM. The argument order follows the game:
+-- IsAlly(myArmy, checked). Under pcall: a failure costs one label, not the whole mod.
 local function relation(armyIdx, me)
     if armyIdx == me then
         return 'ME  '
@@ -178,7 +120,7 @@ local function relation(armyIdx, me)
     return 'ENEM'
 end
 
--- Собственная экономика движка, для сверки с синхронизацией.
+-- Economy from the engine, to compare with the sync.
 local function dumpOwnEcon()
     local ok, e = pcall(GetEconomyTotals)
     if not ok or type(e) ~= 'table' then
@@ -199,13 +141,11 @@ end
 
 local function dumpArmy(armyIdx, s, me)
     local rel = relation(armyIdx, me)
-    -- s.name, но name - служебное имя, поэтому в другую переменную
     local armyName = s.name or s.nickname or '?'
 
     local res = s.resources
 
-    -- Для врагов игра шлёт только {general={}} (sim/score.lua:301).
-    -- Это НЕ ошибка, это ожидаемое поведение. Фиксируем и идём дальше.
+    -- For enemies the game sends only {general={}}. This is expected.
     if type(res) ~= 'table' then
         LOG(PFX .. ':   ' .. rel .. ' #' .. tostring(armyIdx) ..
             ' ' .. tostring(armyName) ..
@@ -217,16 +157,12 @@ local function dumpArmy(armyIdx, s, me)
         dumpOwnEcon()
     end
 
-    -- ВАЖНО: prv читается ДО saveCounters. saveCounters перезаписывает
-    -- prevCounters[armyIdx], и если взять prv после, prv окажется тем же
-    -- самым значением и все разности будут 0. На этом провалилась версия 2.
+    -- prv has to be read before saveCounters overwrites it, or all differences would be 0.
     local prv = prevCounters[armyIdx]
     local cur = saveCounters(armyIdx, res)
 
-    -- ------------------------------------------------------------------
-    --  СЫРЫЕ ЗНАЧЕНИЯ.  in = total / rate, затем reclaimed / reclaimRate;
-    --  out = total / rate, затем excess;  st = stored / max
-    -- ------------------------------------------------------------------
+    -- Raw values. in = total / rate, then reclaimed / reclaimRate; out = total / rate, then
+    -- excess; st = stored / max.
     LOG(PFX .. ':   ' .. rel .. ' #' .. tostring(armyIdx) ..
         ' ' .. tostring(armyName) ..
         ' | E in=' .. num(field(res, 'energyin', 'total')) ..
@@ -251,12 +187,8 @@ local function dumpArmy(armyIdx, s, me)
         ' | M st=' .. num(field(res, 'storage', 'storedMass')) ..
         '/' .. num(field(res, 'storage', 'maxMass')))
 
-    -- ------------------------------------------------------------------
-    --  РАЗНОСТИ ЗА ПОСЛЕДНУЮ СИНХронизацию.
-    --  Это входные данные формулы
-    --      G = P + I_in - E - W - dS
-    --  Саму G здесь НЕ считаем - это делаем после разбора логов.
-    -- ------------------------------------------------------------------
+    -- Differences over the last sync, the input of the formula G = P + I_in - E - W - dS. G
+    -- itself is computed when the log is analyzed.
     if firstSample or type(prv) ~= 'table' then
         LOG(PFX .. ':   ' .. rel .. ' #' .. tostring(armyIdx) ..
             '  (first sample, no deltas yet)')
@@ -276,12 +208,11 @@ local function dumpArmy(armyIdx, s, me)
         ' stor=' .. delta(cur.mstore, prv.mstore))
 end
 
--- ---------------------------------------------------------------------------
---  СЧИТЫВАНИЕ СОСТАВА Sync.Score
--- ---------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+-- Contents of Sync.Score
+--------------------------------------------------------------------------------
 
--- Возвращает: сколько меня, сколько союзников, сколько врагов,
--- и сколько записей вообще имеют поле resources.
+-- Returns the counts of me, allies, enemies and records with resources.
 local function countArmies(scoreData)
     local nAlly, nMe, nEnem, nRes = 0, 0, 0, 0
     local me = GetFocusArmy()
@@ -303,7 +234,7 @@ local function countArmies(scoreData)
     return nMe, nAlly, nEnem, nRes
 end
 
--- Отсортированные индексы армий. Стабильный порядок вывода.
+-- Sorted army indexes, for a stable output order.
 local function sortedIndexes(scoreData)
     local idxs = {}
     for armyIdx in scoreData do
@@ -315,9 +246,8 @@ local function sortedIndexes(scoreData)
     return idxs
 end
 
--- Подпись содержимого: ключевые числа ВСЕХ армий.
--- Берём не только свою армию: если у своей нет resources, подпись по ней
--- была бы постоянной и мод почти не писал бы. Союзники нужны и здесь.
+-- Signature of the key numbers of all armies. Allies are included: if our own record has no
+-- resources, the signature would never change.
 local function makeSignature(scoreData)
     local parts = {}
     for _, armyIdx in ipairs(sortedIndexes(scoreData)) do
@@ -335,9 +265,9 @@ local function makeSignature(scoreData)
     return table.concat(parts, '|')
 end
 
--- ---------------------------------------------------------------------------
---  ОСНОВНОЙ ДАМП
--- ---------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+-- Main dump
+--------------------------------------------------------------------------------
 
 local function DumpScore(scoreData)
     if type(scoreData) ~= 'table' then
@@ -347,7 +277,7 @@ local function DumpScore(scoreData)
 
     local sig = makeSignature(scoreData)
     if sig == lastSignature then
-        -- Данные не пересобирались - молчим, чтобы лог оставался читаемым
+        -- The data was not rebuilt: stay silent to keep the log readable.
         return
     end
 
@@ -363,8 +293,7 @@ local function DumpScore(scoreData)
         ' enem=' .. tostring(nEnem) ..
         ') withResources=' .. tostring(nRes) .. ' =====')
 
-    -- Каждая армия - в своём pcall. Одна плохая армия не должна убивать
-    -- весь вывод: ради остальных и затевался мод.
+    -- Each army has its own pcall: one bad army must not kill the output.
     for _, armyIdx in ipairs(sortedIndexes(scoreData)) do
         local s = scoreData[armyIdx]
         if type(s) == 'table' then
@@ -381,14 +310,13 @@ local function DumpScore(scoreData)
     nSyncSamples = nSyncSamples + 1
 end
 
--- ---------------------------------------------------------------------------
---  КОЛБЭК
--- ---------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+-- Callback
+--------------------------------------------------------------------------------
 
 local function OnScore(scoreData)
-    -- HashSync-колбэк зовётся напрямую (UserSync.lua:158-160), БЕЗ pcall.
-    -- Ошибка здесь поедет по всей синхронизации игры. Поэтому pcall внутри,
-    -- и он синхронный: WaitSeconds не нужен и недопустим.
+    -- The game calls this callback without pcall, and an error would break the sync of the
+    -- game. No waits here.
     local ok, err = pcall(DumpScore, scoreData)
     if ok then
         nErrors = 0
@@ -409,23 +337,18 @@ local function OnScore(scoreData)
     end
 end
 
--- ---------------------------------------------------------------------------
---  ЗАПУСК
--- ---------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+-- Start
+--------------------------------------------------------------------------------
 
 local started = false
 
--- Синхронная часть: только регистрация колбэка, ни одного ожидания.
+-- Only the registration of the callback, no waits.
 local function Start()
     if started then
         return
     end
     started = true
-
-    -- UserSync.lua объявляет функции через ---@declare-global и ничего не
-    -- возвращает, поэтому берём побочный эффект импорта: нужны сами
-    -- глобалы AddOnSyncHashedCallback / RemoveOnSyncHashedCallback.
-    import('/lua/UserSync.lua')
 
     if type(AddOnSyncHashedCallback) ~= 'function' then
         error('AddOnSyncHashedCallback is not a function - cannot watch Sync.Score')
@@ -436,9 +359,8 @@ local function Start()
     LOG(PFX .. ': waiting for Sync.Score. Logging only, nothing is computed.')
 end
 
--- Сторож: если за 40 секунд данные не пришли, это само по себе результат
--- эксперимента и его надо явно зафиксировать.
--- ВНЕ pcall - здесь есть ожидание.
+-- Watchdog: no data within 40 seconds is a result of its own. Outside pcall, because it
+-- waits.
 local function Watchdog()
     WaitSeconds(40)
     if lastSignature == nil then
@@ -451,18 +373,14 @@ local function Watchdog()
     end
 end
 
--- ---------------------------------------------------------------------------
---  МЕТКА ФАЗЫ ДЛЯ РУЧНОГО ТЕСТА
--- ---------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+-- Phase mark for a manual test
+--------------------------------------------------------------------------------
 
--- Одна игра, три фазы - лог делить нечем. Метка пишется прямо в тот же
--- лог, поэтому разбор получается однозначным.
---
--- Вызов из консоли игры (F10):
+-- One game has three phases, so a mark goes to the same log to tell them apart. Call it
+-- from the game console (F10):
 --
 --   UI_Lua import('/mods/overflow_testing/modules/main.lua').Mark("PHASE 2")
---
--- Ничего не вычисляет, только пишет. Ждать нечего.
 function Mark(text)
     LOG(PFX .. ': ############ ' .. tostring(text) ..
         ' ############  t=' .. num(GetGameTimeSeconds()) ..
@@ -470,8 +388,7 @@ function Mark(text)
 end
 
 function OnCreateUI()
-    -- Никакого ожидания здесь: регистрация должна пройти раньше первого
-    -- прихода синхронизации.
+    -- No wait here: the registration has to happen before the first sync arrives.
     local ok, err = pcall(Start)
     if not ok then
         LOG(PFX .. ': start FAILED: ' .. tostring(err))

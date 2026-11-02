@@ -101,29 +101,11 @@ end
 
 Источник: fa:lua/SessionInit.lua#doscript '/lua/userInit.lua'
 
-### Хук `ui_only`-мода на `userInit.lua` может не сработать
-
-`SessionInit.lua` выполняет `userInit.lua` раньше, чем добавляет UI-моды в `__active_mods`.
-
-Не подтверждено: нужен лог игры с `ui_only`-модом, который хукает `/lua/userInit.lua`, и строка `Hooked` для него.
-
-### Верхнеуровневый `return` в файле хука опасен
-
-После склейки за `return` идёт код следующего хука, а компилятор требует, чтобы `return` был последним в блоке: `<eof> expected near ...`. Ошибка отключит весь игровой файл.
-
-Не подтверждено: нужен запуск игры с двумя хуками на один файл, где первый заканчивается на `return`.
-
 ### BOM в начале обычного файла не мешает
 
 Компилятор пропускает BOM при чтении файла. В поставке игры с BOM начинаются `lua/armordefinition.lua`, `lua/ui/game/taunt.lua` и ещё три файла.
 
 Источник: lua-lang:HISTORY#skip BOM and unix style # comments when reading files
-
-### BOM в файле хука опасен
-
-Пропускается только BOM в самом начале. Посреди текста тот же компилятор выдаёт `unexpected symbol near`, а файл хука оказывается в середине склейки. `luac` по отдельному файлу этого не покажет.
-
-Не подтверждено: нужен запуск игры с хуком, сохранённым с BOM.
 
 ### Хук `defaultKeyMap.lua` действует не всегда
 
@@ -131,6 +113,14 @@ end
 
 Источник: fa:lua/keymap/keymapper.lua#return GetUserKeyMap() or GetDefaultKeyMap()
 Источник: fa:lua/keymap/keymapper.lua#return Prefs.GetFromCurrentProfile("UserKeyMapName") or "/lua/keymap/defaultkeymap.lua"
+
+### Клавиша действия из мода может не дойти до партии
+
+Лобби строит карту клавиш партии до старта сессии, а UI-моды попадают в `__active_mods` только в `SessionInit.lua`. Действия из хука `keyactions.lua` лобби поэтому не знает, и привязанная к ним клавиша в партию не попадает. Мод ставит такую клавишу сам при создании интерфейса через `IN_AddKeyMapTable`. ReUI.Actions решает это иначе: записывает действия в `UserKeyActions`.
+
+Источник: fa:lua/ui/lobby/lobby.lua#IN_AddKeyMapTable(import("/lua/keymap/keymapper.lua").GetKeyMappings(
+Источник: fa:lua/SessionInit.lua#table.insert(__active_mods, m)
+Источник: ui-libs:mods/ReUI/Actions/Actions.lua#SetUserKeyAction(
 
 ### Клавиша `pause_unit` зависит от раскладки
 

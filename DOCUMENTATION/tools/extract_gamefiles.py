@@ -85,7 +85,7 @@ def main():
             elif comp == 8:
                 try:
                     data = zlib.decompressobj(-15).decompress(blob)
-                except Exception as e:
+                except zlib.error as e:
                     print("DECOMP FAIL", name, e)
                     skip += 1
                     continue

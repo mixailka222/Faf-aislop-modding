@@ -1,58 +1,23 @@
--- Overflow - какие строки панели показывать. Версия 1.
+-- Overflow - which rows of the panel are shown.
 --
--- ЗАЧЕМ ОТДЕЛЬНЫЙ ФАЙЛ. Настройка нужна сразу двоим: панели интерфейса
--- (ui.lua) и странице настроек UMT (Options.lua). Если бы список строк и их
--- названия жили в ui.lua, то страница настроек тянула бы весь интерфейс ради
--- констант. Здесь одно определение на обоих.
+-- A separate file because the panel (ui.lua) and the UMT settings page (Options.lua) both
+-- need the list of rows, and the page must not import the panel: the load order of UMT and
+-- the game interface is unknown, so the import could meet a module that is still loading.
+-- The page writes to the profile and the panel notices the change on its beat.
 --
--- ---------------------------------------------------------------------------
--- ЭКСПОРТ ГЛОБАЛАМИ, А НЕ ЧЕРЕЗ return. Значение return движок отбрасывает
--- (import.lua:61 и 171), а у _G стоит метаметод config.lua:56-61, падающий
--- ошибкой на несуществующем глобале. Подробно - методичка 3.23; там же
--- объяснение, почему ui.lua читает поля модуля через rawget.
+-- Functions are exported as globals: the game discards what a module returns. ui.lua reads
+-- them through rawget.
 --
--- Поэтому функции ниже объявлены как `function Visible()`, а в ui.lua берутся
--- через rawget(ИмяМодуля, 'Visible') - ровно как уже сделано для sync.lua.
+-- Values live under the profile key 'Overflow', the same key OptionVar:Save() uses, so the
+-- window and the mod share them. Without UMT the keys are absent and VisibleRows() returns
+-- the defaults. This file must not touch UMT: without it, reading the missing global would
+-- kill the whole mod.
 --
--- ---------------------------------------------------------------------------
--- ГДЕ ЛЕЖАТ ЗНАЧЕНИЯ
+-- The key has no dots: GetFromCurrentProfile reads the string as a path.
 --
--- Профиль 'Overflow'. Это ТОТ ЖЕ ключ, которым пользуется UMT:
--- OptionVar:Save() (mods/umt/modules/OptionVar.lua:41-47) делает
---
---     Prefs.GetFromCurrentProfile('Overflow')[имяПоля] = значение
---     Prefs.SetToCurrentProfile('Overflow', таблица)
---
--- То есть окно настроек и мод смотрят в одно хранилище, и мод НЕ зависит от
--- того, установлен ли UMT:
---
---   * UMT установлен и страницу открывали - значения уже в профиле;
---   * UMT есть, но страницу не открывали - OptionVar:Create
---     (OptionVar.lua:88-96) кладёт значения по умолчанию в профиль сам, как
---     только страница загрузится;
---   * UMT не установлен - ключей в профиле нет, и Visible() ниже
---     возвращает значения по умолчанию сама.
---
--- Именно поэтому ЗДЕСЬ НЕТ ни одного обращения к UMT. Если бы rows.lua полез
--- в UMT.Options, а UMT не установлен, чтение несуществующего глобального
--- имени УБИЛО БЫ МОД ЦЕЛИКОМ (методичка 3.6).
---
--- Именно поэтому страница настроек НЕ импортирует ui.lua, а только пишет в
--- профиль. Панель сама замечает изменение по биту игры. Причина не в
--- экономии, а в порядке загрузки: неизвестно, UMT ли загрузится раньше
--- интерфейса игры или позже, и импорт ui.lua из страницы настроек в одном
--- из случаев поймал бы ещё не до конца выполненный модуль.
---
--- КЛЮЧ ПРОФИЛЯ НЕ СОДЕРЖИТ ТОЧЕК: GetFromCurrentProfile читает строку как
--- путь по точкам - методичка 11.1. Положение панели лежит отдельно, в ключе
--- 'OverflowPanelPos' (ui.lua).
---
--- ---------------------------------------------------------------------------
--- ХРАНИТСЯ «КАКИЕ СТРОКИ ВИДНЫ», А НЕ «КАКИЕ СКРЫТЫ»
---
--- Разница видна на старой версии профиля, где полей нет вообще: «не
--- указано» должно значить «показывать», иначе после обновления мода у всех
--- пропала бы панель.
+-- The profile stores which rows are visible, not which are hidden: an absent field has to
+-- mean "as by default", or an update of the mod would blank the panel of everyone who never
+-- opened the settings.
 
 local Prefs        = import('/lua/user/prefs.lua')
 local LOG          = LOG
@@ -62,17 +27,11 @@ local StringFormat = string.format
 
 local PREFS_KEY = 'Overflow'
 
---------------------------------------------------------------------------------
--- ОПРЕДЕЛЕНИЕ СТРОК
---------------------------------------------------------------------------------
 
--- ПОРЯДОК ВАЖЕН: в этом порядке строки идут на панели. Он совпадает с
--- порядком строк в ui.lua и должен совпадать с ним всегда.
+-- The order of the rows on the panel. ROW_ORDER in ui.lua has to match it.
 local ROWS = { 'eOverflow', 'eGo', 'eOwn', 'mOverflow', 'mGo', 'mOwn', 'total' }
 
--- Человеческие названия для окна настроек. Ключи обязаны совпадать с ROWS:
--- иначе галочка появится для несуществующей строки, а настоящая останется
--- без настройки.
+-- Titles for the settings window, one for each key of ROWS.
 local TITLES = {
     eOverflow = 'E ally overflow - сколько энергии дают союзники',
     eGo       = 'E to allies - сколько энергии отдаём мы',
@@ -83,13 +42,8 @@ local TITLES = {
     total     = 'reclaim E / M - скорость реклейма',
 }
 
--- ПО УМОЛЧАНИЮ ВИДНЫ ДВЕ СТРОКИ: перелив энергии союзникам и перелив энергии
--- от нас. Так хочет игрок - это его рабочий набор, и он должен стоять сразу
--- после установки, без похода в настройки.
---
--- НАБОР ПО УМОЛЧАНИЮ ОБЯЗАН СОВПАДАТЬ С PRESETS[1] (см. ниже): UMT при
--- открытии окна ищет сохранённое значение в списке и, не найдя, молча ставит
--- и сохраняет первый элемент (Views/StringSelector.lua:31-35).
+-- Two rows are visible by default. This set has to match PRESETS[1]: UMT replaces a value
+-- it cannot find in a list with the first item and saves it.
 local DEFAULTS = {
     eOverflow = true,
     eGo       = true,
@@ -101,20 +55,11 @@ local DEFAULTS = {
 }
 
 --------------------------------------------------------------------------------
--- ГОТОВЫЕ НАБОРЫ
+-- Ready-made sets, so that keeping one row does not take six clicks.
 --
--- Чтобы оставить одну строку, не нужно снимать шесть галочек.
---
--- ПЕРВЫЙ ЭЛЕМЕНТ ОБЯЗАН БЫТЬ «ПОКАЗЫВАТЬ ВСЁ». Значение выпадающего списка
--- по умолчанию равно items[1], а UMT при открытии окна ищет текущее
--- значение в списке и, если не нашёл, МОЛЧА ставит первый элемент и
--- сохраняет его (mods/umt/modules/Views/StringSelector.lua:31-35). Поэтому
--- items[1] обязан совпадать со значением по умолчанию.
---
--- ПОСЛЕДНИЙ ЭЛЕМЕНТ - НЕ НАБОР, А СЛУЖЕБНОЕ СОСТОЯНИЕ. Оно показывается,
--- когда игрок собрал комбинацию, которой нет выше. Флагов у него нет, так
--- что щелчок по нему ничего не портит: обработчик разворачивает набор через
--- PresetByName, а тот для этого элемента возвращает nil.
+-- The first item matches DEFAULTS, see above. The last item is not a set but the state
+-- shown for a combination that is not listed: it has no flags, so PresetByName returns nil
+-- and choosing it changes nothing.
 --------------------------------------------------------------------------------
 
 local PRESETS = {
@@ -137,28 +82,21 @@ local PRESETS = {
       flags = nil },
 }
 
---------------------------------------------------------------------------------
--- ДОСТУП К ОПРЕДЕЛЕНИЮ СТРОК
---------------------------------------------------------------------------------
-
--- Сколько всего строк. Оператор # движком не поддерживается - длина только
--- через table.getn (методичка 3.3).
 function HowManyRows()
     return TableGetn(ROWS)
 end
 
--- Имя строки по номеру, начиная с 1.
+-- Row key by number, from 1.
 function RowKeyAt(i)
     return ROWS[i]
 end
 
--- Название строки для окна настроек.
+-- Row title for the settings window.
 function RowTitleOf(rowKey)
     return TITLES[rowKey]
 end
 
--- Копия значений по умолчанию: копия, а не сам DEFAULTS, чтобы вызывающий
--- код не мог испортить определение.
+-- A copy, so that the caller cannot damage the definition.
 function RowDefaults()
     local out = {}
     for i = 1, TableGetn(ROWS) do
@@ -168,7 +106,7 @@ function RowDefaults()
     return out
 end
 
--- Названия готовых наборов в том же порядке, что и в PRESETS.
+-- Set names in the order of PRESETS.
 function PresetNames()
     local out = {}
     for i = 1, TableGetn(PRESETS) do
@@ -177,16 +115,8 @@ function PresetNames()
     return out
 end
 
---------------------------------------------------------------------------------
--- ЧТЕНИЕ И ЗАПИСЬ
---------------------------------------------------------------------------------
 
--- Какие строки показывать.
---
--- Отсутствующий ключ читается как «показывать», а не как «скрыть»: так же
--- ведёт себя и UMT, и старый профиль без этих полей. Различать «поле равно
--- false» и «поля нет» здесь обязательно - иначе обновление мода погасило бы
--- панель у всех, кто ни разу не открывал настройки.
+-- Which rows to show. An absent key reads as the default: see the header.
 function VisibleRows()
     local saved = nil
     local ok, res = pcall(function()
@@ -213,12 +143,8 @@ function VisibleRows()
     return out
 end
 
--- Записать набор строк в профиль.
---
--- ЧИТАЕМ ТАБЛИЦУ И ПИШЕМ ЕЁ ОБРАТНО, а не затираем целиком: тем же профилем
--- 'Overflow' пользуется UMT для своих полей, и полное затирание снесло бы
--- их. Ровно так же поступает сам UMT - OptionVar.lua:42-44 читает текущую
--- таблицу и меняет в ней один ключ.
+-- Writes the rows to the profile. The table is read and written back because UMT keeps its
+-- own fields under the same key.
 function SaveRows(vis)
     local ok, err = pcall(function()
         local profile = Prefs.GetFromCurrentProfile(PREFS_KEY)
@@ -231,7 +157,6 @@ function SaveRows(vis)
         end
         Prefs.SetToCurrentProfile(PREFS_KEY, profile)
     end)
-    -- ошибку не глотаем молча: иначе непонятно, почему галочка не сработала
     if not ok then
         LOG('Overflow: rows Save FAILED: ' .. tostring(err))
         return false
@@ -239,19 +164,13 @@ function SaveRows(vis)
     return true
 end
 
---------------------------------------------------------------------------------
--- СООТВЕТСТВИЕ НАБОРОВ
---------------------------------------------------------------------------------
 
--- Название готового набора, совпадающего с vis, или nil.
---
--- Совпадение проверяется по ВСЕМ строкам, а не по тем, что перечислены в
--- наборе: нельзя пропустить строку, которая в наборе не упомянута, но
--- включена у игрока.
+-- Name of the set equal to vis, or nil. All rows are compared, including those the set does
+-- not mention.
 function PresetFor(vis)
     for i = 1, TableGetn(PRESETS) do
         local preset = PRESETS[i]
-        -- служебный элемент набором не является и совпасть не может
+        -- the last item is not a set
         if preset.flags ~= nil then
             local same = true
             for j = 1, TableGetn(ROWS) do
@@ -273,18 +192,16 @@ function PresetFor(vis)
     return nil
 end
 
--- Подпись служебного состояния «ни один набор не совпал». Её показывает
--- страница настроек, когда игрок собрал комбинацию вручную.
+-- Label of the state with no matching set, for a combination made by hand.
 function PresetOther()
     return PRESETS[TableGetn(PRESETS)].label
 end
 
--- Развернуть название набора в таблицу флагов, или nil если названия нет
--- (неизвестное название или служебный элемент).
+-- Expands a set name into flags. nil for an unknown name and for the last item.
 function PresetByName(label)
     for i = 1, TableGetn(PRESETS) do
         if PRESETS[i].label == label then
-            -- служебный элемент: разворачивать нечего, и это не ошибка
+            -- the last item has nothing to expand
             if PRESETS[i].flags == nil then
                 return nil
             end
@@ -300,15 +217,9 @@ function PresetByName(label)
     return nil
 end
 
---------------------------------------------------------------------------------
--- КОРОТКИЕ ВСПОМОГАТЕЛЬНЫЕ
---------------------------------------------------------------------------------
 
--- Подпись набора строк из семи символов: по '1' или '0' на строку.
---
--- Панель сравнивает его со своим и перерисовывает раскладку, только когда
--- набор реально изменился. Строка вместо таблицы - потому что сравнение
--- таблиц в этом движке делается по ссылке и всегда даёт «разные».
+-- Signature of the visible rows, one '1' or '0' per row. The panel redoes the layout only
+-- when it changes. A string, because tables compare by reference.
 function RowsSignature(vis)
     local parts = {}
     for i = 1, TableGetn(ROWS) do
@@ -322,7 +233,7 @@ function RowsSignature(vis)
     return TableConcat(parts)
 end
 
--- Короткая строка для лога: какие строки видны.
+-- Short line for the log: which rows are visible.
 function DescribeRows(vis)
     local parts = {}
     local howMany = 0

@@ -1,15 +1,14 @@
 name = "Reclaim Pause"
-version = 35
+version = 36
 copyright = "2026 ExtraMassBlocker"
 description = "Puts your reclaiming engineers on hold when your mass storage is nearly full (70% by default) and releases them again when you start spending mass (65%). Engineers keep their orders, so on release they carry on from where they stopped. Using the 'UI mod tools' mod, you can change every threshold. Created with AI and may contain errors."
-author = "ExtraMassBlocker"
+author = "ExtraMassBlocker, Puffskein"
 url = ""
--- uid идентифицирует КОНКРЕТНУЮ ВЕРСИЮ мода, а не сам мод, поэтому на каждую
--- новую версию нужен новый uid, а имя остаётся прежним - по имени клиент FAF
--- находит, какой мод обновлять. См. lua/MODS.LUA:41-50 и 69-72.
-uid = "70617019-1970-4d38-ad4c-2b89eb4f0f58"
+-- The uid identifies one version of the mod, so every version needs a new one. The name
+-- stays: by it the FAF client finds the mod to update.
+uid = "22cf9e27-281f-4409-9d26-ce1fc6259b14"
 exclusive = false
 ui_only = true
--- Флаг для мода "UI mod tools": он сам подхватит modules/options.lua.
--- Без UMT мод работает как обычно, просто на значениях по умолчанию.
+-- Makes the 'UI mod tools' mod load modules/options.lua. Without UMT the mod runs on its
+-- defaults.
 __umt = true

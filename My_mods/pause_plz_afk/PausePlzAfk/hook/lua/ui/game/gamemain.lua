@@ -1,18 +1,13 @@
--- PausePlzAfk - entry point (hook).
+-- PausePlzAfk - entry point, appended to lua/ui/game/gamemain.lua.
 --
--- This file is appended to lua/ui/game/gamemain.lua, and CreateUI is called
--- by the game itself to build the interface. If this errors, the game gets
--- a black screen. So the module loads via pcall, CreateUI is hooked ONLY on
--- success, and any error just disables the mod with a LOG line.
+-- The game calls CreateUI to build the interface and an error there leaves a black screen.
+-- So CreateUI is hooked only after the module has loaded, and the mod runs under pcall.
 
 do
     local okMod, PauseAfkMod = pcall(import, '/mods/PausePlzAfk/modules/pause_afk.lua')
 
-    -- Read the export via rawget, not a plain field access. A plain access
-    -- on a missing field falls through the module __index (lua/system/
-    -- import.lua:24-26, __index = _G), and _G carries a metatable that calls
-    -- error() (lua/system/config.lua:56-61). Check type first: rawget needs
-    -- a table.
+    -- rawget: a plain read of a missing field reaches the strict _G, which raises an error.
+    -- rawget needs a table, so the type comes first.
     local OnCreateUI = nil
     if type(PauseAfkMod) == 'table' then
         OnCreateUI = rawget(PauseAfkMod, 'PauseAfkOnCreateUI')

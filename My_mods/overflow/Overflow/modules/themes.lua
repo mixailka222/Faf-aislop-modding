@@ -1,101 +1,40 @@
--- Overflow - оформление панели: стиль, рамка, мигание. Версия 2.
+-- Overflow - look of the panel: style, frame, blinking.
 --
--- ЗАЧЕМ ОТДЕЛЬНЫЙ ФАЙЛ. Ровно как у rows.lua: оформление нужно двоим - панели
--- интерфейса (ui.lua) и странице настроек UMT (Options.lua). Если бы палитра
--- жила в ui.lua, страница настроек тянула бы весь интерфейс ради списка названий.
+-- A separate file for the same reason as rows.lua: the settings page needs the names
+-- without importing the panel.
 --
--- ---------------------------------------------------------------------------
--- ЭКСПОРТ ГЛОБАЛАМИ, А НЕ ЧЕРЕЗ return. Значение return движок отбрасывает
--- (import.lua:61 и 171), а на _G висит метаметод config.lua:56-61, падающий
--- ошибкой на несуществующем глобале (методичка 3.23). Поэтому функции ниже
--- объявлены как `function StyleX()` и берутся в ui.lua через rawget - так же,
--- как уже сделано для sync.lua и rows.lua.
+-- A style (StyleNames) sets the font size and the colours of the text, a frame (FrameNames)
+-- sets the window itself. Each has two variants, Minimal by default and Vanilla.
 --
--- ---------------------------------------------------------------------------
--- ЧТО ТЕПЕРЬ НАЗЫВАЕТСЯ ОФОРМЛЕНИЕМ. Раньше тема была единым целым: и рамка,
--- и шрифт, и цвета одним пунктом списка. Это плохо совпадало с требованиями,
--- потому что шрифт с цветами и рамка - разные вещи:
+-- Vanilla takes size 10, the size of the small numbers on the game resource panel, and its
+-- colours from the game skin, so the mod follows FAF if the skin changes. SAFE, WARN and
+-- BAD come from the game resource panel in both styles. The game passes colour names such
+-- as 'red' to Text:SetColor, and the labels here are the same Text.
 --
---   ПРЕСЕТ (StyleNames) - шрифт и цвета ТЕКСТА. Два варианта:
---       Vanilla - как в игре: цвета из скина, размер 10 (см. ниже).
---       Minimal - наш: размер 11 и цвета, которые раньше жили в теме «Неон».
---       По умолчанию Vanilla.
+-- The three colours mean the same in every style: green - no overflow, yellow - allies
+-- overflow to you, red - you depend on it too much. A style changes the shade, not the list
+-- of states. States and the threshold live in ui.lua (StatusColor).
 --
---   РАМКА (FrameNames) - как выглядит само окно. Два варианта:
---       Vanilla - игровое окно с игровым бордером (текстуры миникарты).
---       Minimal - плоская заливка без объёмных игровых рамок.
---       По умолчанию Vanilla.
+-- The option faction_font_color is off by default, and the game then draws
+-- skins.default.fontColor instead of the faction colour. FontColorFor repeats that check.
+-- Prefs.GetOption returns the default of a missing option, so it cannot be nil.
 --
--- Фракционных тем больше нет: рамка и так берётся из папки скина, и отдельный
--- пункт «тема под фракцию» игроку ничего не давал.
+-- Nothing here touches UMT, for the same reason as in rows.lua. The profile key 'Overflow'
+-- has no dots and is shared with rows.lua and UMT.
 --
--- ---------------------------------------------------------------------------
--- ОТКУДА ЦВЕТА И РАЗМЕРЫ. Ничего не выдумано, всё взято из игры:
---
---   Размер 10 для Vanilla - это ровно то, чем игра рисует свои мелкие числа
---   в панели ресурсов: economy.lua:144-160 (curStorage, maxStorage, income,
---   expense, reclaimDelta, reclaimTotal). Шрифт тот же - UIUtil.bodyFont.
---
---   Цвета состояний Vanilla - из скина default (lua/skins/skins.lua:152-177):
---   disabledColor в разделитель, dialogCaptionColor в заголовок и обычный
---   текст, transparentPanelColor в фон окна. Опечатка в числе невозможна, а
---   если FAF поменяет скин, мод пойдёт за ним.
---
---   Цвета состояний из игры (без исключений, одинаково для обоих пресетов):
---   SAFE  ffb7e75f  economy_mini.lua:12, цвет числа массы в игре
---   WARN  yellow    economy.lua:262, цвет отрицательного темпа
---   BAD   red       economy.lua:264, цвет пустого хранилища
---
---   Игра передаёт движку не только hex, но и ИМЕНА цветов: 'red' и 'yellow'
---   уходят в Text:SetColor как есть (economy.lua:456). Движок их принимает, и
---   наши подписи - тот же Text из uiutil.CreateText.
---
---   СМЫСЛ ТРЁХ ЦВЕТОВ ОДИНАКОВ У ЛЮБОГО ПРЕСЕТА, и это проверяется отдельно:
---   зелёный - перелива нет, жёлтый - союзники переливают тебе, красный - ты
---   слишком зависишь от перелива союзников. Пресет меняет ОТТЕНОК, а не
---   СПИСОК СОСТОЯНИЙ. Список состояний и порог живут в ui.lua (StatusColor),
---   а сюда попадают только цвета.
---
--- ---------------------------------------------------------------------------
--- ПРО НАСТРОЙКУ faction_font_color. Она ВЫКЛЮЧЕНА ПО УМОЛЧАНИЮ
--- (options.lua:1217-1221, default = false). Когда она выключена, игра рисует
--- серым skins.default.fontColor вместо цвета фракции (uiutil.lua:301-305).
--- Поэтому пресет повторяет эту проверку: если игрок выключил настройку, мы
--- показываем серый - ровно то, что видит он.
---
--- Проверка надёжна: Prefs.GetOption возвращает значение по умолчанию, если
--- опции нет (prefs.lua:116-132), то есть nil здесь невозможен.
---
--- ---------------------------------------------------------------------------
--- ЧТО ЗДЕСЬ НЕТ
---
--- Ни одного обращения к UMT - по той же причине, что в rows.lua: если UMT не
--- установлен, чтение несуществующего глобального имени УБИЛО БЫ МОД ЦЕЛИКОМ
--- (методичка 3.6). Здесь только профиль.
---
--- КЛЮЧ ПРОФИЛЯ 'Overflow' НЕ СОДЕРЖИТ ТОЧЕК: GetFromCurrentProfile читает
--- строку как путь по точкам (методичка 11.1). Это тот же ключ, что у rows.lua
--- и у UMT, поэтому все трое мирно делят одну таблицу.
---
--- ---------------------------------------------------------------------------
--- НАЗВАНИЯ ПРЕСЕТОВ И РАМОК НЕЛЬЗЯ ПЕРЕИМЕНОВЫВАТЬ. UMT при открытии окна
--- ищет сохранённое значение в списке и, если не нашёл, МОЛЧА ставит первый
--- пункт и сохраняет его (mods/umt/modules/Views/StringSelector.lua:31-35).
+-- Names of styles and frames must not change: UMT replaces a saved value it cannot find in
+-- a list with the first item and saves it.
 
 local Prefs        = import('/lua/user/prefs.lua')
 local LOG          = LOG
--- MathFloor берётся ИЗ МАТЕМАТИКИ, а не из глобала. Глобала MathFloor в ФАФ
--- нет: каждый файл игры пишет ровно это же (defaultexplosions.lua:661,
--- maui/layouthelpers.lua:20, maui/statusbar.lua:3, forms.lua:30). Написать
--- `local MathFloor = MathFloor` - значит прочитать несуществующий глобал, а
--- LuaPlus на этом падает ФАТАЛЬНО: файл не грузится и рушится весь мод.
+-- FAF has no global MathFloor, and reading a missing global stops the whole file from
+-- loading.
 local MathFloor    = math.floor
 local TableGetn    = table.getn
 
 local PrefsKey = 'Overflow'
 
--- Скины игры. import может не сработать, поэтому берём под pcall и молча
--- остаёмся на своих числах, если не вышло.
+-- Without the game skins the numbers given below stay in place.
 local Skins = nil
 do
     local okSkins, resSkins = pcall(function()
@@ -109,12 +48,9 @@ do
     end
 end
 
---------------------------------------------------------------------------------
--- ЧТЕНИЕ ИЗ СКИНА
---------------------------------------------------------------------------------
 
--- Взять поле скина строкой. Любое несовпадение - берём запасное значение:
--- панель без своих цветов лучше, чем панель с прозрачным текстом.
+-- A skin field as a string, fallback for anything else: a panel without its colours is
+-- better than transparent text.
 local function SkinField(skinName, fieldName, fallback)
     if Skins == nil then
         return fallback
@@ -130,38 +66,25 @@ local function SkinField(skinName, fieldName, fallback)
     return got
 end
 
--- Цвет шрифта фракции - с той же проверкой, что и в игре (uiutil.lua:301-305).
+-- Font colour of a faction, with the same check as in the game.
 local function FontColorFor(skinName)
     local plain = SkinField('default', 'fontColor', 'FFbadbdb')
-    local wantFaction = false
     local okOpt, resOpt = pcall(function()
         return Prefs.GetOption('faction_font_color')
     end)
     if okOpt and resOpt then
-        wantFaction = true
-    end
-    if wantFaction then
         return SkinField(skinName, 'fontColor', plain)
     end
     return plain
 end
 
 --------------------------------------------------------------------------------
--- СПИСОКИ
---
--- ПОРЯДОК ОБЯЗАН БЫТЬ ТАКИМ ЖЕ, КАК В Options.lua: первый элемент - вариант по
--- умолчанию, потому что UMT ставит items[1], если сохранённого значения в
--- списке нет. То же правило уже записано в rows.lua:103-107.
+-- Lists. The first item is the default: UMT falls back to items[1].
 --------------------------------------------------------------------------------
 
--- ПРЕСЕТЫ: шрифт и цвета текста.
+-- Styles: font and text colours.
 local STYLES = {
-    -- MINIMAL - НАШ ПРЕСЕТ И ВЫБОР ПО УМОЛЧАНИЮ. Размер 11 и палитра,
-    -- которая раньше была темой «Неон».
-    --
-    -- ИМЯ ПОЛЯ ПИШЕМ ЗАГЛАВНЫМИ, как его читает Build. Строчными поле
-    -- называлось в первой редакции, и кегль Minimal молча оставался от
-    -- пресета Vanilla - без единой ошибки в логе.
+    -- The default style. Field names are upper case, as Build reads them.
     { label = 'Minimal',
       FONT = 11,
       DIVIDER = 'FF405060',
@@ -173,39 +96,28 @@ local STYLES = {
       TOTAL   = 'FFFFD24A',
       CLOSED  = 'FF1E2A34' },
 
-    -- VANILLA - как в игре. Размер 10 взят из economy.lua:144-160, это те же
-    -- мелкие числа, которыми игра рисует свои показатели.
+    -- As in the game: size 10 is what it uses for its small numbers.
     { label = 'Vanilla',
       FONT = 10,
       skin = true },
 }
 
--- ПОЧЕМУ У ПРЕСЕТА НЕТ ПОЛЯ BG. BG - это ЦВЕТ ОКНА, и задаёт его настройка
--- «Рамка окна», а не «Пресет оформления». Когда BG жил в пресете, выбор
--- «рамка Minimal + пресет Vanilla» красил окно прозрачной панелью игры
--- AA4A5D6B (skins.lua:172) - серое пятно, цвет которого зависел от карты.
--- Теперь рамку красит её собственная подложка (ui.lua, ApplyFrameBackground),
--- и пресет о раме не знает.
---
--- BG остаётся в палитре как цвет кнопки возврата по умолчанию: при
--- пресете Vanilla кнопка возврата красится игровым цветом панели.
+-- Styles have no BG: the window colour belongs to the frame setting (ui.lua,
+-- ApplyFrameBackground). BG stays in the palette as the default for CLOSED, the colour of
+-- the reopen button.
 
--- РАМКИ: как выглядит само окно. Minimal - ВЫБОР ПО УМОЛЧАНИЮ, поэтому он
--- стоит первым (см. правило порядка в комментарии выше).
+-- Frames: how the window looks. Minimal is the default, so it comes first.
 local FRAMES = {
     { label = 'Minimal', minimal = true },
     { label = 'Vanilla', minimal = false },
 }
 
 --------------------------------------------------------------------------------
--- СБОРКА ПАЛИТРЫ ПРЕСЕТА
---
--- Поля перечислены поимённо, а не перебором таблицы: так видно, что на выходе
--- полный набор, и нечего ловить опечатку в имени поля.
+-- Palette of a style. The fields are listed by name to show that the set is complete.
 --------------------------------------------------------------------------------
 
 local function Build(style)
-    -- Обвязка по умолчанию - значения скина default (skins.lua:152-177).
+    -- The base comes from the skin `default`.
     local out = {}
     out.BG      = SkinField('default', 'transparentPanelColor', 'AA4A5D6B')
     out.CLOSED  = out.BG
@@ -218,16 +130,15 @@ local function Build(style)
     out.BAD     = 'red'
     out.FONT    = 10
 
-    -- VANILLA берёт часть полей из скина фракции. bodyColor игрок видит всегда
-    -- (uiutil.lua:298 ставит его из скина безусловно), а цвет шрифта фракции -
-    -- только если оставил настройку faction_font_color.
+    -- Vanilla takes part of the fields from a faction skin: bodyColor always, the font
+    -- colour only with the option faction_font_color.
     if style.skin then
         out.NEUTRAL = SkinField('aeon', 'bodyColor', out.NEUTRAL)
         out.DIVIDER = SkinField('aeon', 'disabledColor', out.DIVIDER)
         out.TITLE   = FontColorFor('aeon')
     end
 
-    -- Собственные значения пресета поверх обвязки.
+    -- The values of the style go over the base.
     out.BG      = style.BG      or out.BG
     out.CLOSED  = style.CLOSED  or out.CLOSED
     out.DIVIDER = style.DIVIDER or out.DIVIDER
@@ -243,10 +154,7 @@ local function Build(style)
 end
 
 --------------------------------------------------------------------------------
--- ПРОФИЛЬ
---
--- Читаем, а не заимствуем UMT: мод обязан работать и без UMT. Отдельного
--- импорта не делаем - тот же ключ, что у rows.lua.
+-- Profile, read directly: the mod has to work without UMT.
 --------------------------------------------------------------------------------
 
 local function Saved()
@@ -264,8 +172,7 @@ local function Saved()
     return profile
 end
 
--- Выбор из списка по имени. Неизвестное и отсутствующее значение - первый
--- пункт: молча пропасть из-за правки профиля нельзя.
+-- Item of a list by name. An unknown or absent value gives the first item.
 local function Pick(list, wanted)
     if type(wanted) ~= 'string' then
         return list[1].label
@@ -290,19 +197,14 @@ local function ByLabel(list, label)
 end
 
 --------------------------------------------------------------------------------
--- МАСШТАБ ШРИФТА
---
--- Ползунок UMT целочисленный (OptionsWindow.lua:267 IntegerSlider), поэтому
--- масштаб хранится в ПРОЦЕНТАХ: 100 - как есть, 150 - в полтора раза больше.
--- Границы - те, что у мода были для своего прежнего масштаба (0.70-2.00).
+-- Font scale. The UMT slider is integer, so the scale is stored in percent: 100 is as is,
+-- 150 is one and a half.
 --------------------------------------------------------------------------------
 
 local FONT_SCALE_MIN = 70
 local FONT_SCALE_MAX = 200
 
--- ПО УМОЛЧАНИЮ 120: это рабочий масштаб игрока, и он должен стоять сразу после
--- установки, без похода в настройки. Сюда же смотрит страница настроек
--- (Options.lua), чтобы ползунок и мод не разошлись в числах.
+-- The default scale. The settings page reads it from here, so the slider and the mod agree.
 local FONT_SCALE_DEFAULT = 120
 
 local function FontScaleRead()
@@ -316,9 +218,6 @@ local function FontScaleRead()
     return n
 end
 
---------------------------------------------------------------------------------
--- НАРУЖНЫЕ ФУНКЦИИ
---------------------------------------------------------------------------------
 
 function StyleNames()
     local out = {}
@@ -333,15 +232,12 @@ function StyleCurrent()
     return Pick(STYLES, Saved().style)
 end
 
--- Полная палитра выбранного пресета: цвета ТЕКСТА, фон плоской рамки и
--- базовый размер шрифта.
+-- Full palette of the selected style: text colours and the base font size.
 function StylePalette()
     return Build(ByLabel(STYLES, StyleCurrent()))
 end
 
--- Размер шрифта с учётом масштаба игрока. Округление вниз: дробный кегль
--- движок принимает, но на некоторых машинах даёт разный рендеринг, а
--- предсказуемое целое - нет.
+-- Font size with the scale of the player, as an integer.
 function StyleFontSize()
     local base = StylePalette().FONT
     return MathFloor(base * FontScaleRead() / 100 + 0.5)
@@ -351,14 +247,12 @@ function FontScale()
     return FontScaleRead()
 end
 
--- Масштаб по умолчанию. Нужен странице настроек: ползунок UMT получает
--- стартовое значение отсюда, а не из числа, записанного в Options.lua.
+-- Default scale for the slider of the settings page.
 function FontScaleDefault()
     return FONT_SCALE_DEFAULT
 end
 
--- Только числа: когда включено, из строк убирается весь текст и остаются
--- одни числа. Текст приходит из ui.lua - там и решается, что показать.
+-- Numbers only: the rows lose their text. ui.lua decides what to show.
 function NumbersOnly()
     return Saved().numbersOnly and true or false
 end
@@ -376,27 +270,31 @@ function FrameCurrent()
     return Pick(FRAMES, Saved().theme)
 end
 
--- Плоская рамка вместо игровой объёмной.
+-- Flat frame instead of the game window frame.
 function FrameMinimal()
     return ByLabel(FRAMES, FrameCurrent()).minimal and true or false
 end
 
--- Мигание выключено по умолчанию: как и в игре, тревога не обязана кричать.
+-- Blinking is off by default.
 function ThemeBlinkOn()
     return Saved().blink and true or false
 end
 
--- Подпись настройки. Панель сравнивает её с той, на которой построена, и
--- перестраивается при изменении. Сюда входит ВСЁ, что меняет вид при сборке:
--- пресет, рамка, мигание, масштаб шрифта и режим «только числа».
+-- Signature of the settings. The panel rebuilds when it changes, so it holds everything
+-- that changes the look at build time.
 function ThemeSignature()
+    -- The FAF plugin for LuaLS reports a global call right after `..` as
+    -- undefined. The function is declared above in this file.
+    ---@diagnostic disable-next-line: undefined-global
     return StyleCurrent() .. '|' .. FrameCurrent() .. '|' ..
         tostring(ThemeBlinkOn()) .. '|' .. tostring(FontScaleRead()) .. '|' ..
         tostring(NumbersOnly())
 end
 
--- Человеческое описание для лога.
+-- Description for the log.
 function ThemeTell()
+    -- Same false alarm of the FAF plugin as in ThemeSignature.
+    ---@diagnostic disable-next-line: undefined-global
     return StyleCurrent() .. ' / ' .. FrameCurrent() ..
         ' / шрифт ' .. tostring(StyleFontSize()) ..
         ' / ' .. (NumbersOnly() and 'только числа' or 'с подписями')

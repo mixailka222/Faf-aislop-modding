@@ -1,81 +1,32 @@
--- Overflow - страница настроек для мода "UI mod tools" (UMT). Версия 18.
+-- Overflow - settings page for the "UI mod tools" (UMT) mod.
 --
--- ЭТОТ ФАЙЛ ЗАГРУЖАЕТСЯ ТОЛЬКО МОДОМ UMT. Он ищет файл с именем
--- Options.lua в папках модов, помеченных в mod_info.lua флагом __umt, и
--- вызывает у него Main() - mods/umt/modules/Options.lua:361-368. Если UMT нет
--- или выключен, файл просто никто не откроет: мод возьмёт значения из
--- профиля, а если их там нет - покажет все строки.
+-- Only UMT loads this file: it finds Options.lua by name in the mods flagged with __umt and
+-- calls Main(). Without UMT the mod reads the profile, and without values there it shows
+-- the default rows. The player opens the window from the game menu: "UI mods options".
 --
--- ИМЯ ФАЙЛА ИМЕННО Options.lua, с большой буквы: DiskFindFiles ищет по этому
--- имени (Options.lua:363). На Windows сравнение не регистрозависимое, но
--- полагаться на это незачем.
+-- Main is a global function: the game discards what a module returns.
 --
--- Пользователь открывает окно через меню игры: "UI mods options".
+-- The page does not import ui.lua: the load order of UMT and the game interface is unknown,
+-- and the import could meet a module that is still loading. It only writes to the profile,
+-- and the panel notices the change on its beat.
 --
--- ---------------------------------------------------------------------------
--- ЭКСПОРТ И ПОРЯДОК ЗАГРУЗКИ
+-- The list of ready-made sets is an explicit choice: a click expands the set into check
+-- boxes. The check boxes are the source of truth: after a change by hand the list shows the
+-- matching set, or the "other set" item.
 --
--- Main - ГЛОБАЛЬНАЯ функция, а не запись в return: значение return движок
--- отбрасывает (import.lua:61 и 171). Методичка 3.23.
---
--- ЭТА СТРАНИЦА НЕ ИМПОРТИРУЕТ ui.lua. Она только пишет в профиль, а панель
--- замечает изменение сама, по биту игры. Причина не в экономии, а в
--- неопределённости порядка: неизвестно, UMT ли загрузится раньше интерфейса
--- игры или позже, и импорт ui.lua отсюда в одном из случаев поймал бы ещё не
--- до конца выполненный модуль - ровно тот случай, который описан в 3.23 как
--- стоивший трёх прогонов версий 12-14.
---
--- Побочная выгода: страница не зависит от того, загрузилась ли панель, и её
--- обработчики не могут упасть из-за чужого модуля.
---
--- ---------------------------------------------------------------------------
--- ДВА СПОСОБА ВЫБРАТЬ, И ОНИ НЕ ПРОТИВОРЕЧАТ ДРУГ ДРУГУ
---
---   Выпадающий список «Быстрый выбор» - это ЯВНЫЙ выбор. Щелчок по готовому
---   набору раскладывает его на галочки.
---
---   Галочки - ИСТОЧНИК ПРАВДЫ. Как только игрок снял или поставил галочку
---   вручную, список пересчитывается и показывает тот набор, который
---   получился, либо «Другой набор», если такого нет.
---
--- Поэтому список никогда не расходится с галочками, и панель всегда читает
--- одни и те же числа.
---
--- ---------------------------------------------------------------------------
--- ГЛАВНОЕ ПРАВИЛО, ПОВТОРЁННОЕ ИЗ ОПЫТА (методичка 3.52)
---
--- OptionVar:Set() (OptionVar.lua:24-30) меняет значение ТОЛЬКО В ПАМЯТИ и
--- вызывает OnChange. В профиль попадает исключительно OptionVar:Save(), а его
--- UMT дергает при закрытии окна (OptionsWindow.lua:472-476 и :484-489).
---
--- Значит в момент, когда игрок тронул галочку, профиль ещё старый. Если
--- читать Prefs, мод получит прежнее значение и через минуту после щелчка
--- продолжит показывать старые строки - и так же доложит об этом в лог,
--- создав видимость успеха. Именно это случилось с модом ReclaimPause на игре
--- 2026-10-04.
---
--- Правильно - спросить живое значение у самого OptionVar: он вызывается как
--- функция и отдаёт текущее (OptionVar.lua:18-20). Так же делает работающий
--- мод ASE, ASE/modules/Main.lua:35-37.
---
--- Аргумент колбэка использовать нельзя: Bind вызывает OnChange() вообще без
--- аргументов (OptionVar.lua:73-76), поэтому берём значения из options,
--- которая в замыкании.
+-- OptionVar:Set() changes the value in memory only, and UMT calls OptionVar:Save() when the
+-- window closes. While the window is open the profile is stale, so the live value is read
+-- from the OptionVar, called as a function. Bind calls the handler without arguments, so
+-- the values come from `options` in the closure.
 
 function Main()
     local Options = UMT.Options
     local Opt = Options.Opt
     local PFX = 'Overflow: '
-    -- Оператор # движком не поддерживается, длина таблицы - только
-    -- через table.getn (методичка 3.3). Объявляем здесь явно: неявное
-    -- обращение к глобалу, которого нет, роняет загрузку модуля (3.6).
-    local TableGetn = table.getn
 
     local Rows = import('/mods/Overflow/modules/rows.lua')
 
-    -- Поля rows.lua берём через rawget: у таблицы модуля __index уходит в
-    -- _G, а на _G висит метаметод, падающий ошибкой на несуществующем
-    -- глобале. Проверка наличия поля сама по себе тогда роняет загрузку.
+    -- rawget: a plain read of a missing module field reaches the strict _G and fails.
     local RowHowMany = rawget(Rows, 'HowManyRows')
     local RowIdAt    = rawget(Rows, 'RowKeyAt')
     local RowTitle   = rawget(Rows, 'RowTitleOf')
@@ -94,9 +45,7 @@ function Main()
         return
     end
 
-    -- Оформление живёт в themes.lua, там же и названия тем. Если модуль не
-    -- загрузился, страницу настроек не показываем вовсе: список настроек
-    -- оказался бы наполовину неправдой, и это хуже, чем её отсутствие.
+    -- Without themes.lua the page is skipped: half of its settings would do nothing.
     local Themes = import('/mods/Overflow/modules/themes.lua')
     local ThemeNames = rawget(Themes, 'FrameNames')
     local StyleNames = rawget(Themes, 'StyleNames')
@@ -109,32 +58,19 @@ function Main()
         return
     end
 
-    local BOXES = { 'eOverflow', 'eGo', 'eOwn', 'mOverflow', 'mGo',
-                    'mOwn', 'total' }
     local defaults = RowDefault()
     local items = PresetList()
-    -- ПЕРВЫЙ элемент каждого списка - вариант по умолчанию: UMT ставит
-    -- items[1], если сохранённого значения в списке нет
-    -- (StringSelector.lua:31-35). Задача игрока: и рамка, и пресет по
-    -- умолчанию Vanilla.
+    -- The first item of each list is the default: UMT falls back to items[1].
     local looks = ThemeNames()
     local styles = StyleNames()
 
-    -- МАСШТАБ ШРИФТА В ПРОЦЕНТАХ. Ползунок UMT целочисленный
-    -- (OptionsWindow.lua:267 IntegerSlider), поэтому дробных значений он не
-    -- умеет. Границы - прежние границы масштаба мода, 0.70 и 2.00.
+    -- The UMT slider is integer, so the font scale is in percent.
     local FONT_SCALE_MIN = 70
     local FONT_SCALE_MAX = 200
     local FONT_SCALE_STEP = 5
 
-    -- ШАГ 1: объявление. Именно ПРИСВАИВАНИЕ в Mods["Overflow"] создаёт
-    -- OptionVar для каждого поля (Options.lua:379-383 -> :339-358). Prefs-ключ
-    -- подставляет сама LoadOptions - писать его не нужно.
-    --
-    -- Значение выпадающего списка - items[1], а не отдельная строка: UMT
-    -- ставит items[1], если текущее значение не найдено в списке
-    -- (StringSelector.lua:31-35). Первый набор совпадает со значением по
-    -- умолчанию, поэтому расхождения не будет.
+    -- The assignment, not a call, creates an OptionVar for each field, and UMT supplies the
+    -- prefs key. The first set matches the default rows.
     Options.Mods["Overflow"] = {
         preset    = Opt(items[1]),
         eOverflow = Opt(defaults.eOverflow),
@@ -151,18 +87,14 @@ function Main()
         blink     = Opt(false),
     }
 
-    -- ШАГ 2: забираем созданные OptionVar.
     local options = Options.Mods["Overflow"]
 
-    -- ЗАЩИТА ОТ ПОВТОРНОГО ВХОДА.
-    --
-    -- Щелчок по выпадающему списку раскладывает набор на галочки, и каждая
-    -- галочка вызывает Set, а значит OnChange. Без этой защиты обработчик
-    -- галочки успевает переписать только что выбранный набор - и список тут
-    -- же показал бы не то, что игрок выбрал.
+    -- Re-entry guard: a click on the list sets every check box, and each Set calls
+    -- OnChange. Without the guard the check box handler would overwrite the set just
+    -- chosen.
     local busy = false
 
-    -- Живые значения всех галочек в одну таблицу.
+    -- Live values of all check boxes.
     local function ReadBoxes()
         local vis = {}
         for i = 1, RowHowMany() do
@@ -172,28 +104,21 @@ function Main()
         return vis
     end
 
-    -- Записать и сказать в лог. Панель подхватит изменение сама.
+    -- Saves and logs. The panel picks the change up by itself.
     local function Apply(vis, fromPreset)
         RowSave(vis)
         LOG(PFX .. 'rows: ' .. RowTell(vis) ..
             ' | from list: ' .. tostring(fromPreset))
     end
 
-    -- ШАГ 3: щелчок по галочке.
-    --
-    -- Список пересчитывается здесь же, иначе он остался бы старым и
-    -- показывал не то, что на экране.
+    -- A check box was clicked: the list follows, so that it shows what is on the screen.
     local function OnBoxChange()
         if busy then return end
         busy = true
         local ok, vis = pcall(function()
             local box = ReadBoxes()
-            -- Совпал набор - пишем его название. Не совпал ни один - пишем
-            -- служебное «Другой набор», иначе список продолжал бы показывать
-            -- прежний набор при уже других галочках.
-            --
-            -- Set вызывает OnChange у preset, но busy=true, поэтому
-            -- повторного входа не будет.
+            -- Without a match the list shows the "other set" item. busy stops the OnChange
+            -- of preset.
             local match = PresetPick(box)
             options.preset:Set(match or PresetRest())
             return box
@@ -206,11 +131,8 @@ function Main()
         Apply(vis, false)
     end
 
-    -- ШАГ 4: щелчок по выпадающему списку.
-    --
-    -- Набор раскладывается на галочки через Set, и каждая из них дёргает
-    -- OnBoxChange. busy=true держит все эти вызовы от работы; запись в
-    -- профиль делаем сами, из уже прочитанных живых значений.
+    -- The list was clicked: the set goes to the check boxes. busy stops their handlers, and
+    -- the profile is written here from the live values.
     local function OnPresetChange()
         if busy then return end
         busy = true
@@ -232,12 +154,11 @@ function Main()
         Apply(vis, true)
     end
 
-    for i = 1, TableGetn(BOXES) do
-        options[BOXES[i]]:Bind(OnBoxChange)
+    for i = 1, RowHowMany() do
+        options[RowIdAt(i)]:Bind(OnBoxChange)
     end
     options.preset:Bind(OnPresetChange)
 
-    -- ШАГ 5: описание окна.
     Options.AddOptions("Overflow", "Overflow: оформление и строки", {
         Options.Strings("Рамка окна", looks, options.theme, 0),
         Options.Strings("Пресет: шрифт и цвета", styles, options.style, 0),

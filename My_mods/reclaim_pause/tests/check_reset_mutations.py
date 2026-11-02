@@ -1,64 +1,67 @@
 # -*- coding: utf-8 -*-
-"""Проверка: новые проверки сброса краснеют на сломанном коде.
+"""Checks the reset checks of test_options_unit.lua: they have to go red on broken code.
 
-Поломки повторяют реальные ошибки, одна из которых уже была допущена
-при написании кода (запись options.x(v) вместо options.x:Set(v)).
+The breakages repeat realistic mistakes, such as writing options.x(v) instead of
+options.x:Set(v).
+
+The mod and the test are copied into a temporary folder and the breakages are made in the
+copy only, so the real sources are never touched and an interrupted run damages nothing.
+
+The test runs on the game's Lua from .tools/faf-lua, which bootstrap.py builds.
 """
+import atexit
 import io
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-TEST = os.path.join(HERE, "test_options_unit.py")
-OPT = os.path.join(os.path.dirname(HERE), "ReclaimPause", "modules", "options.lua")
+sys.path.insert(0, os.path.join(HERE, "..", "..", "..", "DOCUMENTATION", "tools"))
+sys.dont_write_bytecode = True
+import bootstrap
+
+# The test looks for the mod next to its own folder, so the copy keeps that layout.
+WORK = tempfile.mkdtemp(prefix="reclaim_mutants_")
+atexit.register(shutil.rmtree, WORK, ignore_errors=True)
+shutil.copytree(os.path.join(os.path.dirname(HERE), "ReclaimPause"),
+                os.path.join(WORK, "ReclaimPause"))
+os.makedirs(os.path.join(WORK, "tests"))
+TEST = "test_options_unit.lua"
+shutil.copyfile(os.path.join(HERE, TEST), os.path.join(WORK, "tests", TEST))
+OPT = os.path.join(WORK, "ReclaimPause", "modules", "options.lua")
+
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 ORIG = io.open(OPT, encoding="utf-8").read()
 
-SET_BLOCK = u"""            options.enabled:Set(cfg.enabled)
-            options.highMass:Set(cfg.highMass)
-            options.lowMass:Set(cfg.lowMass)
-            options.energyMin:Set(cfg.energyMin)
-            options.minSec:Set(cfg.minSec)
-            options.releaseHoldSec:Set(cfg.releaseHoldSec)
-            options.probeSec:Set(cfg.probeSec)
-            options.rescanSec:Set(cfg.rescanSec)
-            options.startGrace:Set(cfg.startGrace)
-            options.abortMove:Set(cfg.abortMove)
-            options.abortSec:Set(cfg.abortSec)
-            options.skipSec:Set(cfg.skipSec)
+SET_LINE = u"""                options[field]:Raw():Set(value)
 """
 
-CALL_BLOCK = u"""            options.enabled(cfg.enabled)
-            options.highMass(cfg.highMass)
-            options.lowMass(cfg.lowMass)
-            options.energyMin(cfg.energyMin)
-            options.minSec(cfg.minSec)
-            options.releaseHoldSec(cfg.releaseHoldSec)
-            options.probeSec(cfg.probeSec)
-            options.rescanSec(cfg.rescanSec)
-            options.startGrace(cfg.startGrace)
-            options.abortMove(cfg.abortMove)
-            options.abortSec(cfg.abortSec)
-            options.skipSec(cfg.skipSec)
+CALL_LINE = u"""                options[field](value)
 """
 
-GUARD = u"""        if writing then return end
+SAVE_LINE = u"""                options[field]:Save()
+"""
 
+FILTER = u"            if name == nil or name == field then"
+
+STUCK = u"""            writing = false
 """
 
 CLEAR = u"""            options.resetFlag:Set(false)
 """
 
 BROKEN = [
-    (u"1. запись ползунков вызовом вместо :Set",
-     SET_BLOCK, CALL_BLOCK),
+    (u"1. запись ползунков вызовом вместо Raw():Set",
+     SET_LINE, CALL_LINE),
 
     (u"2. галочка не снимает себя",
      CLEAR, u""),
 
     (u"3. сброс не пишет значения в ползунки",
-     SET_BLOCK, u""),
+     SET_LINE, u""),
 
     (u"4. сброс стоит ПОСЛЕ присвоения ползунков (затирается)",
      u"""        if options.resetFlag() then
@@ -75,35 +78,38 @@ BROKEN = [
 """),
 
     (u"5. флаг writing залипает: Refresh выключен навсегда",
-     GUARD, u""),
+     STUCK, u""),
 
     (u"6. сброса нет вообще",
      u"        if options.resetFlag() then", u"        if false then"),
+
+    (u"7. Cancel возвращает ползунок, сдвинутый до клавиши сброса",
+     SAVE_LINE, u""),
+
+    (u"8. клавиша включения лишает Cancel отката ползунков",
+     FILTER, u"            if true then"),
 ]
 
 results = []
 for title, old, new in BROKEN:
     if ORIG.count(old) != 1:
         print(u"  ОШИБКА ПОДСТАНОВКИ (%s): вхождений %d" % (title, ORIG.count(old)))
-        results.append((title, 999, 0, u"podstanovka ne srabotala"))
+        results.append((title, False))
         continue
     io.open(OPT, "w", encoding="utf-8", newline="").write(ORIG.replace(old, new))
-    p = subprocess.run([sys.executable, TEST], capture_output=True)
+    p = subprocess.run([str(bootstrap.lua_path()), TEST], cwd=os.path.join(WORK, "tests"),
+                       capture_output=True)
     out = p.stdout.decode("utf-8", "replace") + p.stderr.decode("utf-8", "replace")
     fails = out.count("[FAIL]")
-    oks = out.count("[OK  ]")
     name = [l for l in out.split("\n") if "[FAIL]" in l][:2]
     ok = fails > 0 or p.returncode != 0
-    results.append((title, fails, oks, u"; ".join(x.strip() for x in name)))
+    results.append((title, ok))
     print(u"  %s  %-52s FAIL=%d" % (u"ПОЙМАЛ " if ok else u"ПРОПУСТИЛ",
                                     title, fails))
     for n in name:
         print(u"           " + n.strip())
 
-io.open(OPT, "w", encoding="utf-8", newline="").write(ORIG)
-print("")
-print(u"исходный код восстановлен")
-
-bad = [r for r in results if r[1] == 0 and r[3] == u"podstanovka ne srabotala"]
-if bad:
+missed = [title for title, caught in results if not caught]
+if missed:
+    print(u"не пойманы: " + u"; ".join(missed))
     sys.exit(1)

@@ -54,4 +54,4 @@ grep -rn "function InCommandMode" references/fa/lua references/fa/engine
 
 Если факт оказался неверным, исправь или удали его, а не дописывай рядом.
 
-Проверь результат: `python DOCUMENTATION/tools/check.py`, строка `база знаний` должна быть `[OK]`.
+Проверь результат: `python DOCUMENTATION/tools/check.py --knowledge`, строка `база знаний` должна быть `[OK]`.

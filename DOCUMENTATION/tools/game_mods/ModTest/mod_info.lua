@@ -1,0 +1,9 @@
+name = "ModTest"
+version = 1
+copyright = ""
+description = "Runs the checks of game_test.py inside a match. Does nothing without the /modtest switch."
+author = ""
+url = ""
+uid = "modtest-ui-1"
+exclusive = false
+ui_only = true

@@ -19,6 +19,5 @@
     "ref": "v5.0-3"
   },
   "lua-language-server": "3.19.2",
-  "ziglang": "0.16.0",
-  "lupa": "2.8"
+  "ziglang": "0.16.0"
 }

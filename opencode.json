@@ -5,5 +5,10 @@
       "command": [".tools/lua-language-server/bin/lua-language-server", "--trust_all_plugins"],
       "extensions": [".lua"]
     }
+  },
+  "permission": {
+    "bash": {
+      "*game_test.py*--all*": "ask"
+    }
   }
 }

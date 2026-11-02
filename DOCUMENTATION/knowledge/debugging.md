@@ -64,29 +64,17 @@
 Наблюдение: содержимое папки логов на компьютере разработчика.
 Наблюдение: путь взят из команды запуска игры в файле краша, клиент FAF.
 
-### Лог текущей партии может быть неполным до выхода из игры
+### Лог пишется на диск по ходу матча
 
-Пока игра открыта, файл текущей партии может быть неполным, поэтому отсутствие строки в файле не доказывает, что код её не писал. Самый свежий по дате файл может относиться к прошлой сессии.
+Файл отстаёт от игры на секунды, поэтому его можно читать, не закрывая игру. Самый свежий по дате файл может относиться к прошлой сессии.
 
-Не подтверждено: нужно открыть лог во время матча и сравнить его с файлом после выхода из игры.
+Наблюдение: процесс игры завершён извне на 150-й секунде запуска, последней строкой файла осталась `Session time: 00:02:27`.
 
 ### Архивы `.nx2` открываются обычным zip
 
 Стандартный `zipfile` из Python читает `lua.nx2` и `units.nx2`, проверка целостности проходит. В `lua.nx2` лежит весь игровой Lua.
 
 Наблюдение: `zipfile.ZipFile` и `testzip()` на файлах из `C:\ProgramData\faforever\gamedata`.
-
-### В тестах через `lupa` не работает `for k in t do`
-
-В игре такой цикл штатный, а Lua внутри `lupa` его не знает: `attempt to call a table value`. Для прогона копии файла цикл заменяют на `for k in next, t do`. Код мода менять не нужно.
-
-Источник: fa:lua/UserSync.lua#for k, data in Sync do
-
-### `lupa.table_from` не преобразует вложенные словари
-
-Верхний уровень становится таблицей Lua, вложенный словарь остаётся `userdata`. Вложенные данные собирают литералом Lua через `lua.execute`.
-
-Наблюдение: `lupa` 2.8, `luajit21`, `type(t.a)` вернул `userdata`.
 
 ### `table.getn` считает только ключи подряд от 1
 
@@ -113,11 +101,17 @@
 Источник: lua-lang:src/lparser.c#luaX_checklimit(fs->ls, f->nups + 1, MAXUPVALUES, "upvalues");
 Источник: lua-lang:src/llex.c#msg = luaO_pushfstring(ls->L, "too many %s (limit=%d)", msg, limit);
 
-### Пишется ли в лог ошибка внутри потока `ForkThread`
+### Ошибка внутри `ForkThread` попадает в лог
 
-В `bin/ForgedAlliance.exe` есть строки `Error running lua script: %s` и `Error running lua script from destroyed thread: %s`, поэтому утверждать, что поток умирает без следа в логе, нельзя. Попадает ли в лог ошибка вне `pcall`, не установлено. Цикл в упавшем потоке после ошибки не работает, поэтому тело долгого цикла всё равно кладут в `pcall` и пишут ошибку в лог, а `WaitSeconds` оставляют снаружи.
+Вне `pcall` поток обрывается, а в логе появляется `warning: Error running lua script: <файл>(<строка>): <текст>` и стек. Цикл в упавшем потоке после ошибки не работает, поэтому тело долгого цикла всё равно кладут в `pcall`, а `WaitSeconds` оставляют снаружи.
 
-Не подтверждено: нужен опыт в игре: вызвать `error()` внутри `ForkThread`, например `ForkThread(function() error('x') end)`, и прочитать лог.
+Наблюдение: `ForkThread(function() error('x') end)` в интерфейсе матча, строка и стек прочитаны в логе.
+
+### LuaLS: ложное `undefined-global` на вызове сразу после `..`
+
+Плагин FAF для LuaLS может считать необъявленным глобал файла, если он вызван сразу после оператора `..`. Такой вызов работает в игре. Замечание подавляется строкой `---@diagnostic disable-next-line: undefined-global` с причиной рядом.
+
+Наблюдение: в `My_mods/overflow/Overflow/modules/themes.lua` функция `FrameCurrent` объявлена в этом же файле. LuaLS принимал вызов `ByLabel(FRAMES, FrameCurrent())`, но отмечал `'|' .. FrameCurrent()`.
 
 ### Строки лога о клавишах показывают шаг поломки
 
@@ -173,11 +167,12 @@
 
 Источник: lua-lang:src/lparser.c#"`%s' expected", luaX_token2str(ls, token)));
 
-### `attempt to index ... (a nil value)`
+### `attempt to index ... (a nil value)` пишет только локальный Lua
 
-Поле берут у `nil`: объект не создан или функция вернула пусто. Текст называет, что было `nil`: ``local `a'`` или ``field `x'``, а для upvalue имени нет, и сообщение короче. Искать надо, откуда пришло значение, а не править саму строку.
+В игре чтение поля у `nil` ошибки не даёт и возвращает `nil`, см. `dialect.md`. Эту строку выводит `.tools/faf-lua/lua.exe`, и там искать надо, откуда пришло значение. В игре пустое значение проявляется позже и в другом месте: ``attempt to call method `X'``, ``attempt to perform arithmetic`` или ``Attempt to set attribute 'x' on nil``.
 
 Источник: lua-lang:src/ldebug.c#luaG_runerror(L, "attempt to %s a %s value", op, t);
+Наблюдение: поиск по папке логов FAF на компьютере разработчика эту строку не нашёл, замер чтения описан в `dialect.md`.
 
 ### `attempt to call a table value`
 
@@ -203,6 +198,13 @@
 
 Источник: fa:lua/sim/Projectile.lua#Since `math.huge` does not exist
 
+### Текст ошибки чтения `LazyVar` занимает десятки строк
+
+`pcall` вокруг чтения стороны контрола без заданной геометрии, например `ctl.Left()`, возвращает `circular dependency in lazy evaluation for variable` внутри двух обёрток `error evaluating lazy variable`. В игре каждый уровень несёт свой `stack traceback:`, всего около 45 строк на одну ошибку. Стенд считает подстроку `stack traceback` ошибкой, поэтому `tostring(err)` такого чтения пишут в лог только при настоящем сбое. Для штатного случая, например скрытой строки без позиции, хватает своего короткого текста. Локальный `.tools/faf-lua/lua.exe` стек к тексту ошибки не добавляет, поэтому юнит-тест этого не покажет.
+
+Источник: fa:lua/lazyvar.lua#error evaluating lazy variable
+Наблюдение: `pcall` вокруг `ctl.Left()` скрытой строки панели Overflow в матче, лог стенда: три `stack traceback:`, 44 строки на одну ошибку. `error('boom')` под `pcall` в `.tools/faf-lua/lua.exe` дал одну строку.
+
 ### `Unable to interrupt path finding`
 
 Это не ошибка движка, а `print` из sim-колбэка `AbortNavigation`, и печатается он только у армии, отдавшей приказ. Причин три: в выделении не осталось своих юнитов, в нём нет `ENGINEER` или `COMMAND`, либо прошлый вызов от этого источника был не больше 5 тиков назад. Принятый вызов печатает `Interrupted pathfinding for N unit(s)`.
@@ -214,3 +216,168 @@
 Не сообщение движка: эту строку пишут хуки `gamemain.lua` наших модов, когда `import` не удался или нет точки входа. Рядом стоит `Reason:`, а настоящая причина лежит выше в логе, в `SCR_LuaDoFileConcat` или в `WARN` перед `Error importing`.
 
 Наблюдение: строка есть только в hook/lua/ui/game/gamemain.lua модов из My_mods, поиск по references/fa её не находит.
+
+### Матч запускается из командной строки
+
+`ForgedAlliance.exe /map SCMP_009` сразу начинает матч, без клиента FAF и лобби. Без `/noAi` остальные армии занимает ИИ. Фракцию задаёт `/faction`: `/seed` её не фиксирует. Размер окна задаёт `/windowed 1024 768`. Режим победы по умолчанию `sandbox`.
+
+Источник: fa:lua/SinglePlayerLaunch.lua#Called by the engine using the `/map <mapPath>` launch arg
+Источник: fa:lua/SinglePlayerLaunch.lua#if not HasCommandLineArg("/noAi") then
+Источник: https://wiki.faforever.com/en/Development/Game-Development/Command-Line-Switches
+Наблюдение: запуск с этими ключами; при одном `/seed 1` командиры в разных запусках были разных фракций.
+
+### Союзника в матче через `/map` задаёт sim
+
+Команд в таком матче нет: все армии враги друг другу. `SetAlliance(a, b, "Ally")` в sim делает их союзниками сразу: `IsAlly` в интерфейсе отвечает `true`, в `Sync.Score` приходит `resources` этой армии, перелив идёт по правилам игры. Гражданских армий в `Sync.Score` нет, поэтому союзник нужен из обычных армий, а значит запуск без `/noAi`.
+
+Источник: fa:lua/sim/score.lua#if (myArmyIndex == index) or (alliesScore and IsAlly(myArmyIndex, index)) then
+Источник: fa:lua/sim/score.lua#if ArmyIsCivilian(index) then
+Наблюдение: запуск без `/noAi`, `SetAlliance` из обработчика в sim, панель Overflow показала перелив союзника.
+
+### Матч нескольких клиентов запускается из командной строки
+
+`/hostgame <протокол> <порт> <имя игрока> <название игры> <файл карты>` и `/joingame <протокол> <адрес:порт> <имя игрока>` вместе с `/players <число>` открывают автолобби: матч начинается сам, как только подключились все клиенты. Клиент FAF и сервер не нужны. Протокол `udp`, файл карты вида `/maps/SCMP_009/SCMP_009_scenario.lua`. Автолобби читает `/team`, `/startspot`, фракцию вида `/uef` и опции `/gameoptions Имя:Значение`. Армии с одним `/team` больше 1 становятся союзниками. Хост и второй клиент можно запустить одновременно, матч начинается примерно через 15 секунд.
+
+Источник: fa:lua/ui/uimain.lua#--- Called by the engine with the command line argument `/hostgame <protocol> <port> <playerName> <gameName> <mapFile>`
+Источник: fa:lua/ui/uimain.lua#--- Called by the engine with the command line argument `/joingame <protocol> <address> <playerName>`
+Источник: fa:lua/ui/lobby/autolobby/AutolobbyController.lua#info.Team = self:GetCommandLineArgumentNumber("/team", -1)
+Источник: fa:lua/ui/lobby/autolobby/AutolobbyController.lua#for name, value in self:GetCommandLineArgumentArray("/gameoptions") do
+Источник: fa:lua/simInit.lua#if army.Team > 1 then
+Источник: https://github.com/FAForever/fa/blob/develop/scripts/LaunchFAInstances.ps1
+Наблюдение: стенд, карта SCMP_009, два клиента на одном компьютере, порт из свободных: `/players 2`, `/team 2`, `/startspot 1` и `2`. В логах `Session time: 00:00:15` при `Game time: 00:00:00`, `SessionIsMultiplayer()` и `IsAlly` вернули `true`, в `GetSessionClients()` две записи, оба процесса завершились с кодом 0.
+
+### Второй экземпляр игры останавливается окном `already running`
+
+Движок создаёт мьютекс `SupComMutex`. Если он уже есть, новый запуск показывает окно `Supreme commander is already running` и дальше не идёт, а окно забирает фокус. Настройка `debug = { enable_debug_facilities = true }` в файле из `/prefs` пропускает эту проверку, поэтому для нескольких клиентов её пишут в их временные настройки. Заодно она отключает сброс `Options.Log` в начале матча и оставляет отладочные клавиши.
+
+Источник: fa:lua/ui/game/gamemain.lua#if not GetPreference('debug.enable_debug_facilities') then
+Источник: fa:lua/ui/uimain.lua#if not DebugFacilitiesEnabled() then
+Наблюдение: два запуска без настройки: окно с этим текстом, в логе второго клиента нет строк лобби, хост пишет `Missing local peers`. С настройкой во временных файлах обоих клиентов матч начался, окна не было.
+Наблюдение: дизассемблирование `bin/ForgedAlliance.exe` версии 3840: перед вызовом со строкой `SupComMutex` и сравнением `GetLastError` с `0xB7` стоит функция, читающая `debug.enable_debug_facilities`, её `true` обходит проверку.
+
+### Автолобби запускает матч без sim-модов
+
+Список `GameMods` у него всегда пустой, ключа запуска для него нет. UI-моды работают как обычно: они приходят из `active_mods` в настройках каждого клиента. Поэтому sim-мод из настроек в такой матч не попадает, и действия в sim здесь делают настоящими приказами.
+
+Источник: fa:lua/ui/lobby/autolobby/AutolobbyController.lua#self.GameMods = {}
+Источник: fa:lua/SessionInit.lua#for i, m in ipairs(import("/lua/mods.lua").GetUiMods()) do
+Наблюдение: матч через автолобби: в `__active_mods` интерфейса есть только UI-моды из настроек.
+
+### Опции автолобби рассчитаны на матч с противником
+
+По умолчанию `Victory = 'demoralization'`, а матч, где все оставшиеся армии союзники, игра завершает. Союзникам нужен `/gameoptions Victory:sandbox`. `TeamShareOverflow` уже `enabled`.
+
+Источник: fa:lua/ui/lobby/autolobby/AutolobbyController.lua#Victory = 'demoralization',
+Источник: fa:lua/ui/lobby/autolobby/AutolobbyController.lua#TeamShareOverflow = "enabled",
+Источник: fa:lua/sim/VictoryCondition/UnitCondition.lua#if self:RemainingBrainsAreAllied(aliveBrains) then
+Наблюдение: с `Victory:sandbox` матч двух союзников шёл больше 20 секунд игрового времени.
+
+### Клиенты с одним `/profile` делят файл реплея
+
+Первый клиент пишет `Saving replay to`, второй пишет в лог `Can't create replay file` на тот же путь и играет дальше. Файл остаётся в папке реплеев профиля, как после матча через `/map`.
+
+Наблюдение: логи двух клиентов с `/profile modtest`.
+
+### Сообщение другому клиенту идёт мимо sim
+
+`SessionSendChatMessage({ Identifier = "Имя" })` доходит до других клиентов, если у них есть `import("/lua/ui/game/gamemain.lua").RegisterChatFunc(функция, "Имя")`. Sim-мод для этого не нужен.
+
+Источник: fa:lua/ui/game/gamemain.lua#local func = chatFuncs[data.Identifier]
+Наблюдение: второй клиент стенда вышел по такому сообщению хоста, отправленному за 0,5 с до `ExitApplication`.
+
+### Сообщение чата видно в истории чата, в том числе на паузе
+
+`SessionSendChatMessage({ to = "all", Chat = true, text = "..." })` без списка клиентов возвращается отправителю и попадает в `import("/lua/ui/game/chat/ChatModel.lua").GetSingleton().History()`, текст лежит в поле `Text`. Сценарий стенда может проверить по этой истории, что сообщение прошло через чат игры. Пауза доставке не мешает.
+
+Источник: fa:lua/ui/game/chat/ChatController.lua#Text       = msg.text,
+Наблюдение: одиночный матч, второе сообщение ушло через секунду после `SessionRequestPause` и появилось в истории.
+
+### `bad argument #1 to 'find'` в `construction.lua` после приказа на улучшение
+
+Панель постройки заполняет поля `ID` и `UnitID` улучшения в чертеже, когда игрок открывает её вкладку улучшений, а очередь панели их читает. Приказ `IssueCommand("UNITCOMMAND_Script", { TaskName = "EnhanceTask", Enhancement = "Имя" }, false)` без открытой вкладки сам по себе выполняется, но `IntegrateEnhancements` падает со стеком в логе. Выделение юнита эти поля не заполняет. Такой приказ код без игрока отдаёт, заполнив их сам.
+
+Источник: fa:lua/ui/game/construction.lua#enhTable.ID = enhName
+Источник: fa:lua/ui/game/construction.lua#if not found[enhancement.ID] and not string.find(enhancement.ID, 'Remove') then
+Наблюдение: приказ из сценария: улучшение пошло, в логе `bad argument #1 to `find' (string expected, got nil)`. За 5 секунд после `SelectUnits` поле `ID` не заполнилось. С полями, заданными до приказа, ошибки нет.
+
+### Клавишу и курсор в игру можно передать программно
+
+`PostMessage` с `WM_KEYDOWN` и `WM_KEYUP` в дочернее окно класса `wxWindowClass` срабатывает как нажатие: идёт через карту клавиш движка и запускает привязанное действие. Главное окно такие сообщения игнорирует. Окно не обязано быть активным, поэтому клавиша не попадёт в другую программу.
+
+`WM_MOUSEMOVE` в то же окно меняет `GetMouseScreenPos` и `GetMouseWorldPos`, а курсор системы остаётся на месте. Позиция держится недолго: игра сама возвращается к положению курсора системы, даже если он вне её окна. Поэтому сообщение повторяют, пока позиция нужна. Стенд шлёт его каждые 20 мс. Пока у игры фокус, сообщение не действует вовсе, а при старте она иногда забирает фокус сама, поэтому стенд его возвращает.
+
+Сочетания доходят до карты клавиш и без фокуса. `Ctrl` и `Shift` игра читает из состояния клавиатуры своего потока: его на время сообщения задают `AttachThreadInput` и `SetKeyboardState`. `Alt` задаёт бит 29 в `lParam` сообщения.
+
+`IsKeyDown` так не обмануть: он видит клавишу только через `keybd_event` при активном окне игры. Поэтому сценарий стенда подменяет `IsKeyDown` в модуле мода.
+
+Окно, запущенное с `SW_SHOWMINNOACTIVE`, матч не начинает. С `SW_SHOWNOACTIVATE` окно открывается позади других, и матч идёт.
+
+Наблюдение: матч через `/map`, клавиша из `UserKeyMap`: сообщение главному окну не дало ничего, сообщение дочернему окну запустило действие.
+Наблюдение: одно сообщение `WM_MOUSEMOVE` дало `GetMouseScreenPos` 300,300, в других запусках позиция сменилась на `-1068,509` и `6663,564`, положение курсора системы вне окна. Сценарии с повтором каждые 20 мс прошли 6 раз из 6, пока курсор системы двигался.
+Наблюдение: запуск с `wShowWindow` равным `SW_SHOWMINNOACTIVE`: за 120 с матч не начался, в логе нет строк сценария. С `SW_SHOWNOACTIVATE` сценарии прошли.
+Наблюдение: сценарий `locked_unit`, игре принудительно дан фокус: курсор остался на `859,839`, сценарий упал. Тот же запуск с возвратом фокуса прошёл.
+Наблюдение: шесть запусков без ввода от стенда: игра забрала фокус в двух, через 0,5 с после старта, на 0,1 и 1 с. Запуск обычный и с `SW_SHOWNOACTIVATE` дал по одному разу из трёх.
+Наблюдение: `IsKeyDown("Shift")` остался `false` после `WM_KEYDOWN`, после `SetKeyboardState` с `AttachThreadInput` и после `keybd_event` при неактивном окне. После `keybd_event` при активном окне он стал `true`.
+Наблюдение: окно без фокуса: `Ctrl-K` и `Shift-K` запустили свои действия после `SetKeyboardState` в присоединённом потоке, `Alt-K` после сообщения с битом 29. `IsKeyDown` в этих действиях вернул `false`. Состояние `VK_MENU` без бита 29 дало простое `K`.
+
+### `import` отсутствующего файла пишет в лог и под `pcall`
+
+`pcall` перехватывает ошибку, но движок уже напечатал `Unable to find file` и стек предупреждениями. Игроку это не мешает, но в логе выглядит как сбой. Необязательный файл проверяют через `DiskGetFileInfo` до `import`.
+
+Наблюдение: `pcall(function() return import("/mods/ASE/modules/Lock.lua").IsLocked end)` без мода ASE: строка `Unable to find file /mods/ase/modules/lock.lua` и стек из 15 строк.
+Наблюдение: `DiskGetFileInfo("/mods/ASE/modules/Lock.lua")` в интерфейсе матча: без мода ASE строки и стека нет, а с папкой мода в `/mods/ase` файл находится, регистр пути не важен.
+
+### Локальные переменные модуля читаются через `debug.getupvalue`
+
+В интерфейсе `debug.getupvalue(функция, номер)` работает и отдаёт имя и значение. Так тест достаёт локальную таблицу состояния мода из любой функции, которая её использует, не меняя мод.
+
+Наблюдение: чтение локальной таблицы `G` из `ui.lua` мода Overflow и `globalOptions` из `Options.lua` UMT в матче.
+
+### `/init` принимает файл вне папки `bin`
+
+Подходит абсолютный путь. Движок ставит `InitFileDir` на папку этого файла, а штатный init ищет от неё `fa_path.lua` и `gamedata`. Поэтому свой init сначала возвращает значение, затем выполняет штатный файл и дописывает моды в `path`:
+
+```lua
+InitFileDir = 'C:/ProgramData/FAForever/bin'
+dofile(InitFileDir .. '/init.lua')
+table.insert(path, { dir = '<путь к моду>', mountpoint = '/mods/имя' })
+```
+
+Так мод подключается из своей папки, без копирования в игру или в хранилище модов.
+
+Источник: fa:init_faf.lua#dofile(InitFileDir .. '/../fa_path.lua')
+Наблюдение: запуск с таким init из временной папки, в логе `DISK: AddSearchPath` с папкой мода и `Hooked` с его хуками.
+
+### `/prefs` считает путь от папки настроек игры
+
+Значение приклеивается к `%LOCALAPPDATA%\Gas Powered Games\Supreme Commander Forged Alliance\`. С абсолютным путём игра пишет `Unable to open preference file` и работает на пустых настройках, поэтому моды из файла не включаются. Работает относительный путь вида `..\..\Temp\папка\Game.prefs`. Файл только с таблицей `active_mods` игра считает устаревшим: переименовывает его в `Game.prefs.bad` и создаёт настройки по умолчанию. Достаточно добавить `profile` с одним профилем и `version = { major = 1 }`. Основной `Game.prefs` при этом не меняется.
+
+Источник: https://wiki.faforever.com/en/Development/Game-Development/Command-Line-Switches
+Наблюдение: запуски с абсолютным путём, с файлом из одной `active_mods` и с таким файлом; время изменения основного `Game.prefs` осталось прежним.
+
+### `Blueprints.lua` читает настройки мимо `/prefs`
+
+Он сам открывает `/preferences/Game.prefs`, а штатный init монтирует туда папку настроек игрока. Поэтому при `/prefs` с другим файлом `PreGameData` всё равно берётся из настроек игрока: список иконок модов приходит оттуда, и без этих модов лог получает `Unable to load icons from mod`. Чтобы отделить запуск от настроек игрока, в своём init меняют `dir` у записи `path` с `mountpoint = '/preferences'`.
+
+Источник: fa:lua/system/Blueprints.lua#local file = DiskFindFiles("/preferences", "Game.prefs")[1]
+Наблюдение: запуск с временным `/prefs` дал эти строки в логе, после замены `dir` они исчезли.
+
+### Матч через `/map` сохраняет реплей
+
+Файл `LastGame.SCFAReplay` ложится в `Documents\My Games\Gas Powered Games\Supreme Commander Forged Alliance\replays\<профиль>\`. Папка создаётся, если её не было.
+
+Источник: fa:lua/SinglePlayerLaunch.lua#sessionInfo.createReplay = true
+Наблюдение: строка `Saving replay to` в логе запуска и файл на этом пути.
+
+### Время в матче через `/map` идёт неравномерно
+
+`WaitSeconds` в интерфейсе не равен десяти тикам симуляции на секунду, и отношение меняется по ходу матча. Сценарий, которому важен порядок событий, считает сами события: проверка «за 3 секунды» здесь случайно проходила на сломанном коде.
+
+Наблюдение: за `WaitSeconds(10)` прошло 167 тиков, а 16 проходов цикла мода с `WaitSeconds(1)` заняли 213 тиков.
+
+### `SimLua` отвергается в матче через `/map`
+
+`SessionGetScenarioInfo().Options.CheatsEnabled` там равно `'true'`, но `ConExecute('SimLua ...')` не выполняется, а в логе появляется `<игрок> is trying to cheat!`. Действия в sim в таком матче делают своим обработчиком: мод с `ui_only = false` хукает `/lua/SimCallbacks.lua`, а обработчик вызывают через `SimCallback`.
+
+Источник: fa:lua/SinglePlayerLaunch.lua#CheatsEnabled = 'true',
+Наблюдение: запуск с `SimLua`, затем с таким модом: обработчик создал юнитов и выдал им приказы.

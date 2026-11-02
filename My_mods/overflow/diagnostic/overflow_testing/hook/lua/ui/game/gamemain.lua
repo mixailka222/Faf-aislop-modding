@@ -1,32 +1,12 @@
--- Overflow Testing - точка входа (хук).
+-- Overflow Testing - entry point, appended to lua/ui/game/gamemain.lua.
 --
--- ВАЖНО: этот файл дописывается в конец lua/ui/game/gamemain.lua, а
--- CreateUI вызывается самой игрой для построения интерфейса. Если здесь
--- возникнет ошибка, игра не сможет построить интерфейс и будет чёрный
--- экран. Поэтому весь код обёрнут в pcall, а перехват CreateUI происходит
--- ТОЛЬКО если модуль удалось загрузить. Любая ошибка -> мод просто
--- выключается, игра работает как обычно.
---
--- Структура файла скопирована из рабочего мода Overflow: там она уже
--- проверена в игре.
+-- The game calls CreateUI to build the interface and an error there leaves a black screen.
+-- So CreateUI is hooked only after the module has loaded, and the mod runs under pcall.
 
 do
-    ------------------------------------------------------------------
-    --  ВАЖНО: путь /mods/ИМЯ берётся из ИМЕНИ ПАПКИ, а не из поля name
-    --  в mod_info.lua. Проверено на установленных модах:
-    --
-    --      папка ACUhighlight      -> name = "Acu highlight"
-    --      папка AKA               -> name = "Advanced Key Actions"
-    --      папка PxModAlphaV6      -> name = "PxModAlpha"
-    --
-    --  То есть мод с любым name нормально работает внутри папки с другим
-    --  именем. И в логе видно, как клиент это монтирует:
-    --      AddSearchPath: '...\mods\overflow', mounted as '/mods/ov...'
-    --
-    --  Папку пользователь просил назвать overflow_testing, а регистр
-    --  привязки нам неизвестен. Поэтому пробуем варианты по очереди.
-    --  Первый успешный и есть правильный - запоминаем его.
-    ------------------------------------------------------------------
+    -- The path /mods/NAME comes from the folder name, not from the field name in
+    -- mod_info.lua. The case of the mount is not known, so the variants are tried in turn
+    -- and the first success wins.
     local CANDIDATES = {
         '/mods/overflow_testing/modules/main.lua',
         '/mods/OverflowTesting/modules/main.lua',
@@ -43,7 +23,6 @@ do
             LOG('OverflowTesting: module loaded from ' .. path)
             break
         else
-            -- оператор # движком не поддерживается, только table.insert
             table.insert(tried, path .. ' -> ' .. tostring(mod))
         end
     end
@@ -59,9 +38,9 @@ do
         local OldCreateUI = CreateUI
 
         function CreateUI(isReplay)
-            -- сначала игра строит весь свой интерфейс
+            -- the game builds its whole interface first
             OldCreateUI(isReplay)
-            -- потом наш мод (даже если он упадёт - интерфейс игры не пострадает)
+            -- then the mod: if it fails, the game interface survives
             local ok2, err = pcall(Testing.OnCreateUI)
             if not ok2 then
                 LOG('OverflowTesting: OnCreateUI error: ' .. tostring(err))

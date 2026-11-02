@@ -152,9 +152,17 @@ UMT находит и `modules/main.lua`, а пути в логе идут ст�
 Источник: ui-libs:mods/UMT/modules/OptionsWindow.lua#SaveOptions = function(self)
 Источник: ui-libs:mods/UMT/modules/OptionsWindow.lua#self:OnClose(true)
 
+### Значение из `OptionVar:Set` откатывает кнопка Cancel
+
+`Set` запоминает прежнее значение, а Cancel зовёт `Reset` у всех полей страницы, даже если значение менялось не из окна. Мод, который меняет настройку мимо окна, например по хоткею, пишет через `option:Raw():Set(value)`: прежнее значение тогда не запоминается и `OnChange` не вызывается. Если поле уже двигали в окне, запомненное значение остаётся, и Cancel вернёт его. Стирает его `option:Save()`, заодно записывая текущее значение в профиль.
+
+Источник: ui-libs:mods/UMT/modules/OptionVar.lua#self._prev = self._lv()
+Источник: ui-libs:mods/UMT/modules/OptionVar.lua#self:Set(self._prev)
+Источник: ui-libs:mods/UMT/modules/OptionVar.lua#self._prev = nil
+
 ### `OptionVar` читает профиль один раз при создании
 
-Значение берётся при создании, и там же значение по умолчанию записывается в профиль. Запись в `Prefs` в обход `OptionVar` окно не увидит, а старое значение из `OptionVar` вернётся в профиль при следующем `:Save()`, поэтому кнопка OK её затрёт. Если мод меняет значения окна, он пишет через `:Set`.
+Значение берётся при создании, и там же значение по умолчанию записывается в профиль. Запись в `Prefs` в обход `OptionVar` окно не увидит, а старое значение из `OptionVar` вернётся в профиль при следующем `:Save()`, поэтому кнопка OK её затрёт. Если мод меняет значения окна из своего кода, он пишет в `OptionVar` через `option:Raw():Set(value)`, а не только в `Prefs`.
 
 Источник: ui-libs:mods/UMT/modules/OptionVar.lua#local val = modOptionsTable and modOptionsTable[subOption]
 

@@ -19,7 +19,7 @@ METHOD_CALL = re.compile(r"(?<![\w:.])([a-z_]\w*)\.([A-Z]\w*)\s*\(")
 MODULE_LOCAL = re.compile(r"\blocal\s+([a-z_]\w*)\s*=\s*import\b")
 # Control sizes are properties that are read with a dot.
 PROPERTY_GETTERS = {"Left", "Right", "Top", "Bottom", "Width", "Height", "Depth", "Alpha",
-                    "Scroll", "ItemHeight"}
+                    "Scroll", "ItemHeight", "FontAscent", "FontDescent"}
 
 
 def strip_comments(source: str) -> str:

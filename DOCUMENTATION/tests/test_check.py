@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -246,30 +248,57 @@ class ModInfoTests(RepoCase):
 class RunTestsTests(RepoCase):
     def setUp(self):
         super().setUp()
-        patcher = mock.patch.object(bootstrap, "venv_python", lambda: Path(sys.executable))
+        patcher = mock.patch.object(bootstrap, "lua_path", lambda: Path(sys.executable))
         patcher.start()
         self.addCleanup(patcher.stop)
         self.project = self.root / "My_mods/one"
 
     def test_only_test_scripts_are_run(self):
         marker = self.root / "negative_ran"
-        write(self.project / "tests/test_ok.py", "print('ok')\n")
-        write(self.project / "tests/negative_breaks_mod.py",
+        # The stand-in interpreter is Python, so these scripts are Python too.
+        write(self.project / "tests/test_ok.lua", "print('ok')\n")
+        write(self.project / "tests/negative_breaks_mod.lua",
               f"open({str(marker)!r}, 'w').close()\n")
         self.assertEqual(check.run_tests(self.project), [])
         self.assertFalse(marker.exists())
 
     def test_failing_exit_code_is_reported(self):
-        write(self.project / "tests/test_bad.py", "raise SystemExit(1)\n")
-        self.assertIn("test_bad.py", " ".join(check.run_tests(self.project)))
+        write(self.project / "tests/test_bad.lua", "raise SystemExit(1)\n")
+        self.assertIn("test_bad.lua", " ".join(check.run_tests(self.project)))
 
     def test_fail_marker_in_output_is_reported(self):
-        write(self.project / "tests/test_bad.py", "print('[FAIL] something')\n")
-        self.assertIn("test_bad.py", " ".join(check.run_tests(self.project)))
+        write(self.project / "tests/test_bad.lua", "print('[FAIL] something')\n")
+        self.assertIn("test_bad.lua", " ".join(check.run_tests(self.project)))
 
     def test_project_without_tests_is_fine(self):
         self.project.mkdir(parents=True)
         self.assertEqual(check.run_tests(self.project), [])
+
+
+class TestsLineTests(RepoCase):
+    def output(self, mod):
+        buffer = io.StringIO()
+        with mock.patch.object(check, "check_luac", return_value=[]), \
+                contextlib.redirect_stdout(buffer):
+            check.check_mod(mod, {}, False)
+        return buffer.getvalue()
+
+    def test_mod_without_tests_is_not_reported_as_tested(self):
+        output = self.output(self.mod("My_mods/one/Mod"))
+        self.assertIn("[SKIP] тесты Mod", output)
+        self.assertNotIn("[OK] тесты", output)
+
+    def test_tests_folder_without_test_scripts_counts_as_no_tests(self):
+        mod = self.mod("My_mods/one/Mod")
+        write(self.root / "My_mods/one/tests/negative_mod.py", "")
+        self.assertIn("[SKIP] тесты Mod", self.output(mod))
+
+    def test_mod_with_tests_is_reported_as_tested(self):
+        mod = self.mod("My_mods/one/Mod")
+        # The stand-in interpreter is Python, so the script is Python too.
+        write(self.root / "My_mods/one/tests/test_ok.lua", "print('ok')\n")
+        with mock.patch.object(bootstrap, "lua_path", lambda: Path(sys.executable)):
+            self.assertIn("[OK] тесты Mod", self.output(mod))
 
 
 class ChangedModsTests(RepoCase):
@@ -280,17 +309,27 @@ class ChangedModsTests(RepoCase):
         self.two = self.mod("My_mods/two/ModTwo")
         self.base = self.commit("base")
 
-    def test_mod_with_changed_code_is_selected(self):
+    def test_only_the_mod_with_changed_code_is_selected(self):
         write(self.one / "Main.lua", "")
         self.commit()
-        self.assertEqual(check.changed_mods(self.root, self.base), [self.hotkeys, self.one])
+        self.assertEqual(check.changed_mods(self.root, self.base), [self.one])
 
-    def test_hotkeys_are_always_selected(self):
+    def test_change_outside_the_mods_selects_none(self):
+        write(self.root / "notes.txt", "notes")
         self.commit()
-        self.assertEqual(check.changed_mods(self.root, self.base), [self.hotkeys])
+        self.assertEqual(check.changed_mods(self.root, self.base), [])
+
+    def test_changed_rules_of_the_check_select_all_mods(self):
+        for name in ("DOCUMENTATION/tools/check.py", "DOCUMENTATION/tools/validate_mod.py", ".luarc.json"):
+            with self.subTest(name):
+                write(self.root / name, name)
+                base = self.commit()
+                write(self.root / name, "changed")
+                self.commit()
+                self.assertEqual(len(check.changed_mods(self.root, base)), 3)
 
     def test_changed_test_script_selects_its_mod(self):
-        write(self.root / "My_mods/two/tests/test_x.py", "")
+        write(self.root / "My_mods/two/tests/test_x.lua", "")
         self.commit()
         self.assertIn(self.two, check.changed_mods(self.root, self.base))
 
@@ -373,6 +412,9 @@ class ReadmeWarningTests(RepoCase):
 
 
 class LualsReportTests(unittest.TestCase):
+    def test_clean_run_writes_an_empty_list(self):
+        self.assertEqual(check.parse_luals([]), {})
+
     def test_report_is_grouped_by_file(self):
         raw = {
             "file:///c%3A/repo%20name/My_mods/one/Mod/Main.lua": [{
@@ -411,7 +453,7 @@ class VersionsTests(RepoCase):
 
     def test_deleted_source_folder_is_reported(self):
         self.install(bootstrap.expected_versions(bootstrap.load_versions()),
-                     bootstrap.luals_path(), bootstrap.luac_path(), bootstrap.venv_python())
+                     bootstrap.luals_path(), bootstrap.luac_path(), bootstrap.lua_path())
         (self.root / "references" / "fa").rmdir()
         self.assertIn("bootstrap.py", " ".join(check.check_versions()))
 
@@ -420,18 +462,18 @@ class VersionsTests(RepoCase):
 
     def test_installed_tools_pass(self):
         self.install(bootstrap.expected_versions(bootstrap.load_versions()),
-                     bootstrap.luals_path(), bootstrap.luac_path(), bootstrap.venv_python())
+                     bootstrap.luals_path(), bootstrap.luac_path(), bootstrap.lua_path())
         self.assertEqual(check.check_versions(), [])
 
     def test_deleted_tool_is_reported(self):
         self.install(bootstrap.expected_versions(bootstrap.load_versions()),
-                     bootstrap.luals_path(), bootstrap.venv_python())
+                     bootstrap.luals_path(), bootstrap.luac_path())
         self.assertIn("bootstrap.py", " ".join(check.check_versions()))
 
     def test_ci_does_not_need_the_built_compiler(self):
         versions = bootstrap.expected_versions(bootstrap.load_versions())
         del versions["faf-lua"]
-        self.install(versions, bootstrap.luals_path(), bootstrap.venv_python())
+        self.install(versions, bootstrap.luals_path())
         self.assertEqual(check.check_versions(no_luac=True), [])
 
 
@@ -458,6 +500,54 @@ class CommandLineTests(unittest.TestCase):
                               capture_output=True, env=env)
         self.assertEqual(done.returncode, 1)
         self.assertNotIn(b"Traceback", done.stderr)
+
+    def test_check_without_a_target_is_refused(self):
+        done = self.run_outside_ci("check.py")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("--all", done.stdout)
+
+    def test_check_with_two_targets_is_refused(self):
+        done = self.run_outside_ci("check.py", "--all", "--knowledge")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("--all", done.stdout)
+
+
+class TargetTests(unittest.TestCase):
+    """What each form of the command checks: the checks themselves are replaced."""
+
+    def run_check(self, *args):
+        mods = []
+        knowledge = []
+
+        def check_mod(mod, _luals, _no_luac):
+            mods.append(mod.name)
+            return True
+
+        def check_knowledge(_root):
+            knowledge.append(True)
+            return []
+
+        with mock.patch.object(sys, "argv", ["check.py", *args]), \
+                mock.patch.object(check, "check_versions", return_value=[]), \
+                mock.patch.object(check, "find_mods", return_value=[Path("One"), Path("Two")]), \
+                mock.patch.object(check, "run_luals", return_value={}) as luals, \
+                mock.patch.object(check, "check_mod", check_mod), \
+                mock.patch.object(check, "check_knowledge", check_knowledge), \
+                contextlib.redirect_stdout(io.TextIOWrapper(io.BytesIO(), encoding="utf-8")):
+            code = check.main()
+        return code, mods, bool(knowledge), luals.called
+
+    def test_all_checks_every_mod_and_the_knowledge_base(self):
+        self.assertEqual(self.run_check("--all"), (0, ["One", "Two"], True, True))
+
+    def test_knowledge_checks_no_mod(self):
+        self.assertEqual(self.run_check("--knowledge"), (0, [], True, False))
+
+    def test_one_mod_leaves_the_others_and_the_knowledge_base_out(self):
+        with tempfile.TemporaryDirectory() as temp:
+            mod = Path(temp) / "Mod"
+            write(mod / "mod_info.lua", MOD_INFO)
+            self.assertEqual(self.run_check(str(mod)), (0, ["Mod"], False, True))
 
 
 class KnowledgeTests(RepoCase):
