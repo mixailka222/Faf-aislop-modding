@@ -281,6 +281,10 @@ end
 Источник: ui-libs:mods/ReUI/Core/Modules/Loader.lua#if mod.ReUI and mod.ui_only then
 Источник: ui-libs:mods/ReUI/Core/Modules/Loader.lua#local TAG_REGEX = '^(%a[%a%.%d]*)=(%d+%.%d+%.%d+)$'
 
+### UMT и ReUI работают в одной партии
+
+Наблюдение: сценарий `locked_unit` с активными ReUI v08, UMT v13 и ASE прошёл на стенде.
+
 ### Главный файл мода на ReUI
 
 Загрузчик ищет `/mods/Имя/Имя.lua`, затем `/mods/Имя/Main.lua`. Версия берётся из глобала `Version` этого файла. Запись в `mod_info.lua` устарела и даёт `WARN`.

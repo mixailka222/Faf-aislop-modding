@@ -8,7 +8,8 @@
   },
   "permission": {
     "bash": {
-      "*game_test.py*--all*": "ask"
+      "*game_test.py*--all*": "ask",
+      "*game_test.py*--only*": "ask"
     }
   }
 }
