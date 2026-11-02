@@ -269,7 +269,7 @@
 
 Источник: fa:lua/ui/lobby/autolobby/AutolobbyController.lua#Victory = 'demoralization',
 Источник: fa:lua/ui/lobby/autolobby/AutolobbyController.lua#TeamShareOverflow = "enabled",
-Источник: fa:lua/sim/victorycondition/UnitCondition.lua#if self:RemainingBrainsAreAllied(aliveBrains) then
+Источник: fa:lua/sim/VictoryCondition/UnitCondition.lua#if self:RemainingBrainsAreAllied(aliveBrains) then
 Наблюдение: с `Victory:sandbox` матч двух союзников шёл больше 20 секунд игрового времени.
 
 ### Клиенты с одним `/profile` делят файл реплея
