@@ -99,6 +99,11 @@ end
 function CheckCollapse(panel, title)
     local win = panel.win
     local left, top = win.Left(), win.Top()
+    -- Show() on the window reaches every child, so a switched-off row could come back with it.
+    local hiddenBefore = {}
+    for name, control in panel.labels do
+        hiddenBefore[name] = control:IsHidden()
+    end
     win._closeBtn:OnClick()
     Test.Check(win:IsHidden(), title .. ": the close button hides the panel")
     Test.Check(not panel.reopenButton:IsHidden(), title .. ": the Overflow button is shown")
@@ -114,5 +119,9 @@ function CheckCollapse(panel, title)
     Test.Check(panel.reopenButton:IsHidden(), title .. ": the Overflow button is gone")
     for _, piece in panel.frameBg or {} do
         Test.Check(not piece:IsHidden(), title .. ": the frame is back")
+    end
+    for name, control in panel.labels do
+        Test.Check(control:IsHidden() == hiddenBefore[name],
+            title .. ": " .. name .. " is " .. (hiddenBefore[name] and "still hidden" or "shown again"))
     end
 end
