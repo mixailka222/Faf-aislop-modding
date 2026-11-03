@@ -211,6 +211,19 @@ SEL = { MakeUnit({ true }) }
 MODT.PauseAfkOnCreateUI()
 check(string.len(CHAT[1].text) <= 200, 'текст не длиннее 200')
 
+-- "\208\176" is the Cyrillic "а", two bytes in UTF-8.
+local RU = '\208\176'
+
+-- 101 letters are 202 bytes: the cut falls between two letters, 100 whole letters remain.
+print('=== 13a: cut between two-byte letters keeps them whole ===')
+check(SETT.PauseAfkSaneMsg(string.rep(RU, 101)) == string.rep(RU, 100), 'осталось 100 целых букв')
+
+-- "x" shifts the letters by one byte, so byte 200 is the first byte of a letter: the
+-- split letter is dropped, 99 remain.
+print('=== 13b: cut inside a two-byte letter drops it ===')
+check(SETT.PauseAfkSaneMsg('x' .. string.rep(RU, 150)) == 'x' .. string.rep(RU, 99),
+    'разрезанная буква удалена целиком')
+
 print('=== 14: missing profile falls back to default ===')
 Reset()
 SEL = { MakeUnit({ true }) }
