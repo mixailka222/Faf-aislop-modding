@@ -21,5 +21,6 @@ function Main(isReplay)
     --  Indexing the table loads Options.lua once and registers the page for the ReUI
     --  options window. The toggle itself is read on every key press from the hook file,
     --  so switching it works without reloading the UI.
-    pcall(function() return ReUI.Options.Mods["shift_z_transport"] end)
+    local mods = rawget(ReUI.Options, "Mods")
+    pcall(function() return mods["shift_z_transport"] end)
 end

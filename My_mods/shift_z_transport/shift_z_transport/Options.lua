@@ -5,17 +5,21 @@
 --  the page to it.
 
 local Opt = rawget(ReUI.Options, "OptionValue") or rawget(ReUI.Options, "Opt")
+local Mods = rawget(ReUI.Options, "Mods")
 
-ReUI.Options.Mods["shift_z_transport"] = {
+Mods["shift_z_transport"] = {
     enabled = Opt(true),
 }
 
 function Main()
-    local builder = ReUI.Options.Builder
-    local options = ReUI.Options.Mods["shift_z_transport"]
+    local builder = rawget(ReUI.Options, "Builder")
+    local options = Mods["shift_z_transport"]
+    local AddOptions = builder.AddOptions
+    local Title = builder.Title
+    local Filter = builder.Filter
 
-    builder.AddOptions("shift_z_transport", "Shift+Z Transport Unload", {
-        builder.Title("Shift+Z", 16),
-        builder.Filter("Transports selected: unload order instead of spread move", options.enabled, 0),
+    AddOptions("shift_z_transport", "Shift+Z Transport Unload", {
+        Title("Shift+Z", 16),
+        Filter("Transports selected: unload order instead of spread move", options.enabled, 0),
     })
 end
