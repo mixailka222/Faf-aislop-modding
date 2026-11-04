@@ -1,4 +1,5 @@
---  shift_z_transport: this file is appended to the game's /lua/keymap/keyactions.lua
+--  shift_z_transport: context-sensitive Shift+Z for transports and factories.
+--  This file is appended to the game's /lua/keymap/keyactions.lua
 --  by the FAF hook system, so it runs while the key action table is being built.
 --
 --  Only the code behind the existing action is replaced. The key binding itself is not
@@ -26,7 +27,7 @@ local function OptionIsOn()
     end
 
     -- Indexing an unknown mod raises an error, so it has to stay inside pcall.
-    local ok, opts = pcall(function() return mods["shift_z_transport"] end)
+    local ok, opts = pcall(function() return mods["ShiftZTransport"] end)
     if not ok or not opts then
         return true
     end
@@ -54,12 +55,30 @@ local function OnlyTransports(selection)
     return table.getn(transports) == total
 end
 
+local function OnlyFactories(selection)
+    local total = table.getn(selection)
+    if total == 0 then
+        return false
+    end
+
+    local factories = EntityCategoryFilterDown(
+        categories.FACTORY + categories.EXTERNALFACTORY, selection)
+    return table.getn(factories) == total
+end
+
 rawset(_G, "ShiftZTransportSpreadMove", function()
     if OptionIsOn() then
         local selection = GetSelectedUnits()
-        if selection and OnlyTransports(selection) then
-            ConExecute("StartCommandMode order RULEUCC_Transport")
-            return
+        if selection then
+            if OnlyTransports(selection) then
+                ConExecute("StartCommandMode order RULEUCC_Transport")
+                return
+            end
+
+            if OnlyFactories(selection) then
+                import("/lua/keymap/misckeyactions.lua").ToggleRepeatBuild()
+                return
+            end
         end
     end
 

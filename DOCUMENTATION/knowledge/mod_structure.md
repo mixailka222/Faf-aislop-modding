@@ -146,3 +146,10 @@ local SetIgnoreSelection = import("/lua/ui/game/gamemain.lua").SetIgnoreSelectio
 Для массовых правок есть `SetModBlueprintFunction` в файле `.bp` и старый хук `ModBlueprints` в `/lua/system/Blueprints.lua`.
 
 Источник: fa:lua/MODS.LUA#The newer method is using the function `SetModBlueprintFunction`, which you can call from a `.bp`
+
+### Имя папки мода ReUI содержит только буквы, цифры и точки
+
+ReUI читает имя модуля из своего тега и ищет по нему папку мода. Подчёркивание и другие символы не подходят: тег с таким именем выдаёт `invalid ReUI tag`, и модуль не загружается.
+
+Источник: ui-libs:mods/ReUI/Core/Modules/Loader.lua#local NAME_REGEX = '^%a[%a%.%d]*$'
+Источник: ui-libs:mods/ReUI/Core/Modules/Loader.lua#FindModuleMainFilePath = function(self, moduleName)

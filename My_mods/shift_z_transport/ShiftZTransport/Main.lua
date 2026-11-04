@@ -8,7 +8,7 @@
 --  system appends to the game file, so nothing here runs on key press. This file only
 --  keeps the ReUI options page alive (see Options.lua) and carries the module version.
 
-Version = "1.1.0"
+Version = "1.2.0"
 
 pcall(function()
     ReUI.Require
@@ -22,5 +22,5 @@ function Main(isReplay)
     --  options window. The toggle itself is read on every key press from the hook file,
     --  so switching it works without reloading the UI.
     local mods = rawget(ReUI.Options, "Mods")
-    pcall(function() return mods["shift_z_transport"] end)
+    pcall(function() return mods["ShiftZTransport"] end)
 end
