@@ -1,4 +1,4 @@
-Version = "1.0.0"
+Version = "1.1.0"
 
 ReUI.Require
 {
@@ -162,6 +162,67 @@ local function AddNearest(expression, excluded)
     table.insert(combined, nearestCandidate)
 
     SelectUnits(combined)
+end
+
+--- Drops the factories that a hotkey must not put into the selection: the ones
+--- ASE locked, so its own filter would take them out again.
+--- @param factories UserUnit[]
+--- @return UserUnit[]
+local function SelectableFactories(factories)
+    local units = {}
+    for _, factory in factories do
+        if not IsLocked(factory) then
+            table.insert(units, factory)
+        end
+    end
+
+    return units
+end
+
+--- Selects every factory of the player that is not producing anything: land,
+--- air and navy alike, all tiers, in one selection.
+---
+--- The engine answers "which factories are free" with GetIdleFactories(), the
+--- same list the army tab and the vanilla idle factory hotkey are built on. A
+--- factory that builds, upgrades or waits for its roll-off is not in it, so no
+--- extra check of the production queue is needed.
+---
+--- Quantum gates and orbital systems are dropped the way the army tab drops
+--- them: both are factories for the engine, but neither is a production hotkey
+--- target.
+---
+--- A factory that finished its queue is still in the list until the order is
+--- cleared, so the factories that hold a build order are dropped as well: those
+--- are busy, and a free factory is not one of them.
+--- With nothing free the selection is left untouched, so a stray press does
+--- not throw away what the player has selected.
+local function SelectFreeFactories()
+    local idleFactories = GetIdleFactories()
+    if not idleFactories then
+        return
+    end
+
+    local free = EntityCategoryFilterDown(
+        categories.ALLUNITS - categories.GATE - categories.ORBITALSYSTEM,
+        idleFactories
+    )
+
+    local units = SelectableFactories(free)
+    if table.empty(units) then
+        return
+    end
+
+    -- Shift extends the selection instead of replacing it, the same way the
+    -- nearest unit hotkeys above do.
+    if IsKeyDown("Shift") then
+        for _, unit in GetSelectedUnits() or {} do
+            if not IsSelected(unit, units) then
+                table.insert(units, unit)
+            end
+        end
+    end
+
+    SelectUnits(units)
 end
 
 --- True when every selected unit belongs to `included` and none belongs to
@@ -345,6 +406,20 @@ function Main()
                 :Match(AlwaysMatches)
                 :Action(function()
                     Hotbuild.buildAction("Sensors")
+                end),
+        }
+
+        -- Every free factory at once. No modifiers are declared: the result does
+        -- not depend on what is selected, so a bare key is enough, and Shift is
+        -- read inside the action to extend the selection.
+        local factoriesMatcher = CategoryMatcher("Select all free factories")
+
+        factoriesMatcher
+        {
+            CategoryAction()
+                :Match(AlwaysMatches)
+                :Action(function()
+                    SelectFreeFactories()
                 end),
         }
     end)
