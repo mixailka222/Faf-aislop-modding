@@ -12,6 +12,7 @@ local MOUSE_MARGIN = 2
 local END_MESSAGE = "ModTestEnd"
 
 local failures = 0
+local frameFolder
 
 function Step(text)
     LOG("[MODTEST] " .. text)
@@ -121,6 +122,21 @@ function MoveMouseTo(position)
     end, MOUSE_SECONDS, MOUSE_STEP_SECONDS), "the cursor came to the place")
 end
 
+--- Saves the frame the game shows. game_test.py turns it into a PNG named after the mod, the scenario and
+--- name, and several frames with one name into a GIF that keeps the time between them. The engine writes
+--- the frame itself, so a covered window or another monitor make no difference.
+function Shot(name)
+    if not string.find(name, "^[%w_]+$") then
+        Check(false, "the frame name '" .. name .. "' has only letters, digits and _")
+        return
+    end
+    -- A change made just before is drawn on the next frame.
+    WaitFrames(1)
+    ConExecute('dump_Frame "' .. frameFolder .. '"')
+    Step("SHOT " .. name .. " " .. CurrentTime())
+    WaitFrames(1)
+end
+
 --- A module of a mod keeps its state in locals, this reads one from a function that uses it.
 function Upvalue(func, name)
     local index = 1
@@ -210,7 +226,8 @@ local function WaitForHost()
     end
 end
 
-function Run(scenario, targetUid)
+function Run(scenario, targetUid, frames)
+    frameFolder = frames
     Step("start scenario=" .. scenario)
     CheckActiveMods(targetUid)
     if scenario == "smoke" then

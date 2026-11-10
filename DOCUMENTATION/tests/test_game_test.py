@@ -1,8 +1,11 @@
 import contextlib
 import io
+import random
+import struct
 import sys
 import tempfile
 import unittest
+import zlib
 from pathlib import Path
 from unittest import mock
 
@@ -465,13 +468,13 @@ class ChoiceTests(TempCase):
         write(self.root / "project" / "tests" / "game" / "b.lua", "")
         write(self.root / "faf" / "bin" / "ForgedAlliance.exe", "")
 
-    def run_stand(self, *args, outcomes=()):
+    def run_stand(self, *args, outcomes=(), frames=()):
         ran = []
         outcomes = list(outcomes)
 
         def run_scenario(_mod, _info, scenario, _faf, _without_mod):
             ran.append(scenario)
-            return outcomes.pop(0) if outcomes else ([], False)
+            return (*(outcomes.pop(0) if outcomes else ([], False)), list(frames))
 
         stream = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
         argv = ["game_test.py", str(self.mod), "--faf", str(self.root / "faf"), *args]
@@ -511,6 +514,13 @@ class ChoiceTests(TempCase):
         self.assertTrue(lines[1].startswith("[FAIL]"))
         self.assertIn("готово 3 из 3, осталось 0", lines[2])
 
+    def test_saved_frames_are_named_after_the_result(self):
+        frame = self.root / "Mod-a-panel.png"
+        _, _, output = self.run_stand("--only", "a", frames=[frame])
+        lines = output.splitlines()
+        self.assertTrue(lines[0].startswith("[OK]"))
+        self.assertIn(str(frame), lines[1])
+
     def test_unknown_scenario_stops_before_the_game_starts(self):
         code, ran, output = self.run_stand("--only", "a", "--only", "gone")
         self.assertEqual((code, ran), (1, []))
@@ -546,6 +556,187 @@ class ChoiceTests(TempCase):
     def test_control_run_is_refused_for_the_smoke(self):
         code, ran, _ = self.run_stand("--only", "a", "--only", "smoke", "--without-mod")
         self.assertEqual((code, ran), (1, []))
+
+
+def bmp(width, height, rgb, bits=24, top_down=False):
+    """A BMP of the kind the engine writes: no compression, rows padded to 4 bytes."""
+    step = bits // 8
+    stride = (width * step + 3) & ~3
+    rows = []
+    for y in range(height):
+        row = bytearray()
+        for x in range(width):
+            r, g, b = rgb[(y * width + x) * 3:(y * width + x) * 3 + 3]
+            row += bytes((b, g, r)) + b"\xff" * (step - 3)
+        rows.append(bytes(row.ljust(stride, b"\0")))
+    if not top_down:
+        rows.reverse()
+    pixels = b"".join(rows)
+    return (struct.pack("<2sIHHI", b"BM", 54 + len(pixels), 0, 0, 54)
+            + struct.pack("<IiiHHIIiiII", 40, width, -height if top_down else height, 1, bits, 0, len(pixels),
+                          0, 0, 0, 0) + pixels)
+
+
+def unlzw(data):
+    clear, end = 256, 257
+    bits = int.from_bytes(data, "little")
+    position, size, previous = 0, 9, None
+    table = [bytes((index,)) for index in range(256)] + [b"", b""]
+    out = bytearray()
+    while position + size <= len(data) * 8:
+        code = bits >> position & ((1 << size) - 1)
+        position += size
+        if code == clear:
+            table, size, previous = table[:258], 9, None
+            continue
+        if code == end:
+            break
+        if code < len(table):
+            entry = table[code]
+            if previous is not None:
+                table.append(previous + entry[:1])
+        else:
+            entry = previous + previous[:1]
+            table.append(entry)
+        out += entry
+        previous = entry
+        if len(table) == 1 << size and size < 12:
+            size += 1
+    return bytes(out)
+
+
+def read_gif(data):
+    """Size, delays and pixels of the frames of a GIF the stand wrote."""
+    width, height = struct.unpack_from("<HH", data, 6)
+    palette = [data[13 + index * 3:16 + index * 3] for index in range(256)]
+    position, delay, frames = 13 + 768, None, []
+    while data[position] != 0x3B:
+        kind = data[position]
+        position += 2 if kind == 0x21 else 11
+        if kind == 0x21 and data[position - 1] == 0xF9:
+            delay = struct.unpack_from("<H", data, position + 2)[0]
+        packed = bytearray()
+        while data[position]:
+            packed += data[position + 1:position + 1 + data[position]]
+            position += data[position] + 1
+        position += 1
+        if kind == 0x2C:
+            frames.append((delay, b"".join(palette[index] for index in unlzw(bytes(packed)))))
+    return width, height, frames
+
+
+def png_pixels(data):
+    width, height = struct.unpack_from(">II", data, 16)
+    position, packed = 8, b""
+    while position < len(data):
+        length, kind = struct.unpack_from(">I4s", data, position)
+        body = data[position + 8:position + 8 + length]
+        assert struct.unpack_from(">I", data, position + 8 + length)[0] == zlib.crc32(kind + body)
+        packed += body if kind == b"IDAT" else b""
+        position += 12 + length
+    raw = zlib.decompress(packed)
+    stride = width * 3 + 1
+    return width, height, b"".join(raw[y * stride + 1:(y + 1) * stride] for y in range(height))
+
+
+# Four colours in blocks, a GIF keeps them exactly.
+BLOCKS = b"".join(bytes(((255, 0, 0), (0, 255, 0), (0, 0, 255), (40, 40, 40))[(x // 4) % 2 + (y // 3) % 2 * 2])
+                  for y in range(6) for x in range(8))
+
+
+class ImageTests(TempCase):
+    def test_bmp_rows_go_from_the_top_with_the_padding_left_out(self):
+        rgb = bytes(range(3 * 3 * 2))
+        path = self.root / "frame.bmp"
+        path.write_bytes(bmp(3, 2, rgb))
+        self.assertEqual(game_test.read_bmp(path), (3, 2, rgb))
+
+    def test_bmp_of_32_bits_from_the_top_is_read(self):
+        path = self.root / "frame.bmp"
+        path.write_bytes(bmp(8, 6, BLOCKS, bits=32, top_down=True))
+        self.assertEqual(game_test.read_bmp(path), (8, 6, BLOCKS))
+
+    def test_unknown_bmp_stops_the_run(self):
+        path = self.root / "frame.bmp"
+        path.write_bytes(bmp(8, 6, BLOCKS)[:28] + struct.pack("<H", 8) + bmp(8, 6, BLOCKS)[30:])
+        with self.assertRaises(game_test.GameTestError):
+            game_test.read_bmp(path)
+
+    def test_png_keeps_every_pixel(self):
+        self.assertEqual(png_pixels(game_test.png_bytes(8, 6, BLOCKS)), (8, 6, BLOCKS))
+
+    def test_lzw_survives_a_full_table(self):
+        indices = bytes(random.Random(1).randrange(256) for _ in range(20000))
+        self.assertEqual(unlzw(game_test.lzw(indices)), indices)
+
+    def test_gif_keeps_the_frames_and_their_delays(self):
+        second = BLOCKS[::-1]
+        width, height, frames = read_gif(game_test.gif_bytes([(8, 6, BLOCKS), (8, 6, second)], [21, 100]))
+        self.assertEqual((width, height), (8, 6))
+        self.assertEqual(frames, [(21, BLOCKS), (100, second)])
+
+    def test_gif_colour_goes_to_the_nearest_of_the_palette(self):
+        rgb = bytes((10, 200, 30)) * 47 + bytes((12, 202, 33))
+        _, _, frames = read_gif(game_test.gif_bytes([(8, 6, BLOCKS), (8, 6, rgb)], [2, 2]))
+        pixels = frames[1][1]
+        self.assertTrue(all(abs(pixels[index] - rgb[index]) <= 12 for index in range(len(rgb))))
+
+    def test_frames_of_different_size_stop_the_run(self):
+        with self.assertRaises(game_test.GameTestError):
+            game_test.gif_bytes([(8, 6, BLOCKS), (6, 8, BLOCKS)], [2, 2])
+
+
+class SaveFramesTests(TempCase):
+    def setUp(self):
+        super().setUp()
+        self.out = self.root / "out"
+        self.out.mkdir()
+        patcher = mock.patch.object(game_test, "LOG_DIR", self.out)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.frames = self.root / "frames"
+        self.frames.mkdir()
+
+    def frame(self, name, rgb=BLOCKS):
+        (self.frames / name).write_bytes(bmp(8, 6, rgb))
+
+    def test_shot_lines_give_the_name_and_the_time(self):
+        log = "info: [MODTEST] SHOT before_collapse 23.991556167603\ninfo: [MODTEST] OK   x\n"
+        self.assertEqual(game_test.SHOT.findall(log), [("before_collapse", "23.991556167603")])
+
+    def test_single_frame_becomes_a_png_and_a_series_a_gif(self):
+        self.frame("SCFrame_Mon_Nov_09_234752_2026_00000.bmp")
+        self.frame("SCFrame_Mon_Nov_09_234752_2026_00001.bmp")
+        self.frame("SCFrame_Mon_Nov_09_234752_2026_00002.bmp", BLOCKS[::-1])
+        log = ("info: [MODTEST] SHOT panel 1.0\ninfo: [MODTEST] SHOT move 2.0\n"
+               "info: [MODTEST] SHOT move 2.25\n")
+        saved, problems = game_test.save_frames(log, self.frames, "Mod-a")
+        self.assertEqual(problems, [])
+        self.assertEqual(saved, [self.out / "Mod-a-panel.png", self.out / "Mod-a-move.gif"])
+        self.assertEqual(png_pixels(saved[0].read_bytes()), (8, 6, BLOCKS))
+        _, _, frames = read_gif(saved[1].read_bytes())
+        self.assertEqual(frames, [(25, BLOCKS), (game_test.GIF_HOLD, BLOCKS[::-1])])
+
+    def test_files_follow_the_number_of_the_engine_past_midnight(self):
+        self.frame("SCFrame_Sun_Nov_08_235959_2026_00009.bmp")
+        self.frame("SCFrame_Mon_Nov_09_000000_2026_00010.bmp", BLOCKS[::-1])
+        log = "info: [MODTEST] SHOT first 1.0\ninfo: [MODTEST] SHOT second 1.1\n"
+        saved, _ = game_test.save_frames(log, self.frames, "Mod-a")
+        self.assertEqual(png_pixels(saved[0].read_bytes())[2], BLOCKS)
+
+    def test_missing_frame_saves_nothing_and_fails_the_run(self):
+        self.frame("SCFrame_Mon_Nov_09_234752_2026_00000.bmp")
+        log = "info: [MODTEST] SHOT one 1.0\ninfo: [MODTEST] SHOT two 1.1\n"
+        saved, problems = game_test.save_frames(log, self.frames, "Mod-a")
+        self.assertEqual(saved, [])
+        self.assertEqual(len(problems), 1)
+        self.assertEqual(list(self.out.iterdir()), [])
+
+    def test_frames_of_the_last_run_go_and_other_scenarios_keep_theirs(self):
+        for name in ["Mod-a-old.png", "Mod-a-old.gif", "Mod-b-kept.png", "Mod-a.log"]:
+            (self.out / name).write_bytes(b"x")
+        game_test.save_frames("", self.frames, "Mod-a")
+        self.assertEqual(sorted(path.name for path in self.out.iterdir()), ["Mod-a.log", "Mod-b-kept.png"])
 
 
 class ReplayTests(TempCase):

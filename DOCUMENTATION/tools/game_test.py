@@ -19,6 +19,10 @@ the mods are mounted from their folders and the installed ones are left out of t
 The smoke run has UI mods only, as for a player. A scenario also needs ModTestSim, because a UI
 mod cannot create units, and the run fails if anything else gets into the sim.
 
+A scenario takes a frame of the game with Test.Shot("name"): the engine writes what the game shows, and
+the stand saves it to .tools/game_test as <mod>-<scenario>-<name>.png, several frames with one name as
+a GIF. A control run saves none.
+
 A scenario with the line "players" is a real match of two clients on this PC over LAN, each with
 its own settings and log. The auto lobby of the game starts it without sim mods, so ModTestSim
 stays out. The first client hosts and runs the scenario, the second plays its army until it ends.
@@ -39,10 +43,12 @@ import ntpath
 import os
 import re
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
 import time
+import zlib
 from ctypes import wintypes
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -79,6 +85,13 @@ ERROR_LINE = re.compile(r"FAILED|: ERROR\b|CRASH in|Error importing|Error runnin
                         r"|[Aa]ttempt to |nonexistent global|stack traceback")
 DIRECTIVE = re.compile(r"^-- stand: (\w+) ?(.*?)\s*$", re.M)
 INPUT = re.compile(r"\[MODTEST\] (PRESS (?:(?:Ctrl|Alt|Shift)-)*\w|MOUSE \d+ \d+)\s*$", re.M)
+SHOT = re.compile(r"\[MODTEST\] SHOT (\w+) ([\d.]+)\s*$", re.M)
+# The engine names a frame SCFrame_<date>_<number>.bmp, the number counts the frames it saved.
+FRAME_NUMBER = re.compile(r"_(\d+)\.bmp$")
+# Every 7th pixel of a series chooses the 256 colours of its GIF. The last frame stays a second.
+GIF_SAMPLE_STEP = 7
+GIF_MIN_DELAY = 2
+GIF_HOLD = 100
 ATTEMPTS = 3
 POLL_SECONDS = 0.2
 MOUSE_REPEAT_SECONDS = 0.02
@@ -274,6 +287,154 @@ def remove_replay(log: str) -> None:
             folder.rmdir()
         except OSError:
             return
+
+
+def read_bmp(path: Path) -> tuple[int, int, bytes]:
+    """Width, height and the pixels of a frame of the engine: rows from the top, red, green and blue."""
+    data = path.read_bytes()
+    if data[:2] != b"BM":
+        raise GameTestError(f"Кадр {path.name} не BMP")
+    offset = int.from_bytes(data[10:14], "little")
+    width, height = struct.unpack_from("<ii", data, 18)
+    bits, compression = struct.unpack_from("<HI", data, 28)
+    if bits not in (24, 32) or compression != 0:
+        raise GameTestError(f"Кадр {path.name}: {bits} бит, сжатие {compression}, стенд читает 24 и 32 бита без сжатия")
+    step = bits // 8
+    stride = (width * step + 3) & ~3
+    rows = []
+    for y in range(abs(height)):
+        start = offset + (abs(height) - 1 - y if height > 0 else y) * stride
+        row = data[start:start + width * step]
+        rgb = bytearray(width * 3)
+        rgb[0::3], rgb[1::3], rgb[2::3] = row[2::step], row[1::step], row[0::step]
+        rows.append(rgb)
+    return width, abs(height), b"".join(rows)
+
+
+def png_bytes(width: int, height: int, rgb: bytes) -> bytes:
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+    stride = width * 3
+    raw = b"".join(b"\0" + rgb[y * stride:(y + 1) * stride] for y in range(height))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+def lzw(indices: bytes) -> bytes:
+    """GIF compression of 8 bit indices: the codes grow from 9 to 12 bits, then the table starts over."""
+    clear = 256
+    codes = {}
+    next_code = clear + 2
+    size = 9
+    out = bytearray()
+    buffer = count = 0
+
+    def put(code: int) -> None:
+        nonlocal buffer, count
+        buffer |= code << count
+        count += size
+        while count >= 8:
+            out.append(buffer & 0xFF)
+            buffer >>= 8
+            count -= 8
+
+    put(clear)
+    prefix = indices[0]
+    for byte in indices[1:]:
+        key = prefix << 8 | byte
+        code = codes.get(key)
+        if code is not None:
+            prefix = code
+            continue
+        put(prefix)
+        if next_code < 4096:
+            codes[key] = next_code
+            if next_code == 1 << size:
+                size += 1
+            next_code += 1
+        else:
+            put(clear)
+            codes.clear()
+            next_code = clear + 2
+            size = 9
+        prefix = byte
+    put(prefix)
+    put(clear + 1)
+    if count:
+        out.append(buffer & 0xFF)
+    return bytes(out)
+
+
+def gif_palette(frames: list[bytes]) -> list[tuple[int, ...]]:
+    """Median cut: the box of colours with the widest channel splits at its median, until there are 256."""
+    def box(colours: list[tuple[int, ...]]) -> tuple[int, int, list[tuple[int, ...]]]:
+        spans = [max(colour[i] for colour in colours) - min(colour[i] for colour in colours) for i in range(3)]
+        return max(spans), spans.index(max(spans)), colours
+
+    step = 3 * GIF_SAMPLE_STEP
+    boxes = [box([colour for rgb in frames for colour in zip(rgb[0::step], rgb[1::step], rgb[2::step])])]
+    while len(boxes) < 256:
+        widest = max(range(len(boxes)), key=lambda index: boxes[index][0])
+        if boxes[widest][0] == 0:
+            break
+        _, channel, colours = boxes.pop(widest)
+        colours.sort(key=lambda colour: colour[channel])
+        half = len(colours) // 2
+        boxes += [box(colours[:half]), box(colours[half:])]
+    return [tuple(sum(colour[i] for colour in colours) // len(colours) for i in range(3)) for _, _, colours in boxes]
+
+
+def gif_bytes(frames: list[tuple[int, int, bytes]], delays: list[int]) -> bytes:
+    """An endless loop of the frames, delays in hundredths of a second. A colour goes to the nearest one of
+    the palette, found once for each colour of 5 bits per channel."""
+    width, height, _ = frames[0]
+    if any(frame[:2] != (width, height) for frame in frames):
+        raise GameTestError(f"Кадры одной серии разного размера: {sorted({frame[:2] for frame in frames})}")
+    palette = gif_palette([rgb for _, _, rgb in frames])
+    nearest = {}
+    parts = [b"GIF89a", struct.pack("<HHBBB", width, height, 0xF7, 0, 0),
+             b"".join(bytes(colour) for colour in palette).ljust(768, b"\0"),
+             b"\x21\xFF\x0BNETSCAPE2.0\x03\x01\x00\x00\x00"]
+    for (_, _, rgb), delay in zip(frames, delays):
+        keys = [r >> 3 << 10 | g >> 3 << 5 | b >> 3 for r, g, b in zip(rgb[0::3], rgb[1::3], rgb[2::3])]
+        for key in set(keys) - nearest.keys():
+            r, g, b = (key >> 10) * 8 + 4, (key >> 5 & 31) * 8 + 4, (key & 31) * 8 + 4
+            nearest[key] = min(range(len(palette)), key=lambda index: (palette[index][0] - r) ** 2
+                               + (palette[index][1] - g) ** 2 + (palette[index][2] - b) ** 2)
+        data = lzw(bytes(nearest[key] for key in keys))
+        blocks = b"".join(bytes((len(data[i:i + 255]),)) + data[i:i + 255] for i in range(0, len(data), 255))
+        parts += [b"\x21\xF9\x04\x00" + struct.pack("<H", delay) + b"\x00\x00",
+                  b"\x2C" + struct.pack("<HHHHB", 0, 0, width, height, 0), b"\x08", blocks, b"\x00"]
+    return b"".join([*parts, b"\x3B"])
+
+
+def save_frames(log: str, folder: Path, prefix: str) -> tuple[list[Path], list[str]]:
+    """Replaces the frames of the last run. The engine numbers its files, so their order is the order of the
+    SHOT lines in the log."""
+    for old in [*LOG_DIR.glob(f"{prefix}-*.png"), *LOG_DIR.glob(f"{prefix}-*.gif")]:
+        old.unlink()
+    shots = SHOT.findall(log)
+    files = sorted(folder.glob("*.bmp"), key=lambda path: int(FRAME_NUMBER.search(path.name).group(1)))
+    if len(files) != len(shots):
+        return [], [f"Игра сохранила кадров: {len(files)}, сценарий снял: {len(shots)}"]
+    series = {}
+    for (name, moment), file in zip(shots, files):
+        series.setdefault(name, []).append((float(moment), file))
+    saved = []
+    for name, frames in series.items():
+        images = [read_bmp(file) for _, file in frames]
+        if len(images) == 1:
+            path = LOG_DIR / f"{prefix}-{name}.png"
+            path.write_bytes(png_bytes(*images[0]))
+        else:
+            moments = [moment for moment, _ in frames]
+            delays = [max(GIF_MIN_DELAY, round((later - earlier) * 100))
+                      for earlier, later in zip(moments, moments[1:])]
+            path = LOG_DIR / f"{prefix}-{name}.gif"
+            path.write_bytes(gif_bytes(images, [*delays, GIF_HOLD]))
+        saved.append(path)
+    return saved, []
 
 
 def library_folder(name: str) -> Path:
@@ -538,7 +699,8 @@ def control_problems(clients: list[Client], expected: list[str], disturbed: bool
     return ["Сценарий упал, но мог упасть от чужого ввода"] if disturbed else []
 
 
-def run_scenario(mod: Path, info: ModInfo, scenario: str, faf: Path, without_mod: bool) -> tuple[list[str], bool]:
+def run_scenario(mod: Path, info: ModInfo, scenario: str, faf: Path,
+                 without_mod: bool) -> tuple[list[str], bool, list[Path]]:
     bin_dir = faf / "bin"
     setup = read_setup(mod, scenario)
     libraries = [library_folder(name) for name in [*info.libraries, *setup.mods]]
@@ -559,7 +721,7 @@ def run_scenario(mod: Path, info: ModInfo, scenario: str, faf: Path, without_mod
         clients = []
         for index in range(setup.players):
             folder = Path(temp) / str(index + 1)
-            folder.mkdir()
+            (folder / "frames").mkdir(parents=True)
             prefs = folder / "Game.prefs"
             prefs.write_text(prefs_text(uids, setup.profile, setup.players > 1, window), encoding="utf-8")
             init = folder / "init_modtest.lua"
@@ -571,16 +733,22 @@ def run_scenario(mod: Path, info: ModInfo, scenario: str, faf: Path, without_mod
                                    "/log", str(log_path), *match_args(index, port, setup),
                                    "/windowed", *map(str, WINDOW_SIZE), "/nomovie", "/nosound", "/nomusic",
                                    "/nobugreport", "/novalidate", "/modtest", scenario,
-                                   NO_TARGET if without_mod else info.uid],
+                                   NO_TARGET if without_mod else info.uid, (folder / "frames").as_posix()],
                                   log_path, prefs))
         disturbed = run_game(clients, bin_dir)
         problems = []
         if any(client.prefs.with_name("Game.prefs.bad").exists() for client in clients):
             problems.append("Игра отвергла временные настройки")
+        frames = []
+        host = clients[0]
+        if not without_mod:
+            log = host.log_path.read_text(encoding="utf-8", errors="replace") if host.log_path.exists() else ""
+            frames, frame_problems = save_frames(log, host.prefs.with_name("frames"), f"{mod.name}-{scenario}")
+            problems += frame_problems
 
     if without_mod:
-        return [*problems, *control_problems(clients, setup.expected, disturbed)], disturbed
-    return [*problems, *problems_of_clients(clients, sim_helper, setup.expected)], disturbed
+        return [*problems, *control_problems(clients, setup.expected, disturbed)], disturbed, frames
+    return [*problems, *problems_of_clients(clients, sim_helper, setup.expected)], disturbed, frames
 
 
 def main() -> int:
@@ -625,7 +793,7 @@ def main() -> int:
         for done, scenario in enumerate(scenarios, 1):
             started = time.monotonic()
             for attempt in range(1, ATTEMPTS + 1):
-                problems, disturbed = run_scenario(mod, info, scenario, options.faf, options.without_mod)
+                problems, disturbed, frames = run_scenario(mod, info, scenario, options.faf, options.without_mod)
                 if not problems or not disturbed:
                     break
                 if attempt == ATTEMPTS:
@@ -637,6 +805,8 @@ def main() -> int:
                   f"готово {done} из {len(scenarios)}, осталось {len(scenarios) - done}")
             for problem in problems[:8]:
                 print(f"    {problem}")
+            for frame in frames:
+                print(f"    Кадр: {frame}")
             results.append(not problems)
     except GameTestError as error:
         print(f"[FAIL] {error}")
