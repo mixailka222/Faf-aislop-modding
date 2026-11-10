@@ -292,8 +292,6 @@ def remove_replay(log: str) -> None:
 def read_bmp(path: Path) -> tuple[int, int, bytes]:
     """Width, height and the pixels of a frame of the engine: rows from the top, red, green and blue."""
     data = path.read_bytes()
-    if data[:2] != b"BM":
-        raise GameTestError(f"Кадр {path.name} не BMP")
     offset = int.from_bytes(data[10:14], "little")
     width, height = struct.unpack_from("<ii", data, 18)
     bits, compression = struct.unpack_from("<HI", data, 28)
