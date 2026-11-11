@@ -1,4 +1,4 @@
-Version = "1.1.0"
+Version = "1.1.1"
 
 ReUI.Require
 {
@@ -76,6 +76,56 @@ local function IsLocked(unit)
     end
 
     return AseIsLocked ~= nil and AseIsLocked(unit)
+end
+
+--- ASE filters every change of selection by domain as well: with its domain
+--- filter on, a selection that holds land, air and navy units is cut down to
+--- the first domain of the player's order, so a mixed selection of factories
+--- loses two thirds of itself. Its own `ignored` flag is the way out: while it
+--- is set, ASE reports that it changed nothing, the vanilla selection handler
+--- still runs and updates the interface, and no filter touches the units.
+--- The flag is asked for the same way as the lock list: only when the file is
+--- there, so the mod works without ASE at all.
+local ASE_MAIN_FILE = "/mods/ASE/modules/Main.lua"
+local AseSetIgnored
+local AseGetIgnored
+local aseIgnoredProbed = false
+
+--- Selects the units and keeps ASE's domain filter from cutting the selection
+--- down to one domain. The previous state of the flag is restored, and it is
+--- restored after a failed call as well: a stuck flag would leave the player
+--- without any ASE filter until the mod is reloaded.
+--- @param units UserUnit[]|nil
+local function SelectUnitsWithoutAseFilter(units)
+    if not aseIgnoredProbed then
+        aseIgnoredProbed = true
+
+        if DiskGetFileInfo(ASE_MAIN_FILE) then
+            local ok, module = pcall(import, ASE_MAIN_FILE)
+            if ok and type(module.SetIgnored) == "function" and type(module.GetIgnored) == "function" then
+                AseSetIgnored = module.SetIgnored
+                AseGetIgnored = module.GetIgnored
+            else
+                WARN("Custom Hotkeys: ASE has no ignore flag, its domain filter may keep the factories of one domain")
+            end
+        end
+    end
+
+    if not AseSetIgnored then
+        SelectUnits(units)
+        return
+    end
+
+    local wasIgnored = AseGetIgnored()
+    AseSetIgnored(true)
+
+    local ok, err = pcall(SelectUnits, units)
+
+    AseSetIgnored(wasIgnored)
+
+    if not ok then
+        WARN("Custom Hotkeys: selection failed: " .. tostring(err))
+    end
 end
 
 --- Selects everything the category expression matches, removes the excluded
@@ -222,7 +272,8 @@ local function SelectFreeFactories()
         end
     end
 
-    SelectUnits(units)
+    -- Factories come from three domains at once, which ASE would break apart.
+    SelectUnitsWithoutAseFilter(units)
 end
 
 --- True when every selected unit belongs to `included` and none belongs to
