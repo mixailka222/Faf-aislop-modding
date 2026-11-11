@@ -12,4 +12,4 @@ ui_only = true
 
 -- ReUI tag: "Name=Major.Minor.Revision". The name must be the mod folder name
 -- and may contain only letters, digits and dots (no spaces, no underscores).
-ReUI = "customhotkeys=1.1.1"
+ReUI = "customhotkeys=1.0.0"
