@@ -1,7 +1,7 @@
 -- stand: profile options = { ui_scale = 1.5 }
 
 -- At ui_scale 1.5 the rows stay inside the frame, the close button stays off the top row and the Overflow
--- button comes up where the panel was.
+-- button comes up where the panel was. Reopening keeps the switched-off rows hidden.
 local Test = import("/mods/ModTest/modules/test.lua")
 local Panel = import("/mods/ModTestScenarios/support/panel.lua")
 
@@ -16,6 +16,7 @@ function Run()
     Panel.ReportFont(panel, "ui_scale 1.5")
     Panel.CheckRowsInside(panel, "two rows")
     Panel.CheckCloseButton(panel, "two rows")
+    Panel.CheckCollapse(panel, "two rows")
     Panel.ShowAllRows(panel)
     Panel.CheckRowsInside(panel, "all rows")
     Panel.CheckCloseButton(panel, "all rows")

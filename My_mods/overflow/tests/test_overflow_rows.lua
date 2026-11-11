@@ -125,6 +125,10 @@ local function NewCtrl(kind, parent)
     c._text = ''
     c._font = 0
     c._destroyed = false
+    c._children = {}
+    if type(parent) == 'table' and parent._children then
+        table.insert(parent._children, c)
+    end
     -- Depth is a value object like Left: it can be READ. The mod raises the title strip
     -- above the content through client.Depth() + 1, and a stub with only Set() would fail
     -- on that call.
@@ -141,8 +145,16 @@ local function NewCtrl(kind, parent)
     function c:SetFont(f, s) self._font = s end
     function c:EnableHitTest(v) end
     function c:DisableHitTest(v) end
-    function c:Hide() self._hidden = true end
-    function c:Show() self._hidden = false end
+    -- In the game Hide() and Show() reach every child too: Show() on the window brings back
+    -- the rows the mod hid one by one.
+    local function SetHiddenTree(ctl, hidden)
+        ctl._hidden = hidden
+        for _, child in ipairs(ctl._children) do
+            SetHiddenTree(child, hidden)
+        end
+    end
+    function c:Hide() SetHiddenTree(self, true) end
+    function c:Show() SetHiddenTree(self, false) end
     function c:Destroy() self._destroyed = true end
     function c:IsDestroyed() return self._destroyed end
     function c:GetRootFrame() return FRAME end
@@ -1271,10 +1283,9 @@ if panel ~= nil and panel.OnClose then
     panel.OnClose(panel)
     check(panel._hidden == true,
           'после закрытия окно спрятано, а не просто сжато')
-    check(shownData() == 7,
-          'строки продолжают обновляться и в свёрнутом виде, их ' ..
-          tostring(shownData()) .. ' - их не должно быть видно, но Hide() ' ..
-          'на самом окне скрывает всё дочернее')
+    check(shownData() == 0,
+          'в свёрнутом виде строк данных на экране нет (их ' ..
+          tostring(shownData()) .. ')')
 
     -- Return: as with the minimap, the panel is reopened by the "Overflow" button.
     local reopen = nil
@@ -1293,6 +1304,20 @@ if panel ~= nil and panel.OnClose then
         check(shownData() == 7,
               'после возврата все семь строк на месте (' ..
               tostring(shownData()) .. ')')
+
+        -- The default set: five rows and both dividers are hidden one by one, and Show()
+        -- on the window would bring them back. The set also changes while collapsed.
+        setRows({ eOverflow = true, eGo = true })
+        panel.OnClose(panel)
+        setRows({ eOverflow = true, eGo = true, eOwn = true })
+        check(shownData() == 0 and shownDividers() == 0,
+              'смена набора в свёрнутом виде ничего не показывает (строк ' ..
+              tostring(shownData()) .. ', разделителей ' .. tostring(shownDividers()) .. ')')
+        reopen.HandleEvent(reopen, { Type = 'ButtonRelease' })
+        check(shownData() == 3 and shownDividers() == 0,
+              'после возврата видны только три включённые строки (строк ' ..
+              tostring(shownData()) .. ', разделителей ' .. tostring(shownDividers()) .. ')')
+        setAllSeven()
     end
 end
 
@@ -1828,6 +1853,24 @@ check(Told('window geometry dump FAILED') == 1 and Told('dump boom') == 1,
       'сбой вывода размеров в логе')
 check(Told('theme rebuild FAILED') == 0, 'пересборка панели дошла до конца')
 check(NewestWindow() ~= win, 'панель собрана заново')
+
+-- A rebuild of a collapsed panel, with the collapse state unreadable: the new panel opens,
+-- so its rows have to be shown.
+local rebuilt = NewestWindow()
+rebuilt.OnClose(rebuilt)
+Prefs.GetFromCurrentProfile = function(k)
+    if k == 'OverflowCollapsed' then error('key boom') end
+    return plainReadKey(k)
+end
+PROFILE['Overflow'].blink = false
+BEAT()
+Prefs.GetFromCurrentProfile = plainReadKey
+local shownRows = 0
+for _, c in ipairs(NewestWindow().ClientGroup._children) do
+    if c._kind == 'Text' and not c._hidden then shownRows = shownRows + 1 end
+end
+check(NewestWindow() ~= rebuilt and not NewestWindow()._hidden and shownRows > 0,
+      'свёрнутая панель после пересборки открыта со строками (строк ' .. tostring(shownRows) .. ')')
 return fails
 end)
 

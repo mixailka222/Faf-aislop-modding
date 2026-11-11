@@ -22,9 +22,9 @@ PauseAfkCfg = {
 }
 
 ---Clean one message: non-string or blank becomes the default, longer than
--- the chat limit is cut. Cutting is byte-based, so a trailing cut inside a
--- multibyte UTF-8 sequence is stepped back over (else the chat gets broken
--- bytes). Single source for both the mod and the options page.
+-- the chat limit is cut. Cutting is byte-based, so a character split by the
+-- cut is dropped whole (else the chat gets broken bytes). Single source for
+-- both the mod and the options page.
 function PauseAfkSaneMsg(val)
     if type(val) ~= 'string' then
         return DEFAULTS.msgText
@@ -33,14 +33,17 @@ function PauseAfkSaneMsg(val)
         return DEFAULTS.msgText
     end
     if string.len(val) > MSG_LIMIT then
-        val = string.sub(val, 1, MSG_LIMIT)
-        while string.len(val) > 0 do
-            local last = string.byte(val, string.len(val))
-            if last < 128 or last >= 192 then
+        -- A UTF-8 continuation byte (128..191) right after the cut means the cut
+        -- splits a character: step back to its first byte and cut before it.
+        local cut = MSG_LIMIT
+        while cut > 0 do
+            local nextByte = string.byte(val, cut + 1)
+            if nextByte < 128 or nextByte >= 192 then
                 break
             end
-            val = string.sub(val, 1, string.len(val) - 1)
+            cut = cut - 1
         end
+        val = string.sub(val, 1, cut)
         if val == '' then
             return DEFAULTS.msgText
         end

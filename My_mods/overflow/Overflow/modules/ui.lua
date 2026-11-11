@@ -681,12 +681,13 @@ local function LayoutRows()
         want[items[i].id] = true
     end
 
-    -- Hide what is switched off: the class knows nothing about the rows.
+    -- Hide what is switched off: the class knows nothing about the rows. While collapsed
+    -- no row is shown, SetCollapsed lays them out again when the window comes back.
     local many = TableGetn(BODY_KEYS)
     for i = 1, many do
         local ctl = G.labels[BODY_KEYS[i]]
         if ctl then
-            if want[BODY_KEYS[i]] then
+            if want[BODY_KEYS[i]] and not G.collapsed then
                 ctl:Show()
             else
                 ctl:Hide()
@@ -813,7 +814,10 @@ local function SetCollapsed(collapsed)
     if G.reopenButton then
         G.reopenButton:Hide()
     end
+    -- Show() on the window shows every child again, the switched-off rows too, so the
+    -- layout hides them once more.
     G.win:Show()
+    LayoutRows()
     ShowFrameBg(true)
     CollapseKeyWrite(false)
 end
@@ -856,10 +860,12 @@ CreatePanel = function()
         G.reopenButton = nil
     end
 
-    -- G.labels holds the controls the layout manages, they are recreated.
+    -- G.labels holds the controls the layout manages, they are recreated. The new window
+    -- starts open, LayoutRows below shows no row while G.collapsed is set.
     G.labels = {}
     G.rowsSig = nil
     G.themeSig = nil
+    G.collapsed = false
 
     -- The theme comes first: controls take their colours from C in the constructor.
     ApplyTheme()
@@ -988,7 +994,6 @@ CreatePanel = function()
     G.reopenButton:Hide()
 
     -- The collapsed state carries over between matches, as on the minimap.
-    G.collapsed = false
     if CollapseKeyRead() then
         SetCollapsed(true)
     end
