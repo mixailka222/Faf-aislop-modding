@@ -10,6 +10,7 @@
 | Overflow | Показывает перелив энергии и массы между союзниками | [README](My_mods/overflow/README.md) |
 | ReclaimPause | ⚠️ **Забанен** — приостанавливал инженеров на реклейме при заполненном хранилище массы | [README](My_mods/reclaim_pause/README.md) |
 | PausePlzAfk | Ставит игру на паузу, если вы пропустили старт матча | [README](My_mods/pause_plz_afk/README.md) |
+| Some features | Выделение только инженеров, командиров и SACU, Move по Ctrl+ПКМ, приоритет атаки по роли юнита через СКМ; нужен ReUI | [README](My_mods/Some%20features/README.md) |
 
 Диагностический мод `overflow_testing` не предназначен для обычной игры: [описание](My_mods/overflow/diagnostic/overflow_testing/README.md).
 
